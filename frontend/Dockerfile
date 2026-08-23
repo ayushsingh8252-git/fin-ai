@@ -1,12 +1,13 @@
 FROM node:20-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN npm ci --ignore-scripts
 
 FROM node:20-alpine AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
+RUN node scripts/copy-mediapipe-wasm.js
 
 # NEXT_PUBLIC_* vars are inlined into the client bundle at build time, so they
 # must be the browser-reachable URL (e.g. http://localhost:8000), not a
