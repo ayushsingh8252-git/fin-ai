@@ -96,7 +96,7 @@ export default function InterviewRoom({
   const {
     videoRef, state: proctoring, faceBoxes,
     start: startProctoring, stop: stopProctoring, notifyInterviewPhase,
-  } = useProctoring();
+  } = useProctoring(sessionId);
   const videoContainerRef = useRef<HTMLDivElement | null>(null);
 
   const [roleTitle, setRoleTitle] = useState(initialRoleTitle);
@@ -110,6 +110,7 @@ export default function InterviewRoom({
   const [candidateName, setCandidateName] = useState<string | null>(null);
   const resumeContextRef = useRef<string>("");
   const resumeSkillsRef = useRef<string[]>([]);
+  const wsRef = useRef<WebSocket | null>(null);
 
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
@@ -145,9 +146,45 @@ export default function InterviewRoom({
 
   const startedAtRef = useRef<number>(0);
   const [elapsedMs, setElapsedMs] = useState(0);
-  // Mirrors audioElRef.current into state so AgentWaveform (which needs the
-  // element to read as a render prop) doesn't read a ref during render.
   const [ttsAudioEl, setTtsAudioEl] = useState<HTMLAudioElement | null>(null);
+
+  // Initialize WebSocket for ultra-low latency turns
+  useEffect(() => {
+    if (phase === "setup" || phase === "complete") {
+      if (wsRef.current) {
+        wsRef.current.close();
+        wsRef.current = null;
+      }
+      return;
+    }
+
+    if (!wsRef.current || wsRef.current.readyState === WebSocket.CLOSED) {
+      try {
+        const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+        const wsHost = (API_URL || "http://localhost:8000").replace(/^https?:\/\//, "");
+        const wsUrl = `${wsProtocol}//${wsHost}/api/v1/interview/ws/${sessionId || "demo-session"}`;
+        const ws = new WebSocket(wsUrl);
+        wsRef.current = ws;
+
+        ws.onopen = () => {
+          ws.send(JSON.stringify({ type: "ping", timestamp: Date.now() }));
+        };
+
+        ws.onerror = (e) => {
+          console.warn("[Interview WebSocket Warning]", e);
+        };
+      } catch (err) {
+        console.warn("[Interview WebSocket Connect Failed]", err);
+      }
+    }
+
+    return () => {
+      if (wsRef.current && (phase === "complete" as InterviewPhase || phase === "setup" as InterviewPhase)) {
+        wsRef.current.close();
+        wsRef.current = null;
+      }
+    };
+  }, [phase, sessionId]);
 
   useEffect(() => {
     transcriptEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -217,6 +254,17 @@ export default function InterviewRoom({
       }
 
       if (rms > VAD_SPEECH_RMS_THRESHOLD) {
+        // Barge-In: if interviewer audio is currently playing and candidate speaks, halt playback
+        if (audioElRef.current && !audioElRef.current.paused) {
+          try {
+            audioElRef.current.pause();
+            if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+              wsRef.current.send(JSON.stringify({ type: "barge_in", timestamp: now }));
+            }
+            setPhase("recording");
+          } catch {}
+        }
+
         if (!hasSpokenRef.current) {
           hasSpokenRef.current = true;
           setHasHeardSpeech(true);
@@ -260,18 +308,24 @@ export default function InterviewRoom({
     return turn;
   }, []);
 
-  const speak = useCallback(async (text: string) => {
+  const speak = useCallback(async (text: string, directAudioB64?: string | null) => {
     setPhase("speaking");
     try {
-      const res = await fetchWithRetry(`${API_URL}/api/v1/tts`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, language: "en" }),
-      });
-      if (!res.ok) throw new Error("TTS request failed");
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const audio = new Audio(url);
+      let audio: HTMLAudioElement;
+      if (directAudioB64) {
+        audio = new Audio(`data:audio/mp3;base64,${directAudioB64}`);
+      } else {
+        const res = await fetchWithRetry(`${API_URL}/api/v1/tts`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text, language: "en", voice: "en-US-AndrewMultilingualNeural" }),
+        });
+        if (!res.ok) throw new Error("TTS request failed");
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        audio = new Audio(url);
+      }
+
       audioElRef.current = audio;
       setTtsAudioEl(audio);
       await new Promise<void>((resolve) => {
@@ -295,7 +349,6 @@ export default function InterviewRoom({
           finish();
         });
       });
-      URL.revokeObjectURL(url);
     } catch (err) {
       console.error("TTS playback failed", err);
     }
@@ -318,8 +371,6 @@ export default function InterviewRoom({
               resume_skills: resumeSkillsRef.current,
               candidate_name: candidateName || undefined,
               email: email || undefined,
-              // Real, client-observed facts folded into the same report —
-              // no reason to make the LLM guess at timing or proctoring.
               time_taken_sec: startedAtRef.current ? Math.round((Date.now() - startedAtRef.current) / 1000) : null,
               question_count: history.filter((t) => t.role === "candidate").length,
               proctor_flags_count: proctoring.flags.length,
@@ -327,7 +378,7 @@ export default function InterviewRoom({
             }),
           },
           1,
-          45000, // evaluation runs a full-transcript LLM call plus memory writes — give it real headroom
+          45000,
         );
         if (!res.ok) throw new Error(`Evaluation request failed (${res.status})`);
         setEvaluation(await res.json());
@@ -344,35 +395,68 @@ export default function InterviewRoom({
     [roleTitle, jdText, sessionId, candidateName, email, proctoring.flags.length, proctoring.integrityScore],
   );
 
-  /** Asks the LLM for the interviewer's next line given the real conversation
-   * so far (POST /interview/turn) — this is what makes the interview
-   * genuinely adaptive: the candidate's actual answer shapes what's asked
-   * next, instead of stepping through a fixed pre-generated question list. */
+  /** Asks the LLM for the interviewer's next line with WebSocket streaming acceleration */
   const advanceToNextQuestion = useCallback(
     async (history: TranscriptTurn[]) => {
       setPhase("thinking");
       try {
-        const res = await fetchWithRetry(
-          `${API_URL}/api/v1/interview/turn`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              history: history.map((t) => ({ role: t.role, text: t.text })),
-              role_title: roleTitle || DEFAULT_ROLE,
-              jd_text: jdText || undefined,
-              resume_context: resumeContextRef.current || undefined,
-              max_turns: MAX_CANDIDATE_TURNS,
-            }),
-          },
-          1,
-          25000,
-        );
-        if (!res.ok) throw new Error(`Interview turn request failed (${res.status})`);
-        const data = (await res.json()) as { question: string; is_final: boolean };
+        let data: { question: string; is_final: boolean; audio_base64?: string | null } | null = null;
+
+        // 1. Try ultra-low latency WebSocket pipeline
+        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+          try {
+            data = await new Promise((resolve, reject) => {
+              const ws = wsRef.current!;
+              const timer = setTimeout(() => reject(new Error("WebSocket timeout")), 14000);
+              const handler = (evt: MessageEvent) => {
+                try {
+                  const msg = JSON.parse(evt.data);
+                  if (msg.type === "turn_result") {
+                    clearTimeout(timer);
+                    ws.removeEventListener("message", handler);
+                    resolve(msg);
+                  }
+                } catch {}
+              };
+              ws.addEventListener("message", handler);
+              ws.send(JSON.stringify({
+                type: "next_turn",
+                history: history.map((t) => ({ role: t.role, text: t.text })),
+                role_title: roleTitle || DEFAULT_ROLE,
+                jd_text: jdText || undefined,
+                resume_context: resumeContextRef.current || undefined,
+                max_turns: MAX_CANDIDATE_TURNS,
+              }));
+            });
+          } catch (wsErr) {
+            console.warn("[WebSocket Turn Fallback to HTTP]", wsErr);
+          }
+        }
+
+        // 2. HTTP Fallback
+        if (!data) {
+          const res = await fetchWithRetry(
+            `${API_URL}/api/v1/interview/turn`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                history: history.map((t) => ({ role: t.role, text: t.text })),
+                role_title: roleTitle || DEFAULT_ROLE,
+                jd_text: jdText || undefined,
+                resume_context: resumeContextRef.current || undefined,
+                max_turns: MAX_CANDIDATE_TURNS,
+              }),
+            },
+            1,
+            25000,
+          );
+          if (!res.ok) throw new Error(`Interview turn request failed (${res.status})`);
+          data = (await res.json()) as { question: string; is_final: boolean };
+        }
 
         const turn = addTurn("interviewer", data.question);
-        await speak(data.question);
+        await speak(data.question, data.audio_base64);
         void turn;
 
         if (data.is_final) {
@@ -1113,18 +1197,29 @@ function BrewShieldPanel({ state }: { state: ProctoringState }) {
   const isLive = state.status === "live";
   return (
     <div className="rounded-xl border border-white/10 bg-white/5 p-3 overflow-y-auto flex flex-col gap-2">
-      <h3 className="flex items-center gap-2 text-xs font-bold text-red-300">
-        <ShieldCheck className="w-3.5 h-3.5" />
-        BrewShield {isLive ? "Proctoring Live" : "Proctoring Idle"}
-      </h3>
+      <div className="flex items-center justify-between">
+        <h3 className="flex items-center gap-2 text-xs font-bold text-red-300">
+          <ShieldCheck className="w-3.5 h-3.5" />
+          BrewShield {isLive ? "Proctoring Live" : "Proctoring Idle"}
+        </h3>
+        {isLive && (
+          <span className="text-[10px] font-mono text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded">
+            Server-Verified
+          </span>
+        )}
+      </div>
       <dl className="space-y-1 text-[11px] text-zinc-400">
+        <Row label="Integrity Score" value={`${state.integrityScore}/100`} strong />
         <Row label="Flags raised" value={String(state.flags.length)} />
         <Row label="Faces in frame" value={String(state.faceCount)} />
         <Row label="Tab switches" value={String(state.tabSwitchCount)} />
-        <Row label="Integrity Score" value={`${state.integrityScore}/100`} strong />
+        <Row label="Reading Saccades" value={state.isReading ? "Active Detection" : "Normal"} />
+        <Row label="DevTools / Shortcuts" value={state.devtoolsCount > 0 ? `${state.devtoolsCount} Blocked` : "Active Guard"} />
+        <Row label="Clipboard Guard" value={state.pasteCount > 0 ? `${state.pasteCount} Pastes Blocked` : "Active Guard"} />
+        <Row label="Display Guard" value={state.isMultiScreen ? "Multi-Display Detected" : "Single Screen"} />
       </dl>
       {state.flags.length === 0 ? (
-        <p className="text-[11px] text-zinc-500">No issues detected yet.</p>
+        <p className="text-[11px] text-zinc-500 mt-1">No violations detected. Session verified.</p>
       ) : (
         <ul className="space-y-1.5 mt-1">
           {state.flags.slice(0, 6).map((flag) => (

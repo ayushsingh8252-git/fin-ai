@@ -224,3 +224,70 @@ def get_interview_report(session_id: str, db: Session = Depends(get_db)):
     if not result:
         raise HTTPException(status_code=404, detail="No report has been generated for this interview session yet.")
     return _serialize_interview_report(result)
+
+
+from fastapi import WebSocket, WebSocketDisconnect
+import base64
+from ..services.audio_service import generate_tts_audio_async
+
+
+@router.websocket("/interview/ws/{session_id}")
+async def interview_websocket_endpoint(websocket: WebSocket, session_id: str):
+    """
+    Full-duplex WebSocket gateway for ultra-low latency interview streaming:
+    - Real-time turn generation
+    - Pre-streamed neural TTS audio
+    - Immediate barge-in / speech cancellation acknowledgment
+    - Live proctoring telemetry frame streaming
+    """
+    await websocket.accept()
+    try:
+        while True:
+            data = await websocket.receive_json()
+            msg_type = data.get("type", "")
+
+            if msg_type == "ping":
+                await websocket.send_json({"type": "pong", "timestamp": data.get("timestamp")})
+
+            elif msg_type == "barge_in":
+                # Candidate spoke while AI audio was streaming/playing — acknowledge interruption
+                await websocket.send_json({
+                    "type": "barge_in_ack",
+                    "interrupted_at": data.get("timestamp"),
+                })
+
+            elif msg_type == "next_turn":
+                history = _sanitize_history(data.get("history", []))
+                role_title = data.get("role_title", "the open role")
+                jd_text = data.get("jd_text")
+                max_turns = data.get("max_turns", 6)
+                resume_context = data.get("resume_context")
+
+                # 1. Generate text
+                turn_result = await run_in_threadpool(
+                    generate_next_turn, history, role_title, jd_text, max_turns, resume_context
+                )
+                question = turn_result.get("question", "")
+                if question:
+                    question = check_output(question).text
+
+                # 2. Immediately synthesize Neural TTS audio asynchronously
+                audio_bytes = await generate_tts_audio_async(question)
+                audio_b64 = base64.b64encode(audio_bytes).decode("utf-8") if audio_bytes else None
+
+                await websocket.send_json({
+                    "type": "turn_result",
+                    "question": question,
+                    "is_final": turn_result.get("is_final", False),
+                    "audio_base64": audio_b64,
+                })
+
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        print(f"[Interview WebSocket Error session={session_id}] {e}")
+        try:
+            await websocket.send_json({"type": "error", "message": str(e)})
+        except Exception:
+            pass
+

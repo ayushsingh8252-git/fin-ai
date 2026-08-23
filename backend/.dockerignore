@@ -3,15 +3,20 @@ __pycache__/
 venv/
 .venv/
 .env
-.env.local
+.env.*
+!.env.example
 uploads/
 data/
 *.db
+*.sqlite3
 .cache/
 .pytest_cache/
 *.log
+tests/
+scripts/
 
-# Dev-only scratch/debug scripts — not imported by app/, not needed at runtime
+# Dev-only scratch/debug scripts
 test_*.py
 check_db.py
 seed_project_docs.py
+verify_live_keys.py

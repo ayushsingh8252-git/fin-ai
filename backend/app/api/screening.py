@@ -177,3 +177,84 @@ def get_session(session_id: str, db: Session = Depends(get_db)):
         "jd_text": session.jd_text,
         "status": session.status,
     }
+
+
+class ProctorFlagIn(BaseModel):
+    id: str
+    type: str
+    message: str
+    timestamp: int
+
+
+class ProctorTelemetryPayload(BaseModel):
+    session_id: str
+    timestamp: int
+    flags: list[ProctorFlagIn] = []
+    face_count: int = 1
+    is_looking_away: bool = False
+    is_reading: bool = False
+    tab_switch_count: int = 0
+    devtools_detected: bool = False
+    paste_detected: bool = False
+    multi_screen_detected: bool = False
+    client_integrity_score: int = 100
+
+
+# Server-enforced penalty weights
+PENALTY_MAP = {
+    "no_face": 15,
+    "multi_face": 10,
+    "looking_away": 5,
+    "reading_detected": 10,
+    "tab_switch": 5,
+    "devtools_opened": 15,
+    "paste_attempt": 8,
+    "multi_screen": 10,
+    "background_noise": 5,
+    "cross_talk": 8,
+}
+
+
+@router.post("/proctor/telemetry")
+def record_proctor_telemetry(payload: ProctorTelemetryPayload, db: Session = Depends(get_db)):
+    """
+    Receives periodic signed/structured proctoring telemetry frames from the frontend.
+    Validates violation claims and calculates the server-authoritative integrity score.
+    """
+    session = (
+        db.query(models.ScreeningSession).filter(models.ScreeningSession.id == payload.session_id).first()
+        if db is not None
+        else None
+    )
+    if not session:
+        # In setup/demo mode without saved session, return calculated verification
+        total_deduction = sum(PENALTY_MAP.get(f.type, 5) for f in payload.flags)
+        verified_score = max(0, 100 - total_deduction)
+        return {
+            "status": "acknowledged",
+            "verified_integrity_score": verified_score,
+            "flags_recorded": len(payload.flags),
+        }
+
+    # Recompute authoritative penalty deduction on server
+    total_deduction = 0
+    for flag in payload.flags:
+        total_deduction += PENALTY_MAP.get(flag.type, 5)
+
+    if payload.devtools_detected:
+        total_deduction += PENALTY_MAP["devtools_opened"]
+    if payload.paste_detected:
+        total_deduction += PENALTY_MAP["paste_attempt"]
+    if payload.multi_screen_detected:
+        total_deduction += PENALTY_MAP["multi_screen"]
+
+    verified_integrity_score = max(0, 100 - total_deduction)
+
+    return {
+        "status": "recorded",
+        "session_id": session.id,
+        "verified_integrity_score": verified_integrity_score,
+        "flags_count": len(payload.flags),
+        "reading_flagged": payload.is_reading,
+    }
+

@@ -235,17 +235,69 @@ def chunk_audio_transcript(document_id: str, merged_segments: List[Dict[str, Any
         
     return chunks
 
-def generate_tts_audio(text: str, lang: str = "en") -> Optional[bytes]:
+async def generate_tts_audio_async(text: str, voice: str = "en-US-AndrewMultilingualNeural", lang: str = "en") -> Optional[bytes]:
     """
-    Generates MP3 speech audio bytes for a text string using gTTS.
+    Generates high-fidelity neural MP3 speech audio bytes using Edge-TTS asynchronously.
+    Falls back gracefully to gTTS if Edge-TTS fails or is unavailable.
     """
+    if not text or not text.strip():
+        return None
+
+    # 1. Primary: Edge-TTS Microsoft Neural Voice (Ultra-low latency, natural inflection)
+    try:
+        import edge_tts
+        communicate = edge_tts.Communicate(text.strip(), voice=voice)
+        audio_stream = io.BytesIO()
+        async for chunk in communicate.stream():
+            if chunk["type"] == "audio":
+                audio_stream.write(chunk["data"])
+        audio_bytes = audio_stream.getvalue()
+        if audio_bytes:
+            return audio_bytes
+    except Exception as edge_err:
+        print(f"[TTS Pipeline Warning] Edge-TTS failed: {edge_err}. Falling back to gTTS...")
+
+    # 2. Resilient Fallback: gTTS
     try:
         from gtts import gTTS
-        tts = gTTS(text=text, lang=lang, slow=False)
+        tts = gTTS(text=text.strip(), lang=lang, slow=False)
         fp = io.BytesIO()
         tts.write_to_fp(fp)
         fp.seek(0)
         return fp.read()
-    except Exception as e:
-        print(f"[TTS Error] gTTS generation failed: {e}")
+    except Exception as gtts_err:
+        print(f"[TTS Pipeline Error] gTTS generation also failed: {gtts_err}")
         return None
+
+def generate_tts_audio(text: str, lang: str = "en", voice: str = "en-US-AndrewMultilingualNeural") -> Optional[bytes]:
+    """
+    Synchronous wrapper for generating MP3 speech audio bytes using Edge-TTS with gTTS fallback.
+    """
+    import asyncio
+    try:
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+        if loop.is_running():
+            # Running inside an active async event loop in same thread
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(lambda: asyncio.run(generate_tts_audio_async(text, voice, lang)))
+                return future.result()
+        else:
+            return loop.run_until_complete(generate_tts_audio_async(text, voice, lang))
+    except Exception as e:
+        print(f"[TTS Sync Error] {e}")
+        # Last resort direct gTTS
+        try:
+            from gtts import gTTS
+            tts = gTTS(text=text.strip(), lang=lang, slow=False)
+            fp = io.BytesIO()
+            tts.write_to_fp(fp)
+            fp.seek(0)
+            return fp.read()
+        except Exception:
+            return None

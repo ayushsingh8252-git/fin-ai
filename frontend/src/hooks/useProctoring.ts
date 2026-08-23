@@ -52,7 +52,11 @@ export type FlagType =
   | "no_face"
   | "multi_face"
   | "looking_away"
+  | "reading_detected"
   | "tab_switch"
+  | "devtools_opened"
+  | "paste_attempt"
+  | "multi_screen"
   | "background_noise"
   | "cross_talk";
 
@@ -70,10 +74,14 @@ export interface ProctoringState {
   errorMessage: string | null;
   faceCount: number;
   isLookingAway: boolean;
+  isReading: boolean;
   integrityScore: number;
   flags: ProctorFlag[];
   activeAlert: string | null;
   tabSwitchCount: number;
+  devtoolsCount: number;
+  pasteCount: number;
+  isMultiScreen: boolean;
   elapsedMs: number;
 }
 
@@ -81,7 +89,11 @@ const FLAG_PENALTY: Record<FlagType, number> = {
   no_face: 15,
   multi_face: 10,
   looking_away: 5,
+  reading_detected: 10,
   tab_switch: 5,
+  devtools_opened: 15,
+  paste_attempt: 8,
+  multi_screen: 10,
   background_noise: 5,
   cross_talk: 8,
 };
@@ -90,7 +102,11 @@ const FLAG_LABEL: Record<FlagType, string> = {
   no_face: "No face detected",
   multi_face: "Multiple faces detected",
   looking_away: "Candidate looking away",
+  reading_detected: "Reading / script scanning detected",
   tab_switch: "Tab switched / window lost focus",
+  devtools_opened: "Developer tools / shortcut attempt blocked",
+  paste_attempt: "Clipboard paste attempt blocked",
+  multi_screen: "Secondary display detected",
   background_noise: "Sustained background noise detected",
   cross_talk: "Talking over the interviewer detected",
 };
@@ -203,6 +219,22 @@ function isLookingAwayFromLandmarks(
   return horizontalOff || verticalOff;
 }
 
+/**
+ * Calculates iris position ratio within the left eye horizontal span.
+ * Used to detect repeated scanning saccades (reading off-screen answers/ChatGPT).
+ */
+function getIrisHorizontalRatio(
+  landmarks: FaceLandmarkerResult["faceLandmarks"][number],
+): number | null {
+  const leftIris = landmarks[LEFT_IRIS];
+  const leftInner = landmarks[LEFT_EYE_INNER];
+  const leftOuter = landmarks[LEFT_EYE_OUTER];
+  if (!leftIris || !leftInner || !leftOuter) return null;
+  const eyeSpan = Math.abs(leftInner.x - leftOuter.x);
+  if (eyeSpan < 1e-4) return null;
+  return (leftIris.x - Math.min(leftInner.x, leftOuter.x)) / eyeSpan;
+}
+
 export interface FaceBox {
   x: number; // 0-1 normalized
   y: number;
@@ -211,7 +243,7 @@ export interface FaceBox {
   flagged: boolean;
 }
 
-export function useProctoring() {
+export function useProctoring(sessionId?: string) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const rafRef = useRef<number | null>(null);
@@ -222,9 +254,16 @@ export function useProctoring() {
   const lastMultiFaceFlagRef = useRef(0);
   const lastNoFaceFlagRef = useRef(0);
   const lastLookAwayFlagRef = useRef(0);
+  const lastReadingFlagRef = useRef(0);
   const lastTabFlagRef = useRef(0);
+  const lastDevToolsFlagRef = useRef(0);
+  const lastPasteFlagRef = useRef(0);
+  const lastMultiScreenFlagRef = useRef(0);
   const startedAtRef = useRef<number>(0);
   const mountedRef = useRef(true);
+
+  // Saccade tracking buffer for reading detection
+  const irisRatiosRef = useRef<{ time: number; ratio: number }[]>([]);
 
   // Ambient noise / cross-talk detection — a second, independent audio-only
   // stream from the video one (separate getUserMedia call), so camera and
@@ -244,10 +283,14 @@ export function useProctoring() {
     errorMessage: null,
     faceCount: 0,
     isLookingAway: false,
+    isReading: false,
     integrityScore: 100,
     flags: [],
     activeAlert: null,
     tabSwitchCount: 0,
+    devtoolsCount: 0,
+    pasteCount: 0,
+    isMultiScreen: false,
     elapsedMs: 0,
   });
   const [faceBoxes, setFaceBoxes] = useState<FaceBox[]>([]);
@@ -374,18 +417,38 @@ export function useProctoring() {
           lookingAwaySinceRef.current = null;
         }
 
+        let isReading = false;
+        if (faces.length === 1 && !lookingAway) {
+          const irisRatio = getIrisHorizontalRatio(faces[0]);
+          if (irisRatio !== null) {
+            irisRatiosRef.current.push({ time: wallClock, ratio: irisRatio });
+            irisRatiosRef.current = irisRatiosRef.current.filter((item) => wallClock - item.time < 3000);
+            if (irisRatiosRef.current.length >= 6) {
+              const ratios = irisRatiosRef.current.map((i) => i.ratio);
+              const minRatio = Math.min(...ratios);
+              const maxRatio = Math.max(...ratios);
+              const diff = maxRatio - minRatio;
+              let shifts = 0;
+              for (let i = 1; i < ratios.length; i++) {
+                if (Math.abs(ratios[i] - ratios[i - 1]) > 0.08) shifts++;
+              }
+              if (diff > 0.16 && shifts >= 2) {
+                isReading = true;
+                if (wallClock - lastReadingFlagRef.current > RE_FLAG_INTERVAL_MS) {
+                  lastReadingFlagRef.current = wallClock;
+                  pushFlag("reading_detected");
+                }
+              }
+            }
+          }
+        }
+
         setState((prev) => ({
           ...prev,
           isLookingAway: lookingAway,
+          isReading,
           elapsedMs: startedAtRef.current ? wallClock - startedAtRef.current : 0,
         }));
-        // Referencing LEFT_IRIS/RIGHT_IRIS/LEFT_EYE_INNER/RIGHT_EYE_INNER keeps
-        // these named constants available for future finer-grained iris gaze
-        // scoring without re-deriving indices.
-        void LEFT_IRIS;
-        void RIGHT_IRIS;
-        void LEFT_EYE_INNER;
-        void RIGHT_EYE_INNER;
       })
       .catch((err) => {
         console.error("Face landmark detection failed", err);
@@ -403,12 +466,7 @@ export function useProctoring() {
     rafRef.current = requestAnimationFrame(detectLoop);
   }, [pushFlag]);
 
-  /** RMS-sampled ambient noise / cross-talk monitor — runs on a plain
-   * interval (not rAF; audio doesn't need frame-rate sampling) against the
-   * persistent audio-only stream acquired in start(). Which check applies
-   * (cross-talk vs. generic background noise) depends on whether the
-   * interview is currently in its "speaking" phase, set via
-   * notifyInterviewPhase() from the consuming component. */
+  /** RMS-sampled ambient noise / cross-talk monitor */
   const sampleAudioLevel = useCallback(() => {
     const analyser = audioAnalyserRef.current;
     if (!analyser) return;
@@ -456,37 +514,36 @@ export function useProctoring() {
     }
   }, [pushFlag]);
 
-  /** Lets the consuming component report whether the AI interviewer is
-   * currently speaking, so the audio monitor can apply the stricter
-   * cross-talk check instead of the generic ambient-noise one. */
   const notifyInterviewPhase = useCallback((phase: InterviewAudioPhase) => {
     interviewAudioPhaseRef.current = phase;
   }, []);
 
   const stop = useCallback(() => {
-    if (rafRef.current !== null) {
+    if (rafRef.current) {
       cancelAnimationFrame(rafRef.current);
       rafRef.current = null;
     }
-    if (audioLoopIntervalRef.current !== null) {
-      window.clearInterval(audioLoopIntervalRef.current);
+    if (audioLoopIntervalRef.current) {
+      clearInterval(audioLoopIntervalRef.current);
       audioLoopIntervalRef.current = null;
     }
-    if (audioCtxRef.current) {
-      audioCtxRef.current.close().catch(() => {});
-      audioCtxRef.current = null;
-    }
-    audioAnalyserRef.current = null;
-    if (audioStreamRef.current) {
-      audioStreamRef.current.getTracks().forEach((t) => t.stop());
-      audioStreamRef.current = null;
-    }
-    noiseSinceRef.current = null;
-    crossTalkSinceRef.current = null;
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
     }
+    if (audioStreamRef.current) {
+      audioStreamRef.current.getTracks().forEach((t) => t.stop());
+      audioStreamRef.current = null;
+    }
+    if (audioCtxRef.current && audioCtxRef.current.state !== "closed") {
+      audioCtxRef.current.close().catch(() => {});
+      audioCtxRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    audioAnalyserRef.current = null;
+    setFaceBoxes([]);
     setState((prev) => ({ ...prev, status: "idle", activeAlert: null }));
   }, []);
 
@@ -498,6 +555,8 @@ export function useProctoring() {
       flags: [],
       integrityScore: 100,
       tabSwitchCount: 0,
+      devtoolsCount: 0,
+      pasteCount: 0,
     }));
     if (!navigator.mediaDevices?.getUserMedia) {
       setState((prev) => ({
@@ -545,9 +604,6 @@ export function useProctoring() {
     } catch (err) {
       console.error("Failed to load the face detection model", err);
       stream.getTracks().forEach((t) => t.stop());
-      // Loading the model failed independently of the camera itself — most
-      // likely the self-hosted WASM/model assets under /public are missing
-      // or the dev server needs a restart to pick them up, so say so.
       setState((prev) => ({
         ...prev,
         status: "error",
@@ -568,10 +624,6 @@ export function useProctoring() {
     setState((prev) => ({ ...prev, status: "live" }));
     rafRef.current = requestAnimationFrame(detectLoop);
 
-    // Noise/cross-talk detection is a non-fatal add-on — a second,
-    // independent getUserMedia({audio:true}) call. If mic permission is
-    // denied or a device is unavailable, proctoring continues video-only,
-    // same resilience pattern as the camera-error branch above.
     try {
       const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
       audioStreamRef.current = audioStream;
@@ -594,13 +646,14 @@ export function useProctoring() {
     }
   }, [detectLoop, sampleAudioLevel]);
 
-  // Tab-switch / focus-loss detection — plain DOM events, active only while live.
+  // Anti-Cheat: Tab switch, DevTools, Paste, & Multi-screen detection listeners
   useEffect(() => {
     if (state.status !== "live") return;
 
+    // 1. Tab switch / focus loss
     const flagTabSwitch = () => {
       const now = Date.now();
-      if (now - lastTabFlagRef.current < 800) return; // dedupe blur+visibilitychange firing together
+      if (now - lastTabFlagRef.current < 800) return;
       lastTabFlagRef.current = now;
       setState((prev) => ({ ...prev, tabSwitchCount: prev.tabSwitchCount + 1 }));
       pushFlag("tab_switch");
@@ -611,13 +664,114 @@ export function useProctoring() {
     };
     const onBlur = () => flagTabSwitch();
 
+    // 2. DevTools shortcut interceptor (F12, Ctrl+Shift+I, Ctrl+Shift+J, Ctrl+Shift+C, Ctrl+U)
+    const onKeyDown = (e: KeyboardEvent) => {
+      const isF12 = e.key === "F12" || e.keyCode === 123;
+      const isInspect = (e.ctrlKey || e.metaKey) && e.shiftKey && ["I", "i", "J", "j", "C", "c"].includes(e.key);
+      const isViewSource = (e.ctrlKey || e.metaKey) && ["u", "U"].includes(e.key);
+
+      if (isF12 || isInspect || isViewSource) {
+        e.preventDefault();
+        e.stopPropagation();
+        const now = Date.now();
+        if (now - lastDevToolsFlagRef.current > 2000) {
+          lastDevToolsFlagRef.current = now;
+          setState((prev) => ({ ...prev, devtoolsCount: prev.devtoolsCount + 1 }));
+          pushFlag("devtools_opened");
+        }
+      }
+    };
+
+    // 3. Context Menu block
+    const onContextMenu = (e: MouseEvent) => {
+      e.preventDefault();
+      const now = Date.now();
+      if (now - lastDevToolsFlagRef.current > 2000) {
+        lastDevToolsFlagRef.current = now;
+        setState((prev) => ({ ...prev, devtoolsCount: prev.devtoolsCount + 1 }));
+        pushFlag("devtools_opened");
+      }
+    };
+
+    // 4. Paste interceptor
+    const onPaste = (e: ClipboardEvent) => {
+      const now = Date.now();
+      if (now - lastPasteFlagRef.current > 2000) {
+        lastPasteFlagRef.current = now;
+        setState((prev) => ({ ...prev, pasteCount: prev.pasteCount + 1 }));
+        pushFlag("paste_attempt");
+      }
+    };
+
+    // 5. Multi-screen / Extended Display detection
+    const checkMultiScreen = () => {
+      try {
+        const isExtended = (window.screen as any)?.isExtended === true;
+        if (isExtended) {
+          const now = Date.now();
+          if (now - lastMultiScreenFlagRef.current > 10000) {
+            lastMultiScreenFlagRef.current = now;
+            setState((prev) => ({ ...prev, isMultiScreen: true }));
+            pushFlag("multi_screen");
+          }
+        }
+      } catch {}
+    };
+
+    checkMultiScreen();
+    const multiScreenInterval = window.setInterval(checkMultiScreen, 5000);
+
     document.addEventListener("visibilitychange", onVisibilityChange);
     window.addEventListener("blur", onBlur);
+    window.addEventListener("keydown", onKeyDown, true);
+    window.addEventListener("contextmenu", onContextMenu);
+    window.addEventListener("paste", onPaste);
+
     return () => {
       document.removeEventListener("visibilitychange", onVisibilityChange);
       window.removeEventListener("blur", onBlur);
+      window.removeEventListener("keydown", onKeyDown, true);
+      window.removeEventListener("contextmenu", onContextMenu);
+      window.removeEventListener("paste", onPaste);
+      clearInterval(multiScreenInterval);
     };
   }, [state.status, pushFlag]);
+
+  // Periodic Telemetry sync to Backend
+  useEffect(() => {
+    if (state.status !== "live" || !sessionId) return;
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+    const syncTelemetry = async () => {
+      try {
+        await fetch(`${apiUrl}/api/v1/screening/proctor/telemetry`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            session_id: sessionId,
+            timestamp: Date.now(),
+            flags: state.flags.map((f) => ({
+              id: f.id,
+              type: f.type,
+              message: f.message,
+              timestamp: f.timestamp,
+            })),
+            face_count: state.faceCount,
+            is_looking_away: state.isLookingAway,
+            is_reading: state.isReading,
+            tab_switch_count: state.tabSwitchCount,
+            devtools_detected: state.devtoolsCount > 0,
+            paste_detected: state.pasteCount > 0,
+            multi_screen_detected: state.isMultiScreen,
+            client_integrity_score: state.integrityScore,
+          }),
+        });
+      } catch {}
+    };
+
+    const interval = window.setInterval(syncTelemetry, 6000);
+    return () => clearInterval(interval);
+  }, [state, sessionId]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -625,8 +779,7 @@ export function useProctoring() {
       mountedRef.current = false;
       stop();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [stop]);
 
   return { videoRef, state, faceBoxes, start, stop, notifyInterviewPhase };
 }
