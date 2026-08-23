@@ -168,7 +168,7 @@ def _gather_twiml(record: models.CallRecord, say_text: str, misses: int = 0) -> 
     vr = VoiceResponse()
     # Domain vocabulary Twilio's speech recognizer should be biased toward —
     # only include values that are actually known for this call.
-    hint_terms = [t for t in (record.role_title, record.candidate_name, "AgenticFlow AI") if t]
+    hint_terms = [t for t in (record.role_title, record.candidate_name, "AgenticFlow") if t]
     gather = Gather(
         input="speech",
         action=f"{base}/api/v1/telephonic/gather?call_record_id={record.id}&misses={misses}",

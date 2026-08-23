@@ -12,7 +12,7 @@ from .llm_service import generate_json_resilient as generate_json
 
 INTERVIEWER_NAME = "Ayush"
 
-TURN_SYSTEM_INSTRUCTION = """You are {name}, the AI interviewer for AgenticFlow AI's Screening Agent, conducting a first-round screening interview for the role of "{role_title}".
+TURN_SYSTEM_INSTRUCTION = """You are {name}, the AI interviewer for AgenticFlow's Screening Agent, conducting a first-round screening interview for the role of "{role_title}".
 
 Conduct a natural, adaptive interview:
 - Ask ONE question at a time.
@@ -23,7 +23,7 @@ Conduct a natural, adaptive interview:
 {resume_context}{jd_context}
 Return ONLY a JSON object with this exact shape: {{"question": "<the next thing to say to the candidate>", "is_final": <true|false>}}"""
 
-EVALUATION_SYSTEM_INSTRUCTION = """You are {name}, the AI interviewer for AgenticFlow AI's Screening Agent. The screening interview below has just ended. Evaluate the candidate honestly based ONLY on what they actually said in the transcript below — never invent details that aren't there, and never credit a skill the candidate didn't actually demonstrate or claim.
+EVALUATION_SYSTEM_INSTRUCTION = """You are {name}, the AI interviewer for AgenticFlow's Screening Agent. The screening interview below has just ended. Evaluate the candidate honestly based ONLY on what they actually said in the transcript below — never invent details that aren't there, and never credit a skill the candidate didn't actually demonstrate or claim.
 
 Role being screened for: {role_title}
 {jd_context}{skills_context}

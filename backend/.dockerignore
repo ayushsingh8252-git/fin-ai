@@ -10,3 +10,8 @@ data/
 .cache/
 .pytest_cache/
 *.log
+
+# Dev-only scratch/debug scripts — not imported by app/, not needed at runtime
+test_*.py
+check_db.py
+seed_project_docs.py

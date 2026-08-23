@@ -30,7 +30,7 @@ def send_invite_email(to_email: str, role_title: str, interview_link: str) -> bo
         "- Use a quiet room with a working camera and microphone.\n"
         "- Have your resume ready (PDF only).\n"
         "- The interview covers 11 questions and takes about 15-20 minutes.\n\n"
-        "Good luck!\nAgenticFlow AI"
+        "Good luck!\nAgenticFlow"
     )
     msg.attach(MIMEText(body, "plain"))
 

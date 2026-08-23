@@ -37,10 +37,10 @@ export interface AIAssistantConfig {
 }
 
 export const ASSISTANT_CONFIG: AIAssistantConfig = {
-  name: "AgenticFlow AI",
+  name: "AgenticFlow",
   subtitle: "Enterprise AI Assistant",
   greeting: "Hi there",
-  intro: "I'm your AgenticFlow AI assistant — ask me about HR policy or the platform itself.",
+  intro: "I'm your AgenticFlow assistant — ask me about HR policy or the platform itself.",
   closingPrompt: "How can I help you today?",
   speakCta: "Speak with AI",
 };

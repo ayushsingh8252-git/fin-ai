@@ -1,4 +1,4 @@
-# AgenticFlow AI
+# AgenticFlow
 
 **An autonomous enterprise platform that reads policy documents like a compliance officer and runs first-round hiring like a recruiting team — citing every answer, gating every action behind a human, and refusing to guess when it doesn't know.**
 
@@ -8,7 +8,7 @@
 
 > The demo runs against real infra, not stubs — including a live LLM, vector DB, and cost model. That also means it inherits real infra's bad days; see [Honest Status](#honest-status) for exactly what's live right now before you judge it on a broken call.
 
-![AgenticFlow AI](hero.png)
+![AgenticFlow](hero.png)
 
 ## What this actually is
 

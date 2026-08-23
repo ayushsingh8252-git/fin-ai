@@ -1,6 +1,6 @@
 fastapi
 uvicorn[standard]
-pymupdf4llm
+PyMuPDF
 requests
 beautifulsoup4
 spacy
@@ -12,7 +12,6 @@ alembic
 psycopg2-binary
 celery
 redis
-python-dotenv
 google-genai
 python-multipart
 pydantic

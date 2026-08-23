@@ -5,6 +5,7 @@ import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { askAssistant } from "@/components/ai-assistant/AIAssistantWidget";
 import { reopenCookieConsent } from "@/components/CookieConsent";
+import { BrandMark } from "@/components/BrandMark";
 import {
   Database, UserPlus, Brain, Bot, BarChart3, Shield,
   ArrowRight, Menu, X, Zap, Users, Globe, CheckCircle2,
@@ -145,11 +146,9 @@ export default function LandingPage() {
         <div className="absolute inset-0 bg-white/80 backdrop-blur-md border-b border-zinc-200/80" />
         <div className="relative max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
           <Link href="/" className="flex items-center gap-2.5 group">
-            <div className="w-8 h-8 rounded-lg bg-zinc-900 text-white flex items-center justify-center font-bold text-sm shadow-sm group-hover:scale-105 transition-transform">
-              <Zap className="w-4 h-4 text-blue-400 fill-blue-400" />
-            </div>
+            <BrandMark variant="dark" />
             <span className="font-bold text-[16px] tracking-tight text-zinc-900">
-              AgenticFlow <span className="text-blue-600 font-mono text-xs uppercase ml-1 px-1.5 py-0.5 rounded bg-blue-50 border border-blue-200">AI</span>
+              AgenticFlow
             </span>
           </Link>
 
@@ -243,7 +242,7 @@ export default function LandingPage() {
               </div>
 
               <h1 className="text-[clamp(2.1rem,4.6vw,3.6rem)] font-extrabold leading-[1.08] tracking-tight text-zinc-900 mb-6">
-                AgenticFlow AI — Enterprise AI{" "}
+                AgenticFlow — Enterprise AI{" "}
                 <span className="relative inline-block text-blue-600">
                   Agent Orchestration
                   <DoodleUnderline className="absolute left-0 -bottom-2.5 w-full text-blue-600" />
@@ -346,7 +345,7 @@ export default function LandingPage() {
           <SectionHeader
             badge="Agent Orchestrator"
             title="Every Agent, Mapped to What It Actually Does"
-            subtitle="From foundational retrieval engines to outcome-facing automation — the full roster powering AgenticFlow AI."
+            subtitle="From foundational retrieval engines to outcome-facing automation — the full roster powering AgenticFlow."
           />
         </div>
         <div className="max-w-[1360px] mx-auto px-6 mt-16">
@@ -388,7 +387,7 @@ export default function LandingPage() {
           <SectionHeader
             badge="The Math"
             title="What 100 first-round screenings actually cost"
-            subtitle="Compare the full manual process: sourcing, screening, coordination, and interviews against AgenticFlow AI."
+            subtitle="Compare the full manual process: sourcing, screening, coordination, and interviews against AgenticFlow."
           />
 
           <MathComparisonCard />
@@ -432,11 +431,9 @@ function SiteFooter() {
         <div className="grid lg:grid-cols-[280px_1fr] gap-12">
           <div>
             <Link href="/" className="flex items-center gap-2.5 mb-4">
-              <div className="w-8 h-8 rounded-lg bg-white text-zinc-900 flex items-center justify-center shadow-sm">
-                <Zap className="w-4 h-4 text-blue-600 fill-blue-600" />
-              </div>
+              <BrandMark variant="light" />
               <span className="font-bold text-[16px] tracking-tight text-white">
-                AgenticFlow <span className="text-blue-400 font-mono text-xs uppercase ml-1 px-1.5 py-0.5 rounded bg-blue-500/10 border border-blue-500/30">AI</span>
+                AgenticFlow
               </span>
             </Link>
             <p className="text-[13px] text-zinc-400 leading-relaxed max-w-xs mb-5">
@@ -471,7 +468,7 @@ function SiteFooter() {
 
         <div className="flex flex-col sm:flex-row items-center justify-between gap-3 mt-14 pt-6 border-t border-white/10">
           <p className="text-[12px] text-zinc-500 font-mono">
-            AgenticFlow AI · Autonomous Enterprise AI Platform · © {new Date().getFullYear()}
+            AgenticFlow · Autonomous Enterprise AI Platform · © {new Date().getFullYear()}
           </p>
           <button
             onClick={() => reopenCookieConsent()}
@@ -1744,7 +1741,7 @@ function MathComparisonCard() {
 
       <div className="relative">
         <div className="text-[11px] font-mono font-bold uppercase tracking-widest text-blue-100 mb-3">
-          Manual vs. AgenticFlow AI · {MATH_CANDIDATES} candidates
+          Manual vs. AgenticFlow · {MATH_CANDIDATES} candidates
         </div>
         <p className="text-[19px] sm:text-[26px] font-bold text-white mb-8 leading-snug">
           You spend <span className="line-through decoration-2 decoration-orange-200/80 text-orange-100">{inr(MATH_MANUAL_COST)}</span> doing this by hand.
@@ -1758,7 +1755,7 @@ function MathComparisonCard() {
           </div>
           <div className="p-5 rounded-2xl bg-white/15 ring-1 ring-white/25 shadow-lg shadow-black/10">
             <div className="text-2xl sm:text-3xl font-extrabold text-emerald-300 font-mono">{inr(MATH_AI_COST)}</div>
-            <div className="text-[13px] font-bold text-white mt-1.5">AgenticFlow AI cost</div>
+            <div className="text-[13px] font-bold text-white mt-1.5">AgenticFlow cost</div>
             <div className="text-[11px] text-blue-100/80 mt-0.5">Telephonic Agent + Screening Agent, end to end</div>
           </div>
           <div className="p-5 rounded-2xl bg-white/5 ring-1 ring-white/10">

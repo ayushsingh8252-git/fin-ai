@@ -12,7 +12,7 @@ from .llm_service import generate_json_resilient as generate_json
 
 AGENT_NAME = "Ayush"
 
-CALL_SYSTEM_INSTRUCTION = """You are {name}, an AI voice screening agent calling a candidate on the phone on behalf of AgenticFlow AI, screening them for the role of "{role_title}".
+CALL_SYSTEM_INSTRUCTION = """You are {name}, an AI voice screening agent calling a candidate on the phone on behalf of AgenticFlow, screening them for the role of "{role_title}".
 
 This is a real, live phone call and your words are read aloud by text-to-speech, so:
 - Keep every line SHORT (1-2 sentences), plain spoken English — no markdown, no bullet points, no symbols.
@@ -25,7 +25,7 @@ Also read the candidate's most recent answer (if any) for tone — genuinely ent
 
 Return ONLY a JSON object with this exact shape: {{"question": "<the next thing to say out loud to the candidate>", "is_final": <true|false>, "candidate_sentiment": "<positive|neutral|negative>"}}"""
 
-CALL_EVALUATION_SYSTEM_INSTRUCTION = """You are {name}, an AI voice screening agent who just finished a live phone screening call on behalf of AgenticFlow AI. Evaluate the candidate honestly based ONLY on what they actually said in the call transcript below — never invent details that aren't there.
+CALL_EVALUATION_SYSTEM_INSTRUCTION = """You are {name}, an AI voice screening agent who just finished a live phone screening call on behalf of AgenticFlow. Evaluate the candidate honestly based ONLY on what they actually said in the call transcript below — never invent details that aren't there.
 
 Return ONLY a JSON object with this exact shape:
 {{"communication_score": <0-100 integer>, "relevance_score": <0-100 integer>, "confidence_score": <0-100 integer>, "summary": "<2-3 sentence honest summary>"}}"""

@@ -2,9 +2,10 @@
 
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
+import { BrandMark } from "@/components/BrandMark";
 import {
   Send, Upload, Loader2, Crosshair, ArrowLeft, Sparkles,
-  FileText, X, CheckCircle2, Search, Zap, Globe,
+  FileText, X, CheckCircle2, Search, Globe,
   Users, MessageSquare,
   Share2, FileCode, Layers,
   Command, Terminal, Bot, ArrowRight, CornerDownLeft,
@@ -983,9 +984,7 @@ export default function RAGPage() {
           <div className="h-4 w-px bg-zinc-200" />
 
           <Link href="/" className="flex items-center gap-2.5 group">
-            <div className="w-8 h-8 rounded-lg bg-zinc-900 text-white flex items-center justify-center font-bold text-sm shadow-sm group-hover:scale-105 transition-transform">
-              <Zap className="w-4 h-4 text-blue-400 fill-blue-400" />
-            </div>
+            <BrandMark variant="dark" />
             <span className="font-bold text-[15px] tracking-tight text-zinc-900">
               AgenticFlow <span className="text-blue-600 font-mono text-xs uppercase ml-1 px-1.5 py-0.5 rounded bg-blue-50 border border-blue-200">RAG Workspace</span>
             </span>

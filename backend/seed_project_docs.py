@@ -2,7 +2,7 @@
 One-off ingestion script: pushes docs/agenticflow-overview.md through the exact
 same pipeline a PDF upload goes through (chunk -> store in SQL -> embed +
 upsert into Pinecone -> LLM rule extraction), so the assistant can answer
-questions about the AgenticFlow AI product itself, not just HR policy PDFs.
+questions about the AgenticFlow product itself, not just HR policy PDFs.
 
 Run from backend/ with the venv active:
     venv\\Scripts\\python.exe seed_project_docs.py
@@ -18,7 +18,7 @@ from app.models import Document
 from app.worker import _process_text_blocks
 
 MD_PATH = os.path.join(os.path.dirname(__file__), "..", "docs", "agenticflow-overview.md")
-DOC_NAME = "AgenticFlow AI — Platform Overview"
+DOC_NAME = "AgenticFlow — Platform Overview"
 
 
 def blocks_from_markdown(path: str) -> list[dict]:
