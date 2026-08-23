@@ -1,0 +1,68 @@
+[
+  {
+    "id": 1,
+    "question": "What is Ayush Singh's education, college, and graduation year?",
+    "retrieval_latency_ms": 17440.0,
+    "reasoning_latency_ms": 4243.9,
+    "total_latency_ms": 21683.9,
+    "retrieval_mode": "chunks",
+    "answer": "Ayush Singh is pursuing a B.Tech in Computer Science at Parul University, with the program spanning from 2022 to 2026, indicating his expected graduation year is 2026.",
+    "chunks_retrieved_count": 5,
+    "rules_retrieved_count": 5
+  },
+  {
+    "id": 2,
+    "question": "What AI systems did Ayush build at OpenEyes and what accuracy improvement was achieved?",
+    "retrieval_latency_ms": 3694.6,
+    "reasoning_latency_ms": 930.7,
+    "total_latency_ms": 4625.2,
+    "retrieval_mode": "rules",
+    "answer": "Ayush built enterprise‑scale multimodal AI systems at OpenEyes using Retrieval‑Augmented Generation (RAG) pipelines. These systems boosted the ground‑truth accuracy by 33%.",
+    "chunks_retrieved_count": 5,
+    "rules_retrieved_count": 5
+  },
+  {
+    "id": 3,
+    "question": "What AWS services and embedding models did Ayush work with at Logicmotive?",
+    "retrieval_latency_ms": 616.1,
+    "reasoning_latency_ms": 1209.1,
+    "total_latency_ms": 1825.1,
+    "retrieval_mode": "rules",
+    "answer": "According to the policy rules, Ayush’s work at Logicmotive involved several AWS services and embedding models. The AWS services mentioned include S3, EC2, IAM, VPC, Lambda, and OpenSearch. In terms of embedding models, the rules cite the use of Titan Embeddings (via AWS Bedrock Knowledge Bases).",
+    "chunks_retrieved_count": 5,
+    "rules_retrieved_count": 5
+  },
+  {
+    "id": 4,
+    "question": "What prize and rank did Ayush win in the PU Code Hackathon?",
+    "retrieval_latency_ms": 945.8,
+    "reasoning_latency_ms": 2250.7,
+    "total_latency_ms": 3196.5,
+    "retrieval_mode": "rules",
+    "answer": "Ayush placed in the Top 10 out of 1,000 teams in the PU Code Hackathon and received a prize of ₹5,000.",
+    "chunks_retrieved_count": 5,
+    "rules_retrieved_count": 5
+  },
+  {
+    "id": 5,
+    "question": "Summarize Ayush's key technical skills in GenAI, backend, and DevOps.",
+    "retrieval_latency_ms": 2274.9,
+    "reasoning_latency_ms": 1724.9,
+    "total_latency_ms": 3999.7,
+    "retrieval_mode": "rules",
+    "answer": "Ayush is proficient in a modern GenAI stack and backend engineering, with strong DevOps‑oriented cloud experience.  \n- **GenAI**: Hands‑on with Retrieval‑Augmented Generation (RAG), LangChain, LangGraph, prompt engineering, large language models (LLMs), embeddings, vector search, and transfer learning.  \n- **Backend**: Builds AI‑driven services in Python, integrates Gemini API, Ollama, EasyOCR, and leverages AWS services (S3, Bedrock Knowledge Bases, Titan embeddings, OpenSearch) to construct scalable pipelines.  \n- **DevOps/Cloud Ops**: Designs and maintains end‑to‑end data and model pipelines on AWS, handling storage, compute, and search infrastructure, indicating solid DevOps skills in cloud deployment, automation, and infrastructure management.",
+    "chunks_retrieved_count": 5,
+    "rules_retrieved_count": 5
+  },
+  {
+    "id": 6,
+    "question": "What is Ayush's experience with Microsoft Azure Cognitive Services?",
+    "retrieval_latency_ms": 3248.6,
+    "reasoning_latency_ms": 16539.1,
+    "total_latency_ms": 19787.8,
+    "retrieval_mode": "missing",
+    "answer": "Required info missing from document context.",
+    "chunks_retrieved_count": 5,
+    "rules_retrieved_count": 5
+  }
+]

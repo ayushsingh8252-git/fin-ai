@@ -25,9 +25,27 @@ _EMPTY_BOLD_RE = re.compile(r"(\*\*|__)(\s*)\1")
 def strip_empty_emphasis(text: str) -> str:
     return _EMPTY_BOLD_RE.sub(lambda m: m.group(2), text)
 
-def generate_answer_with_fallback(query: str, retrieved_rules: list[dict], retrieved_chunks: list[dict]) -> dict:
+def generate_answer_with_fallback(query: str, retrieved_rules: list[dict], retrieved_chunks: list[dict], document_id: str | None = None) -> dict:
     """
-    Dual-tier reasoning pipeline:
+    Adaptive-Corrective RAG reasoning pipeline (CRAG + HyDE + Step-Back + Cross-Encoder Fusion).
+    Falls back gracefully to legacy reasoning if adaptive pipeline errors.
+    """
+    try:
+        from .adaptive_rag import execute_adaptive_rag_pipeline
+        return execute_adaptive_rag_pipeline(
+            query=query,
+            initial_rules=retrieved_rules,
+            initial_chunks=retrieved_chunks,
+            document_id=document_id
+        )
+    except Exception as e:
+        print(f"[Adaptive RAG Engine Error, falling back to legacy reasoning]: {e}")
+        return generate_legacy_answer(query, retrieved_rules, retrieved_chunks)
+
+
+def generate_legacy_answer(query: str, retrieved_rules: list[dict], retrieved_chunks: list[dict]) -> dict:
+    """
+    Dual-tier legacy reasoning pipeline:
     1. First tries answering using retrieved Rules.
     2. If Rules context does not contain the answer, falls back to Normal Chunk context.
     3. If neither contains the required info, returns "Required info missing".

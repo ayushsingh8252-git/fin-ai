@@ -1,0 +1,122 @@
+[
+  {
+    "id": 1,
+    "question": "What is Ayush Singh's education, college, and graduation year?",
+    "retrieval_latency_ms": 5451.3,
+    "reasoning_latency_ms": 17442.5,
+    "total_latency_ms": 22893.7,
+    "retrieval_mode": "rules",
+    "adaptive_trace": {
+      "initial_grade": "MEDIUM",
+      "initial_confidence": 0.86,
+      "branches_executed": [
+        "MEDIUM_REWRITE_SEARCH"
+      ],
+      "step_back_triggered": false,
+      "web_search_triggered": false
+    },
+    "answer": "Ayush Singh’s education is listed as a B degree from Parul University. The evidence does not specify the graduation year.",
+    "chunks_retrieved_count": 5,
+    "rules_retrieved_count": 5
+  },
+  {
+    "id": 2,
+    "question": "What AI systems did Ayush build at OpenEyes and what accuracy improvement was achieved?",
+    "retrieval_latency_ms": 404.8,
+    "reasoning_latency_ms": 1919.2,
+    "total_latency_ms": 2324.0,
+    "retrieval_mode": "rules",
+    "adaptive_trace": {
+      "initial_grade": "HIGH",
+      "initial_confidence": 0.92,
+      "branches_executed": [
+        "HIGH_DIRECT_RERANK"
+      ],
+      "step_back_triggered": false,
+      "web_search_triggered": false
+    },
+    "answer": "Ayush built several AI systems at OpenEyes: an enterprise‑scale multimodal AI system using Retrieval‑Augmented Generation (RAG) pipelines; an AI onboarding automation system that performs OCR‑based PAN verification and fraud checks; and an AI multi‑agent platform built with FastAPI, React, LangGraph and Pinecone. The multimodal RAG system improved ground‑truth accuracy by 33%.",
+    "chunks_retrieved_count": 5,
+    "rules_retrieved_count": 5
+  },
+  {
+    "id": 3,
+    "question": "What AWS services and embedding models did Ayush work with at Logicmotive?",
+    "retrieval_latency_ms": 351.2,
+    "reasoning_latency_ms": 3401.8,
+    "total_latency_ms": 3753.0,
+    "retrieval_mode": "rules",
+    "adaptive_trace": {
+      "initial_grade": "HIGH",
+      "initial_confidence": 0.88,
+      "branches_executed": [
+        "HIGH_DIRECT_RERANK"
+      ],
+      "step_back_triggered": false,
+      "web_search_triggered": false
+    },
+    "answer": "Ayush used several AWS services at Logicmotive, including Amazon S3, Amazon Bedrock Knowledge Bases, Amazon OpenSearch Service, Amazon EC2, IAM, VPC, Lambda, Amazon ECR, and App Runner. For embeddings he employed the Titan Embeddings model.",
+    "chunks_retrieved_count": 5,
+    "rules_retrieved_count": 5
+  },
+  {
+    "id": 4,
+    "question": "What prize and rank did Ayush win in the PU Code Hackathon?",
+    "retrieval_latency_ms": 551.5,
+    "reasoning_latency_ms": 3855.8,
+    "total_latency_ms": 4407.3,
+    "retrieval_mode": "rules",
+    "adaptive_trace": {
+      "initial_grade": "MEDIUM",
+      "initial_confidence": 0.78,
+      "branches_executed": [
+        "MEDIUM_REWRITE_SEARCH"
+      ],
+      "step_back_triggered": false,
+      "web_search_triggered": false
+    },
+    "answer": "Ayush placed in the Top 10 out of 1,000 teams in the PU Code Hackathon 3.0 and received a prize of ₹5,000.",
+    "chunks_retrieved_count": 5,
+    "rules_retrieved_count": 5
+  },
+  {
+    "id": 5,
+    "question": "Summarize Ayush's key technical skills in GenAI, backend, and DevOps.",
+    "retrieval_latency_ms": 438.0,
+    "reasoning_latency_ms": 3462.2,
+    "total_latency_ms": 3900.3,
+    "retrieval_mode": "chunks",
+    "adaptive_trace": {
+      "initial_grade": "MEDIUM",
+      "initial_confidence": 0.88,
+      "branches_executed": [
+        "MEDIUM_REWRITE_SEARCH"
+      ],
+      "step_back_triggered": false,
+      "web_search_triggered": false
+    },
+    "answer": "Ayush's key technical skills include:\n- GenAI/AI: Retrieval‑augmented generation (RAG), LangChain, LangGraph, large language models (LLMs), embeddings, vector search, and prompt engineering.\n- Backend: FastAPI, building REST APIs, and designing microservices.\n- DevOps: Docker, Kubernetes, Jenkins, Terraform, CI/CD pipelines, Linux, Git, and GitHub Actions.",
+    "chunks_retrieved_count": 5,
+    "rules_retrieved_count": 5
+  },
+  {
+    "id": 6,
+    "question": "What is Ayush's experience with Microsoft Azure Cognitive Services?",
+    "retrieval_latency_ms": 379.4,
+    "reasoning_latency_ms": 4595.7,
+    "total_latency_ms": 4975.1,
+    "retrieval_mode": "chunks",
+    "adaptive_trace": {
+      "initial_grade": "LOW",
+      "initial_confidence": 0.9,
+      "branches_executed": [
+        "LOW_HYDE_SEARCH"
+      ],
+      "step_back_triggered": false,
+      "web_search_triggered": false
+    },
+    "answer": "The provided context does not contain any information about Ayush's experience with Microsoft Azure Cognitive Services.",
+    "chunks_retrieved_count": 5,
+    "rules_retrieved_count": 5
+  }
+]

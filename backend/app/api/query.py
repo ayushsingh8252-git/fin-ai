@@ -61,8 +61,10 @@ async def process_query(request: QueryRequest):
             search_query, request.top_k, request.document_id
         )
         
-        # 4. Dual-Tier Reasoning Layer (Rules -> Chunks -> Required info missing)
-        answer_data = generate_answer_with_fallback(search_query, retrieved_rules, retrieved_chunks)
+        # 4. Adaptive-Corrective Reasoning Layer (CRAG + HyDE + Step-Back + Cross-Encoder Fusion)
+        answer_data = generate_answer_with_fallback(
+            search_query, retrieved_rules, retrieved_chunks, document_id=request.document_id
+        )
         
         # 5. Translate English answer back into user's language if non-English
         if detected_lang != "en" and answer_data.get("answer") and answer_data["answer"] != "Required info missing from document context.":
