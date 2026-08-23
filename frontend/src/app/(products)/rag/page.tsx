@@ -10,7 +10,8 @@ import {
   Share2, FileCode, Layers,
   Command, Terminal, Bot, ArrowRight, CornerDownLeft,
   Mic, Volume2, VolumeX, Radio, FileAudio, Square,
-  AlertCircle, Link2, Mail, Plug
+  AlertCircle, Link2, Mail, Plug, Plus, Trash2, Edit2, Check,
+  PanelLeftClose, PanelLeft, Menu, Clock
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import dynamic from "next/dynamic";
@@ -35,10 +36,6 @@ const PdfViewer = dynamic(() => import("@/components/PdfViewer"), {
 });
 
 type Source = {
-  // Present for citations from indexed documents (retrieval_mode "rules" /
-  // "chunks"). Absent for retrieval_mode "web" — those sources are
-  // {title, url} web search results instead (see reasoning.py's Tier 3),
-  // not a document/page/bbox at all.
   document_id?: string;
   page?: number;
   bbox?: number[];
@@ -66,6 +63,14 @@ type Message = {
   retrieval_mode?: "rules" | "chunks" | "missing";
 };
 
+type ChatSession = {
+  id: string;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+  messages: Message[];
+};
+
 type Rule = {
   id: string;
   canonical_rule: string;
@@ -85,6 +90,15 @@ type DocumentItem = {
   status: "idle" | "processing" | "completed" | "failed";
   chunkCount?: number;
 };
+
+const DEFAULT_WELCOME_MESSAGE: Message = {
+  id: "welcome",
+  role: "assistant",
+  content: "Agent online. Synchronized with the shared document index and active MCP tools. Upload a document, crawl a link, or type `/` to open the Command Palette.",
+};
+
+const STORAGE_KEY_SESSIONS = "agenticflow_rag_sessions_v1";
+const STORAGE_KEY_ACTIVE = "agenticflow_rag_active_session_v1";
 
 // Production MCP Agent Tools Registry matching the Light UI Theme
 const CONNECTORS = [
@@ -210,29 +224,44 @@ const CONNECTORS = [
   },
 ];
 
+function formatSessionDate(timestamp: number): string {
+  const now = Date.now();
+  const diffMinutes = Math.floor((now - timestamp) / (1000 * 60));
+  if (diffMinutes < 1) return "Just now";
+  if (diffMinutes < 60) return `${diffMinutes}m ago`;
+  const diffHours = Math.floor(diffMinutes / 60);
+  if (diffHours < 24) return `${diffHours}h ago`;
+  const diffDays = Math.floor(diffHours / 24);
+  if (diffDays === 1) return "Yesterday";
+  if (diffDays < 7) return `${diffDays}d ago`;
+  return new Date(timestamp).toLocaleDateString([], { month: "short", day: "numeric" });
+}
+
 export default function RAGPage() {
   // ── 1. Active View Tab ──
   const [activeTab, setActiveTab] = useState<"chat" | "rules" | "connectors">("chat");
 
-  // ── 2. Documents & Active Document State ──
+  // ── 2. Sidebar & Session History State ──
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [sessionSearch, setSessionSearch] = useState("");
+  const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
+  const [editingTitle, setEditingTitle] = useState("");
+
+  const initialSessionId = "session-" + Date.now();
+  const [sessions, setSessions] = useState<ChatSession[]>([]);
+  const [currentSessionId, setCurrentSessionId] = useState<string>(initialSessionId);
+
+  // ── 3. Documents & Active Document State ──
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
   const [currentDocId, setCurrentDocId] = useState<string | null>(null);
   const [currentFileName, setCurrentFileName] = useState<string | null>(null);
   const [extractedRules, setExtractedRules] = useState<Rule[]>([]);
   const [docStatus, setDocStatus] = useState<"idle" | "processing" | "completed" | "failed">("idle");
   const [activeSource, setActiveSource] = useState<Source | null>(null);
-  // id of the chat message whose citation opened the inspector (null when the
-  // inspector was opened from the Extracted Rules tab, which has no message).
   const [activeSourceMsgId, setActiveSourceMsgId] = useState<string | null>(null);
 
-  // ── 3. Chat State — one unified thread ──
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: "welcome",
-      role: "assistant",
-      content: "Agent online. Synchronized with the shared document index and active MCP tools. Upload a document, crawl a link, or type `/` to open the Command Palette.",
-    },
-  ]);
+  // ── 4. Chat State ──
+  const [messages, setMessages] = useState<Message[]>([DEFAULT_WELCOME_MESSAGE]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [lastQueryFailed, setLastQueryFailed] = useState(false);
@@ -243,10 +272,10 @@ export default function RAGPage() {
   const [linkInputValue, setLinkInputValue] = useState("");
   const [isCrawlingLink, setIsCrawlingLink] = useState(false);
 
-  // ── 4. Command Palette Menu State ──
+  // ── 5. Command Palette Menu State ──
   const [showSlashMenu, setShowSlashMenu] = useState(false);
 
-  // ── 5. Voice Mode & Big Audio Visualizer State ──
+  // ── 6. Voice Mode & Audio State ──
   const [isVoiceMode, setIsVoiceMode] = useState<boolean>(false);
   const [isRecording, setIsRecording] = useState<boolean>(false);
   const [isSpeaking, setIsSpeaking] = useState<boolean>(false);
@@ -257,28 +286,187 @@ export default function RAGPage() {
   const audioChunksRef = useRef<Blob[]>([]);
   const recordingTimerRef = useRef<NodeJS.Timeout | null>(null);
   const recognitionRef = useRef<any>(null);
-  // onresult fires repeatedly with interim text; stop handlers need the final
-  // transcript synchronously (state updates from onresult aren't guaranteed
-  // to have flushed yet), so this ref is the source of truth for submission.
   const latestTranscriptRef = useRef<string>("");
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  // Per-message DOM nodes, keyed by Message.id, so a citation click can scroll
-  // its own parent message into view (opening the PDF inspector doesn't add a
-  // new message, so the bottom-of-chat auto-scroll below never fires for it).
   const messageRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const rulesEndRef = useRef<HTMLDivElement>(null);
   const prevRulesCountRef = useRef(0);
-  // Which document IDs we've already posted a "finished indexing — N chunks"
-  // message for, so the 2500ms status poll doesn't post it more than once.
   const announcedChunkCountRef = useRef<Set<string>>(new Set());
 
-  // Fallback path: records raw mic audio and sends it to our own backend (faster-whisper)
-  // for transcription. Used when the browser has no built-in speech API, or when that API
-  // fails — its "network" error means the browser couldn't reach Google's speech servers,
-  // which our self-hosted transcription doesn't depend on.
+  // ── Load Sessions from localStorage on mount ──
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY_SESSIONS);
+      const activeId = localStorage.getItem(STORAGE_KEY_ACTIVE);
+      if (stored) {
+        const parsed: ChatSession[] = JSON.parse(stored);
+        if (parsed.length > 0) {
+          setSessions(parsed);
+          const targetId = activeId && parsed.some(s => s.id === activeId) ? activeId : parsed[0].id;
+          setCurrentSessionId(targetId);
+          const activeSession = parsed.find(s => s.id === targetId);
+          if (activeSession) {
+            setMessages(activeSession.messages.length > 0 ? activeSession.messages : [DEFAULT_WELCOME_MESSAGE]);
+          }
+          return;
+        }
+      }
+      // Initial default session
+      const newSession: ChatSession = {
+        id: initialSessionId,
+        title: "New Conversation",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        messages: [DEFAULT_WELCOME_MESSAGE],
+      };
+      setSessions([newSession]);
+      setCurrentSessionId(initialSessionId);
+      setMessages([DEFAULT_WELCOME_MESSAGE]);
+      localStorage.setItem(STORAGE_KEY_SESSIONS, JSON.stringify([newSession]));
+      localStorage.setItem(STORAGE_KEY_ACTIVE, initialSessionId);
+    } catch {
+      // Fallback
+    }
+  }, []);
+
+  // ── Sync messages to active session in state & localStorage ──
+  useEffect(() => {
+    if (!currentSessionId) return;
+    setSessions(prev => {
+      const existing = prev.find(s => s.id === currentSessionId);
+      if (!existing) {
+        const fresh: ChatSession = {
+          id: currentSessionId,
+          title: "New Conversation",
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          messages,
+        };
+        const next = [fresh, ...prev];
+        try {
+          localStorage.setItem(STORAGE_KEY_SESSIONS, JSON.stringify(next));
+          localStorage.setItem(STORAGE_KEY_ACTIVE, currentSessionId);
+        } catch {}
+        return next;
+      }
+
+      // Auto-name title from first user query if still default
+      let title = existing.title;
+      if (title === "New Conversation") {
+        const firstUserMsg = messages.find(m => m.role === "user");
+        if (firstUserMsg) {
+          title = firstUserMsg.content.slice(0, 34) + (firstUserMsg.content.length > 34 ? "..." : "");
+        }
+      }
+
+      const updated = prev.map(s =>
+        s.id === currentSessionId
+          ? { ...s, messages, updatedAt: Date.now(), title }
+          : s
+      );
+      try {
+        localStorage.setItem(STORAGE_KEY_SESSIONS, JSON.stringify(updated));
+        localStorage.setItem(STORAGE_KEY_ACTIVE, currentSessionId);
+      } catch {}
+      return updated;
+    });
+  }, [messages, currentSessionId]);
+
+  // ── Session Operations ──
+  const handleCreateNewSession = () => {
+    const newId = "session-" + Date.now();
+    const newSession: ChatSession = {
+      id: newId,
+      title: "New Conversation",
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      messages: [DEFAULT_WELCOME_MESSAGE],
+    };
+    setSessions(prev => {
+      const updated = [newSession, ...prev];
+      try {
+        localStorage.setItem(STORAGE_KEY_SESSIONS, JSON.stringify(updated));
+        localStorage.setItem(STORAGE_KEY_ACTIVE, newId);
+      } catch {}
+      return updated;
+    });
+    setCurrentSessionId(newId);
+    setMessages([DEFAULT_WELCOME_MESSAGE]);
+    setActiveSource(null);
+    setActiveTab("chat");
+    // On small screens, close sidebar drawer
+    if (typeof window !== "undefined" && window.innerWidth < 1024) {
+      setIsSidebarOpen(false);
+    }
+  };
+
+  const handleSelectSession = (sessionId: string) => {
+    if (sessionId === currentSessionId) return;
+    const target = sessions.find(s => s.id === sessionId);
+    if (!target) return;
+    setCurrentSessionId(sessionId);
+    setMessages(target.messages.length > 0 ? target.messages : [DEFAULT_WELCOME_MESSAGE]);
+    setActiveSource(null);
+    setActiveTab("chat");
+    try {
+      localStorage.setItem(STORAGE_KEY_ACTIVE, sessionId);
+    } catch {}
+    if (typeof window !== "undefined" && window.innerWidth < 1024) {
+      setIsSidebarOpen(false);
+    }
+  };
+
+  const handleDeleteSession = (sessionId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const remaining = sessions.filter(s => s.id !== sessionId);
+    if (remaining.length === 0) {
+      handleCreateNewSession();
+      return;
+    }
+    setSessions(remaining);
+    try {
+      localStorage.setItem(STORAGE_KEY_SESSIONS, JSON.stringify(remaining));
+    } catch {}
+    if (currentSessionId === sessionId) {
+      const nextActive = remaining[0];
+      setCurrentSessionId(nextActive.id);
+      setMessages(nextActive.messages.length > 0 ? nextActive.messages : [DEFAULT_WELCOME_MESSAGE]);
+      try {
+        localStorage.setItem(STORAGE_KEY_ACTIVE, nextActive.id);
+      } catch {}
+    }
+  };
+
+  const handleStartRename = (session: ChatSession, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditingSessionId(session.id);
+    setEditingTitle(session.title);
+  };
+
+  const handleSaveRename = (sessionId: string, e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const trimmed = editingTitle.trim() || "Untitled Conversation";
+    setSessions(prev => {
+      const updated = prev.map(s => s.id === sessionId ? { ...s, title: trimmed } : s);
+      try {
+        localStorage.setItem(STORAGE_KEY_SESSIONS, JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
+    setEditingSessionId(null);
+    setEditingTitle("");
+  };
+
+  // Filtered Sessions
+  const filteredSessions = sessions.filter(s =>
+    s.title.toLowerCase().includes(sessionSearch.toLowerCase()) ||
+    s.messages.some(m => m.content.toLowerCase().includes(sessionSearch.toLowerCase()))
+  );
+
+  // Fallback path: faster-whisper recording
   const startServerRecording = async () => {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     const mediaRecorder = new MediaRecorder(stream);
@@ -339,8 +527,6 @@ export default function RAGPage() {
       if (typeof window !== "undefined" && ("webkitSpeechRecognition" in window || "SpeechRecognition" in window)) {
         const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
         const recognition = new SpeechRecognition();
-        // continuous=true prevents the browser from silently ending the session
-        // after the first short pause in speech (was cutting voice mode off mid-sentence).
         recognition.continuous = true;
         recognition.interimResults = true;
         recognition.lang = "en-US";
@@ -355,13 +541,8 @@ export default function RAGPage() {
         };
 
         recognition.onerror = (event: any) => {
-          // "no-speech" / "aborted" fire routinely during normal listening pauses — not real errors.
           if (event.error === "no-speech" || event.error === "aborted") return;
-
           if (recognitionRef.current === recognition) recognitionRef.current = null;
-
-          // "network" = the browser couldn't reach Google's cloud speech service.
-          // Fall back to our own server-side transcription instead of just failing.
           if (event.error === "network") {
             if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
             startServerRecording().catch((fallbackErr) => {
@@ -371,7 +552,6 @@ export default function RAGPage() {
             });
             return;
           }
-
           const messages: Record<string, string> = {
             "not-allowed": "Microphone access denied. Allow mic permissions and try again.",
             "audio-capture": "No microphone found on this device.",
@@ -382,17 +562,11 @@ export default function RAGPage() {
         };
 
         recognition.onend = () => {
-          // Guards against a stale onend firing after we've already handed off
-          // to the server-recording fallback (which owns isRecording/timer by then),
-          // or after the user already hit Stop (stopRecording handles submission itself).
           if (recognitionRef.current !== recognition) return;
           setIsRecording(false);
           recognitionRef.current = null;
           if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
 
-          // In Voice Mode, the browser ending the session on its own (e.g. a long
-          // silence) should still send whatever was captured, not strand it in the
-          // input box looking like the app swallowed the question.
           const finalTranscript = latestTranscriptRef.current.trim();
           if (isVoiceMode && finalTranscript) {
             latestTranscriptRef.current = "";
@@ -420,18 +594,12 @@ export default function RAGPage() {
     if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
     setIsRecording(false);
 
-    // Was the Web Speech API path active? If so its transcript is already
-    // final in the ref — recognition.stop() fires onend asynchronously (after
-    // we've nulled the ref below), so onend's own auto-submit won't run and
-    // this is the only place that can send it.
     const wasUsingSpeechRecognition = !!recognitionRef.current;
     if (recognitionRef.current) {
       recognitionRef.current.stop();
       recognitionRef.current = null;
     }
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
-      // Server-recording path submits from its own onstop handler once the
-      // transcription request resolves — nothing to do here but stop it.
       mediaRecorderRef.current.stop();
     }
 
@@ -495,21 +663,12 @@ export default function RAGPage() {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // Clicking a citation opens the PDF inspector as a sibling of the chat
-  // column, which squeezes it narrower and reflows message bubbles taller —
-  // with no new message added, nothing else would re-trigger a scroll, so the
-  // message the user just clicked could end up pushed out of view. Scroll its
-  // own parent message back into frame whenever the inspector opens.
   useEffect(() => {
     if (activeSource && activeSourceMsgId) {
       messageRefs.current[activeSourceMsgId]?.scrollIntoView({ behavior: "smooth", block: "nearest" });
     }
   }, [activeSource, activeSourceMsgId]);
 
-  // Rules stream in via polling (fetchRules, every 2500ms while processing)
-  // with no scroll handling at all previously — newly appended rules could
-  // land off-screen below the fold. Scroll the list's end into view whenever
-  // it grows while the Rules tab is open.
   useEffect(() => {
     if (activeTab === "rules" && extractedRules.length > prevRulesCountRef.current) {
       rulesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -517,7 +676,6 @@ export default function RAGPage() {
     prevRulesCountRef.current = extractedRules.length;
   }, [extractedRules, activeTab]);
 
-  // Stop any live mic/speech session on unmount so voice mode can't keep running after navigating away.
   useEffect(() => {
     return () => {
       if (recognitionRef.current) recognitionRef.current.stop();
@@ -540,7 +698,6 @@ export default function RAGPage() {
     }
   }, [input]);
 
-  // Filtered slash commands
   const filteredCommands = CONNECTORS.filter((c) =>
     c.command.toLowerCase().includes(input.toLowerCase()) ||
     c.name.toLowerCase().includes(input.replace("/", "").toLowerCase())
@@ -560,8 +717,6 @@ export default function RAGPage() {
         const data = await res.json();
         const rules = data.rules || [];
         const status = data.status || "completed";
-        // Real count of Chunk rows for this document (see backend/app/api/rules.py) —
-        // replaces the Math.random() placeholder that used to be shown right after upload.
         const chunkCount: number | undefined = typeof data.chunk_count === "number" ? data.chunk_count : undefined;
 
         setExtractedRules(rules);
@@ -575,9 +730,6 @@ export default function RAGPage() {
             )
           );
 
-          // Announce the real chunk count once, the first time processing
-          // finishes and a count is actually known — not at upload time,
-          // when ingestion (and thus the true count) hasn't run yet.
           if (status === "completed" && chunkCount !== undefined && !announcedChunkCountRef.current.has(targetDocId)) {
             announcedChunkCountRef.current.add(targetDocId);
             setMessages((prev) => [
@@ -600,14 +752,11 @@ export default function RAGPage() {
 
   useEffect(() => {
     fetchRules();
-
-    // Poll for updates if document status is still processing
     const interval = setInterval(() => {
       if (docStatus === "processing") {
         fetchRules();
       }
     }, 2500);
-
     return () => clearInterval(interval);
   }, [currentDocId, docStatus]);
 
@@ -630,13 +779,9 @@ export default function RAGPage() {
       uploadedAt: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       extractedRules: [],
       status: "processing",
-      // Real chunk count isn't known yet — ingestion (chunking) hasn't run.
-      // It's filled in from the backend once processing completes (see
-      // fetchRules), instead of being guessed here.
     };
 
     setDocuments((prev) => [...prev, newDoc]);
-
     setMessages((prev) => [...prev, { id: Date.now().toString(), role: "user", content: `Upload: ${file.name}` }]);
 
     const formData = new FormData();
@@ -672,7 +817,7 @@ export default function RAGPage() {
     }
   };
 
-  // Crawl a URL and feed it into the same rule-extraction pipeline as a file upload
+  // Crawl a URL
   const handleUrlUpload = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     let url = linkInputValue.trim();
@@ -693,12 +838,9 @@ export default function RAGPage() {
       uploadedAt: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       extractedRules: [],
       status: "processing",
-      // Real chunk count isn't known yet — filled in from the backend once
-      // processing completes (see fetchRules), instead of being guessed here.
     };
 
     setDocuments((prev) => [...prev, newDoc]);
-
     setMessages((prev) => [...prev, { id: Date.now().toString(), role: "user", content: `Crawl link: ${url}` }]);
 
     try {
@@ -736,7 +878,6 @@ export default function RAGPage() {
     }
   };
 
-  // Execute Slash Command
   const applySlashCommand = (cmd: typeof CONNECTORS[0]) => {
     setShowSlashMenu(false);
     if (cmd.command === "/connectors") {
@@ -748,7 +889,6 @@ export default function RAGPage() {
     }
   };
 
-  // Submit Chat Query
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim() || isLoading) return;
@@ -757,17 +897,6 @@ export default function RAGPage() {
     await submitQuery(userQuery);
   };
 
-  // Real (non-simulated) handler for the "/github" chat command — parses a
-  // natural-language query into one of the GitHub MCP connector's tools and
-  // calls the actual backend/app/mcp connector (api/mcp.py). Understands:
-  //   - a github.com/<owner>[/<repo>] URL anywhere in the text
-  //   - a bare "owner/repo" shorthand
-  //   - "list [my] repo(s)" -> list_repositories (owner's own repos if none named)
-  //   - "pr" / "pull request(s)" -> list_pull_requests (needs owner+repo)
-  //   - owner+repo with no other intent -> get_repository
-  // Anything else gets an honest "couldn't parse this" message instead of
-  // falling back to simulated text, since faking a GitHub result would be
-  // worse than admitting the command wasn't understood.
   const handleGithubCommand = async (userQuery: string, queryText: string) => {
     setMessages((prev) => [...prev, { id: Date.now().toString(), role: "user", content: userQuery }]);
 
@@ -823,13 +952,13 @@ export default function RAGPage() {
       if (!res.ok) {
         content = `GitHub MCP call failed (${res.status}): ${data.detail?.message || data.detail || "unknown error"}`;
       } else if (tool === "list_repositories") {
-        content = data.repositories.length
+        content = data.repositories?.length
           ? `${owner ? `**${owner}**'s` : "Your"} repositories (${data.repositories.length}):\n\n${data.repositories
               .map((r: { full_name: string; private: boolean; open_issues: number }) => `- [${r.full_name}](https://github.com/${r.full_name})${r.private ? " 🔒" : ""} — ${r.open_issues} open issue(s)`)
               .join("\n")}`
           : "No repositories found.";
       } else if (tool === "list_pull_requests") {
-        content = data.pull_requests.length
+        content = data.pull_requests?.length
           ? `**${owner}/${repo}** — ${data.pull_requests.length} pull request(s):\n\n${data.pull_requests
               .map((p: { number: number; state: string; title: string }) => `#${p.number} [${p.state}] ${p.title}`)
               .join("\n")}`
@@ -847,8 +976,6 @@ export default function RAGPage() {
     }
   };
 
-  // Shared by the typed-input form and voice mode (which has no <form> submit
-  // event to hook — it must call this directly once a spoken query is final).
   const submitQuery = async (rawQuery: string) => {
     if (!rawQuery.trim() || isLoading) return;
 
@@ -880,10 +1007,6 @@ export default function RAGPage() {
 
         const queryText = userQuery.replace(cmdObj.command, "").trim();
 
-        // /github is wired to the real backend/app/mcp GitHub connector
-        // (see api/mcp.py) — every other slash command below still returns
-        // simulated text, since no other MCP connector has credentials
-        // configured yet.
         if (cmdObj.command === "/github") {
           await handleGithubCommand(userQuery, queryText);
           return;
@@ -956,11 +1079,6 @@ export default function RAGPage() {
     }
   };
 
-  // Resolve the PDF file actually backing the clicked citation by its own
-  // document_id — NOT the globally "last uploaded" document. Cross-corpus
-  // queries return citations from any indexed document, so falling back to
-  // currentDocId/currentFileName here was what caused clicking a citation
-  // from Document B to silently highlight a bbox on Document A's PDF.
   const activeSourceDoc = activeSource
     ? documents.find((d) => d.id === activeSource.document_id)
     : null;
@@ -972,28 +1090,45 @@ export default function RAGPage() {
   return (
     <div className="h-screen w-screen bg-white bg-white-grid flex flex-col overflow-hidden selection:bg-blue-500/20 font-sans text-zinc-900 relative">
       {/* ── TOP NAV BAR ── */}
-      <header className="h-16 shrink-0 bg-white/90 backdrop-blur-md border-b border-zinc-200/80 px-6 flex items-center justify-between z-20">
-        <div className="flex items-center gap-4">
+      <header className="h-16 shrink-0 bg-white/90 backdrop-blur-md border-b border-zinc-200/80 px-4 sm:px-6 flex items-center justify-between z-30">
+        <div className="flex items-center gap-2.5 sm:gap-4">
+          <button
+            type="button"
+            onClick={() => setIsSidebarOpen((prev) => !prev)}
+            className="p-2 rounded-xl text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100 border border-zinc-200 transition-colors shadow-2xs"
+            title={isSidebarOpen ? "Collapse Session History" : "Open Session History"}
+          >
+            {isSidebarOpen ? <PanelLeftClose className="w-4 h-4 text-blue-600" /> : <PanelLeft className="w-4 h-4 text-zinc-600" />}
+          </button>
+
           <Link
             href="/"
-            className="flex items-center gap-2 text-xs font-mono font-semibold text-zinc-600 hover:text-zinc-900 transition-colors bg-zinc-100/80 hover:bg-zinc-200/80 px-3 py-1.5 rounded-lg border border-zinc-200/80"
+            className="hidden sm:flex items-center gap-2 text-xs font-mono font-semibold text-zinc-600 hover:text-zinc-900 transition-colors bg-zinc-100/80 hover:bg-zinc-200/80 px-3 py-1.5 rounded-lg border border-zinc-200/80"
           >
-            <ArrowLeft className="w-3.5 h-3.5" /> Back to Home
+            <ArrowLeft className="w-3.5 h-3.5" /> Back
           </Link>
 
-          <div className="h-4 w-px bg-zinc-200" />
+          <div className="hidden sm:block h-4 w-px bg-zinc-200" />
 
-          <Link href="/" className="flex items-center gap-2.5 group">
+          <Link href="/" className="flex items-center gap-2 group">
             <BrandMark variant="dark" />
-            <span className="font-bold text-[15px] tracking-tight text-zinc-900">
-              AgenticFlow <span className="text-blue-600 font-mono text-xs uppercase ml-1 px-1.5 py-0.5 rounded bg-blue-50 border border-blue-200">RAG Workspace</span>
+            <span className="font-bold text-[14px] sm:text-[15px] tracking-tight text-zinc-900 truncate">
+              AgenticFlow <span className="text-blue-600 font-mono text-[10px] sm:text-xs uppercase ml-1 px-1.5 py-0.5 rounded bg-blue-50 border border-blue-200 hidden md:inline">RAG Workspace</span>
             </span>
           </Link>
         </div>
 
-        <div className="flex items-center gap-3">
-          {/* Telemetry Badge */}
-          <div className="hidden md:flex items-center gap-2 px-3 py-1 rounded-lg bg-zinc-50 border border-zinc-200 text-xs font-mono text-zinc-600">
+        <div className="flex items-center gap-2 sm:gap-3">
+          <button
+            type="button"
+            onClick={handleCreateNewSession}
+            className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition-all shadow-sm flex items-center gap-1.5"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">New Chat</span>
+          </button>
+
+          <div className="hidden lg:flex items-center gap-2 px-3 py-1 rounded-lg bg-zinc-50 border border-zinc-200 text-xs font-mono text-zinc-600">
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
             <span>HNSW Index Active ({documents.length} Docs)</span>
           </div>
@@ -1001,34 +1136,192 @@ export default function RAGPage() {
       </header>
 
       {/* ═══════════════════════════════════════════════════════════════════════
-          UNIFIED WORKSPACE — one chat, no folders, no separate portals
+          MAIN WORKSPACE LAYOUT (SIDEBAR + CONTENT + PDF INSPECTOR)
          ═══════════════════════════════════════════════════════════════════════ */}
       <div className="flex-1 flex min-h-0 overflow-hidden relative z-10">
+        {/* Mobile Backdrop for Sidebar Drawer */}
+        <AnimatePresence>
+          {isSidebarOpen && (
+            <motion.div
+              key="sidebar-mobile-backdrop"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsSidebarOpen(false)}
+              className="lg:hidden absolute inset-0 z-40 bg-zinc-900/40 backdrop-blur-xs"
+            />
+          )}
+        </AnimatePresence>
+
+        {/* ── LEFT SIDEBAR: SESSION HISTORY ── */}
+        <AnimatePresence initial={false}>
+          {isSidebarOpen && (
+            <motion.aside
+              key="session-sidebar"
+              initial={{ width: 0, opacity: 0 }}
+              animate={{ width: 280, opacity: 1 }}
+              exit={{ width: 0, opacity: 0 }}
+              transition={{ duration: 0.25, ease: "easeInOut" }}
+              className="absolute lg:static inset-y-0 left-0 z-50 lg:z-10 bg-white/95 backdrop-blur-md border-r border-zinc-200/80 flex flex-col min-h-0 overflow-hidden shadow-2xl lg:shadow-none"
+              style={{ width: 280 }}
+            >
+              {/* Sidebar Header & Search */}
+              <div className="p-3.5 border-b border-zinc-100 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <MessageSquare className="w-4 h-4 text-blue-600" />
+                    <span className="text-xs font-bold text-zinc-800 tracking-tight">Chat Sessions</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleCreateNewSession}
+                    className="p-1.5 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 transition-colors"
+                    title="Start Fresh Chat"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 text-zinc-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={sessionSearch}
+                    onChange={(e) => setSessionSearch(e.target.value)}
+                    placeholder="Search history..."
+                    className="w-full bg-zinc-50 border border-zinc-200 focus:border-blue-500 rounded-lg pl-8 pr-3 py-1.5 text-xs text-zinc-800 placeholder:text-zinc-400 focus:outline-none transition-all"
+                  />
+                </div>
+              </div>
+
+              {/* Sessions List */}
+              <div className="flex-1 overflow-y-auto p-2 space-y-1 scrollbar-thin">
+                {filteredSessions.length === 0 ? (
+                  <div className="p-4 text-center text-xs font-mono text-zinc-400">
+                    No sessions found
+                  </div>
+                ) : (
+                  filteredSessions.map((s) => {
+                    const isActive = s.id === currentSessionId;
+                    const isEditing = s.id === editingSessionId;
+
+                    return (
+                      <div
+                        key={s.id}
+                        onClick={() => handleSelectSession(s.id)}
+                        className={`group relative rounded-xl p-2.5 transition-all cursor-pointer border text-left ${
+                          isActive
+                            ? "bg-blue-50/80 border-blue-300 text-blue-900 shadow-2xs"
+                            : "bg-white hover:bg-zinc-50/80 border-transparent hover:border-zinc-200 text-zinc-700"
+                        }`}
+                      >
+                        {isEditing ? (
+                          <form onSubmit={(e) => handleSaveRename(s.id, e)} className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+                            <input
+                              type="text"
+                              autoFocus
+                              value={editingTitle}
+                              onChange={(e) => setEditingTitle(e.target.value)}
+                              className="flex-1 bg-white border border-blue-400 rounded px-2 py-0.5 text-xs text-zinc-900 focus:outline-none"
+                            />
+                            <button
+                              type="submit"
+                              className="p-1 text-blue-600 hover:bg-blue-100 rounded"
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setEditingSessionId(null)}
+                              className="p-1 text-zinc-400 hover:text-zinc-600 rounded"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </form>
+                        ) : (
+                          <>
+                            <div className="flex items-center justify-between gap-1.5">
+                              <span className={`text-xs font-semibold truncate ${isActive ? "text-blue-900 font-bold" : "text-zinc-800"}`}>
+                                {s.title}
+                              </span>
+
+                              {/* Actions on Hover */}
+                              <div className="hidden group-hover:flex items-center gap-1 shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={(e) => handleStartRename(s, e)}
+                                  className="p-1 rounded text-zinc-400 hover:text-zinc-700 hover:bg-zinc-200 transition-colors"
+                                  title="Rename session"
+                                >
+                                  <Edit2 className="w-3 h-3" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={(e) => handleDeleteSession(s.id, e)}
+                                  className="p-1 rounded text-zinc-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                                  title="Delete session"
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                </button>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center justify-between mt-1 text-[10px] font-mono text-zinc-400">
+                              <span className="flex items-center gap-1">
+                                <Clock className="w-2.5 h-2.5" />
+                                {formatSessionDate(s.updatedAt)}
+                              </span>
+                              <span>{s.messages.length} msg{s.messages.length === 1 ? "" : "s"}</span>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+              {/* Sidebar Footer */}
+              <div className="p-3 border-t border-zinc-100 flex items-center justify-between text-[11px] font-mono text-zinc-500">
+                <span>{sessions.length} Saved Thread{sessions.length === 1 ? "" : "s"}</span>
+                <button
+                  type="button"
+                  onClick={handleCreateNewSession}
+                  className="text-blue-600 hover:underline font-semibold"
+                >
+                  + New
+                </button>
+              </div>
+            </motion.aside>
+          )}
+        </AnimatePresence>
+
+        {/* ── CENTER WORKSPACE ── */}
         <div className="flex-1 flex flex-col bg-zinc-50/50 min-h-0 overflow-hidden">
           {/* Sub-Header Tabs */}
-          <div className="h-12 bg-white/90 backdrop-blur-md border-b border-zinc-200/80 px-6 flex items-center justify-between shrink-0 gap-3 flex-wrap">
-            <div className="flex items-center gap-1 bg-zinc-100/80 p-1 rounded-xl border border-zinc-200/80">
+          <div className="h-12 bg-white/90 backdrop-blur-md border-b border-zinc-200/80 px-3 sm:px-6 flex items-center justify-between shrink-0 gap-2 overflow-x-auto scrollbar-none">
+            <div className="flex items-center gap-1 bg-zinc-100/80 p-1 rounded-xl border border-zinc-200/80 shrink-0">
               <button
                 onClick={() => setActiveTab("chat")}
-                className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                className={`flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap ${
                   activeTab === "chat"
                     ? "bg-white text-blue-600 shadow-2xs border border-zinc-200/80"
                     : "text-zinc-600 hover:text-zinc-900"
                 }`}
               >
                 <MessageSquare className="w-3.5 h-3.5 text-blue-600" />
-                <span>AI Knowledge Assistant</span>
+                <span>AI Assistant</span>
               </button>
               <button
                 onClick={() => setActiveTab("rules")}
-                className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                className={`flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap ${
                   activeTab === "rules"
                     ? "bg-white text-blue-600 shadow-2xs border border-zinc-200/80"
                     : "text-zinc-600 hover:text-zinc-900"
                 }`}
               >
                 <Sparkles className="w-3.5 h-3.5 text-blue-600" />
-                <span>Extracted Rules</span>
+                <span>Rules</span>
                 {extractedRules.length > 0 && (
                   <span className="ml-1 text-[10px] font-mono px-1.5 py-0.2 rounded-full bg-blue-50 text-blue-700 font-bold border border-blue-200">
                     {extractedRules.length}
@@ -1037,37 +1330,37 @@ export default function RAGPage() {
               </button>
               <button
                 onClick={() => setActiveTab("connectors")}
-                className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                className={`flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap ${
                   activeTab === "connectors"
                     ? "bg-white text-blue-600 shadow-2xs border border-zinc-200/80"
                     : "text-zinc-600 hover:text-zinc-900"
                 }`}
               >
                 <Plug className="w-3.5 h-3.5 text-blue-600" />
-                <span>MCP Tool Connectors</span>
+                <span>MCP Tools</span>
                 <span className="ml-1 text-[10px] font-mono px-1.5 py-0.2 rounded-full bg-blue-50 text-blue-700 font-bold border border-blue-200">
                   {CONNECTORS.length - 1}
                 </span>
               </button>
             </div>
 
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 sm:gap-3 shrink-0">
               <button
                 type="button"
                 onClick={toggleVoiceMode}
-                className={`px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all shadow-2xs border ${
+                className={`px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all shadow-2xs border whitespace-nowrap ${
                   isVoiceMode
                     ? "bg-gradient-to-r from-blue-600 to-indigo-600 text-white border-blue-500 shadow-blue-500/20 font-bold"
                     : "bg-zinc-100 hover:bg-zinc-200 text-zinc-700 border-zinc-200"
                 }`}
               >
                 <Radio className={`w-3.5 h-3.5 ${isVoiceMode ? "text-white animate-pulse" : "text-zinc-500"}`} />
-                <span>Voice Mode {isVoiceMode ? "ON" : "OFF"}</span>
+                <span>Voice {isVoiceMode ? "ON" : "OFF"}</span>
               </button>
 
-              <div className="text-xs font-mono text-zinc-500 hidden sm:flex items-center gap-2">
+              <div className="text-xs font-mono text-zinc-500 hidden xl:flex items-center gap-2">
                 <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
-                <span>Auto-Searching Across All {documents.length} Indexed Documents</span>
+                <span>Auto-Searching {documents.length} Indexed Docs</span>
               </div>
             </div>
           </div>
@@ -1075,7 +1368,7 @@ export default function RAGPage() {
           {/* TAB 1: CHAT */}
           {activeTab === "chat" && (
             <div className="flex-1 flex flex-col min-h-0 bg-white">
-              <div className="flex-1 overflow-y-auto scrollbar-thin p-6 space-y-4 bg-zinc-50/40">
+              <div className="flex-1 overflow-y-auto scrollbar-thin p-4 sm:p-6 space-y-4 bg-zinc-50/40">
                 <div className={`mx-auto space-y-4 ${activeSource ? "max-w-2xl" : "max-w-2xl lg:max-w-3xl 2xl:max-w-5xl"}`}>
                   <VoiceModePanel
                     isVoiceMode={isVoiceMode}
@@ -1094,7 +1387,7 @@ export default function RAGPage() {
                       animate={{ opacity: 1, y: 0 }}
                       className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
                     >
-                      <div className={`max-w-[85%] ${msg.role === "user" ? "items-end" : "items-start"}`}>
+                      <div className={`max-w-[92%] sm:max-w-[85%] ${msg.role === "user" ? "items-end" : "items-start"}`}>
                         <div className="text-[10px] font-mono font-bold text-zinc-400 mb-1 px-1 flex items-center justify-between">
                           <span className="flex items-center gap-1">
                             {msg.role === "assistant" ? (
@@ -1121,7 +1414,7 @@ export default function RAGPage() {
 
                         <div className="flex items-start gap-2">
                           <div
-                            className={`p-4 rounded-2xl text-[13px] leading-relaxed shadow-xs flex-1 ${
+                            className={`p-3.5 sm:p-4 rounded-2xl text-[13px] leading-relaxed shadow-xs flex-1 ${
                               msg.role !== "assistant"
                                 ? "bg-blue-600 text-white font-medium font-sans whitespace-pre-wrap"
                                 : msg.isError
@@ -1161,9 +1454,6 @@ export default function RAGPage() {
                                   <span>Audio Timestamp {src.timestamp_str || `[Page ${src.page}]`}</span>
                                 </div>
                               ) : !src.document_id ? (
-                                // Web search source (retrieval_mode "web") — {title, url}, no
-                                // document/page/bbox at all, so it links out instead of
-                                // opening the PDF Source Inspector.
                                 <a
                                   key={sIdx}
                                   href={src.url}
@@ -1205,8 +1495,8 @@ export default function RAGPage() {
                 </div>
               </div>
 
-              {/* Chat Input & Harmonized Command Palette Menu */}
-              <div className="p-4 bg-white border-t border-zinc-200/80 relative">
+              {/* Chat Input & Command Palette Menu */}
+              <div className="p-3 sm:p-4 bg-white border-t border-zinc-200/80 relative">
                 <div className={`mx-auto relative ${activeSource ? "max-w-2xl" : "max-w-2xl lg:max-w-3xl 2xl:max-w-5xl"}`}>
                   {/* Add Link (Web Crawl) Popover */}
                   <AnimatePresence>
@@ -1264,7 +1554,6 @@ export default function RAGPage() {
                         exit={{ opacity: 0, y: 8, scale: 0.98 }}
                         className="absolute bottom-full mb-3 left-0 right-0 bg-white border border-zinc-200 rounded-2xl shadow-2xl overflow-hidden z-30 max-h-72 flex flex-col font-sans"
                       >
-                        {/* Header */}
                         <div className="px-4 py-2.5 bg-zinc-50/90 border-b border-zinc-200/80 flex items-center justify-between">
                           <div className="flex items-center gap-2">
                             <Command className="w-3.5 h-3.5 text-blue-600" />
@@ -1276,13 +1565,9 @@ export default function RAGPage() {
                             <span className="px-1.5 py-0.5 rounded bg-zinc-100 border border-zinc-200 text-zinc-600">
                               ↵ Select
                             </span>
-                            <span className="px-1.5 py-0.5 rounded bg-zinc-100 border border-zinc-200 text-zinc-600">
-                              Esc Close
-                            </span>
                           </div>
                         </div>
 
-                        {/* Options List */}
                         <div className="overflow-y-auto p-2 space-y-1 flex-1 scrollbar-thin">
                           {filteredCommands.length === 0 ? (
                             <div className="p-4 text-xs font-mono text-zinc-400 text-center">
@@ -1332,7 +1617,7 @@ export default function RAGPage() {
                     )}
                   </AnimatePresence>
 
-                  <form onSubmit={handleSubmit} className="flex gap-2 items-center">
+                  <form onSubmit={handleSubmit} className="flex gap-1.5 sm:gap-2 items-center">
                     <input
                       type="file"
                       ref={fileInputRef}
@@ -1344,36 +1629,36 @@ export default function RAGPage() {
                       type="button"
                       onClick={() => fileInputRef.current?.click()}
                       disabled={isUploading}
-                      className="w-11 h-11 rounded-xl bg-zinc-100 hover:bg-blue-50 text-zinc-700 hover:text-blue-600 border border-zinc-200 hover:border-blue-200 flex items-center justify-center transition-all disabled:opacity-40 shrink-0"
+                      className="w-10 h-10 sm:w-11 sm:h-11 rounded-xl bg-zinc-100 hover:bg-blue-50 text-zinc-700 hover:text-blue-600 border border-zinc-200 hover:border-blue-200 flex items-center justify-center transition-all disabled:opacity-40 shrink-0"
                       title="Upload a document or audio file"
                     >
-                      {isUploading ? <Loader2 className="w-5 h-5 animate-spin text-blue-600" /> : <Upload className="w-5 h-5" />}
+                      {isUploading ? <Loader2 className="w-4 h-4 sm:w-5 sm:h-5 animate-spin text-blue-600" /> : <Upload className="w-4 h-4 sm:w-5 sm:h-5" />}
                     </button>
 
                     <button
                       type="button"
                       onClick={() => setShowLinkInput((prev) => !prev)}
-                      className={`w-11 h-11 rounded-xl flex items-center justify-center transition-all shrink-0 border ${
+                      className={`w-10 h-10 sm:w-11 sm:h-11 rounded-xl flex items-center justify-center transition-all shrink-0 border ${
                         showLinkInput
                           ? "bg-blue-50 text-blue-600 border-blue-200"
                           : "bg-zinc-100 hover:bg-blue-50 text-zinc-700 hover:text-blue-600 border-zinc-200 hover:border-blue-200"
                       }`}
                       title="Crawl a link into the index"
                     >
-                      <Link2 className="w-5 h-5" />
+                      <Link2 className="w-4 h-4 sm:w-5 sm:h-5" />
                     </button>
 
-                    <div className="relative flex-1">
+                    <div className="relative flex-1 min-w-0">
                       <input
                         ref={inputRef}
                         value={input}
                         onChange={(e) => setInput(e.target.value)}
-                        placeholder="Ask a question, upload a document, or type '/' for tools..."
-                        className="w-full bg-zinc-50 border border-zinc-200 focus:border-blue-500 rounded-xl px-4 py-3 text-[13px] text-zinc-900 placeholder:text-zinc-400 focus:outline-none transition-all shadow-inner font-sans"
+                        placeholder="Ask a question, upload doc, or type '/'..."
+                        className="w-full bg-zinc-50 border border-zinc-200 focus:border-blue-500 rounded-xl px-3 sm:px-4 py-2.5 sm:py-3 text-[13px] text-zinc-900 placeholder:text-zinc-400 focus:outline-none transition-all shadow-inner font-sans"
                         disabled={isLoading}
                       />
                       {input.startsWith("/") && (
-                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-mono bg-blue-50 text-blue-700 border border-blue-200 px-2.5 py-0.5 rounded-md font-bold pointer-events-none flex items-center gap-1 shadow-2xs">
+                        <span className="hidden sm:flex absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-mono bg-blue-50 text-blue-700 border border-blue-200 px-2.5 py-0.5 rounded-md font-bold pointer-events-none items-center gap-1 shadow-2xs">
                           <Terminal className="w-3 h-3 text-blue-600" /> Command Mode
                         </span>
                       )}
@@ -1382,22 +1667,22 @@ export default function RAGPage() {
                     <button
                       type="button"
                       onClick={isRecording ? stopRecording : startRecording}
-                      className={`w-12 h-12 rounded-xl flex items-center justify-center transition-all shrink-0 border ${
+                      className={`w-10 h-10 sm:w-12 sm:h-12 rounded-xl flex items-center justify-center transition-all shrink-0 border ${
                         isRecording
                           ? "bg-red-600 hover:bg-red-700 text-white border-red-500 animate-pulse shadow-md shadow-red-500/30"
                           : "bg-zinc-100 hover:bg-blue-50 text-zinc-700 hover:text-blue-600 border-zinc-200 hover:border-blue-200"
                       }`}
                       title={isRecording ? "Stop Voice Recording" : "Record Voice Query"}
                     >
-                      {isRecording ? <Square className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+                      {isRecording ? <Square className="w-4 h-4 sm:w-5 sm:h-5" /> : <Mic className="w-4 h-4 sm:w-5 sm:h-5" />}
                     </button>
 
                     <button
                       type="submit"
                       disabled={isLoading || !input.trim()}
-                      className="w-12 h-12 rounded-xl bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center shadow-md shadow-blue-600/20 transition-all disabled:opacity-40 shrink-0"
+                      className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center shadow-md shadow-blue-600/20 transition-all disabled:opacity-40 shrink-0"
                     >
-                      <Send className="w-5 h-5" />
+                      <Send className="w-4 h-4 sm:w-5 sm:h-5" />
                     </button>
                   </form>
                 </div>
@@ -1407,7 +1692,7 @@ export default function RAGPage() {
 
           {/* TAB 2: EXTRACTED RULES */}
           {activeTab === "rules" && (
-            <div className="flex-1 overflow-y-auto p-6 bg-zinc-50/40">
+            <div className="flex-1 overflow-y-auto p-4 sm:p-6 bg-zinc-50/40">
               <div className="max-w-2xl mx-auto space-y-3">
                 {docStatus === "processing" && (
                   <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs font-mono text-amber-800 flex items-center gap-2 shadow-xs">
@@ -1416,9 +1701,6 @@ export default function RAGPage() {
                   </div>
                 )}
 
-                {/* Loading skeleton: distinguishes "still loading, rules incoming"
-                    from the genuine "nothing extracted" empty state below —
-                    previously both looked identical (blank list) while processing. */}
                 {docStatus === "processing" && extractedRules.length === 0 && (
                   <div className="space-y-3" aria-hidden="true">
                     {[0, 1, 2].map((i) => (
@@ -1467,8 +1749,6 @@ export default function RAGPage() {
                         {rule.bbox && rule.page_dim && rule.page && rule.document_id && (
                           <button
                             onClick={() => {
-                              // No chat message backs a rule-card citation, so
-                              // don't scroll to a stale message from an earlier click.
                               setActiveSourceMsgId(null);
                               setActiveSource({
                                 document_id: rule.document_id!,
@@ -1499,13 +1779,13 @@ export default function RAGPage() {
 
           {/* TAB 3: CONNECTORS SECTION */}
           {activeTab === "connectors" && (
-            <div className="flex-1 overflow-y-auto p-8 max-w-6xl mx-auto w-full">
-              <div className="mb-8">
+            <div className="flex-1 overflow-y-auto p-4 sm:p-8 max-w-6xl mx-auto w-full">
+              <div className="mb-6 sm:mb-8">
                 <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-50 border border-blue-200 text-blue-700 text-xs font-semibold mb-3">
                   <Plug className="w-3.5 h-3.5 text-blue-600" />
                   <span>Agentic MCP Server Registry</span>
                 </div>
-                <h2 className="text-2xl font-bold text-zinc-900 tracking-tight">
+                <h2 className="text-xl sm:text-2xl font-bold text-zinc-900 tracking-tight">
                   Integrated MCP Tool Connectors
                 </h2>
                 <p className="text-xs text-zinc-500 mt-1 max-w-xl">
@@ -1513,14 +1793,14 @@ export default function RAGPage() {
                 </p>
               </div>
 
-              <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+              <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 {CONNECTORS.filter((c) => c.id !== "connectors").map((c) => {
                   const Icon = c.icon;
                   return (
                     <motion.div
                       key={c.id}
                       whileHover={{ y: -2 }}
-                      className="bg-white border border-zinc-200/80 hover:border-blue-300 rounded-2xl p-5 shadow-xs hover:shadow-md transition-all flex flex-col justify-between"
+                      className="bg-white border border-zinc-200/80 hover:border-blue-300 rounded-2xl p-4 sm:p-5 shadow-xs hover:shadow-md transition-all flex flex-col justify-between"
                     >
                       <div>
                         <div className="flex items-center justify-between mb-4">
@@ -1551,7 +1831,7 @@ export default function RAGPage() {
                       </div>
 
                       <div className="mt-5 pt-3 border-t border-zinc-100 flex items-center justify-between">
-                        <span className="text-[11px] font-mono text-zinc-500">
+                        <span className="text-[11px] font-mono text-zinc-500 truncate mr-2">
                           {c.agentAction}
                         </span>
                         <button
@@ -1560,9 +1840,9 @@ export default function RAGPage() {
                             setActiveTab("chat");
                             setInput(`${c.command} `);
                           }}
-                          className="px-3.5 py-1.5 rounded-lg bg-zinc-900 hover:bg-blue-600 text-white text-xs font-semibold transition-colors flex items-center gap-1 shadow-2xs"
+                          className="px-3.5 py-1.5 rounded-lg bg-zinc-900 hover:bg-blue-600 text-white text-xs font-semibold transition-colors flex items-center gap-1 shadow-2xs shrink-0"
                         >
-                          <span>Execute Tool</span>
+                          <span>Execute</span>
                           <ArrowRight className="w-3 h-3" />
                         </button>
                       </div>
@@ -1574,14 +1854,7 @@ export default function RAGPage() {
           )}
         </div>
 
-        {/* ── SLIDE-OVER: PDF SOURCE INSPECTOR ──
-            Below `lg`, 38% would squeeze the chat column unusably thin, so
-            the panel becomes a full-screen overlay instead; at `lg` and up it
-            reverts to a docked 38% side panel. A backdrop behind it (dim on
-            mobile, invisible but still clickable on desktop) closes it on an
-            outside click — the panel itself stops that click from bubbling
-            through so nothing inside it (the X button, PdfViewer controls)
-            is affected. */}
+        {/* ── SLIDE-OVER: PDF SOURCE INSPECTOR ── */}
         <AnimatePresence>
           {activeSource && (
             <motion.div
@@ -1590,7 +1863,7 @@ export default function RAGPage() {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => setActiveSource(null)}
-              className="absolute inset-0 z-30 bg-zinc-900/40 lg:bg-transparent"
+              className="absolute inset-0 z-40 bg-zinc-900/40 lg:bg-transparent"
               aria-hidden="true"
             />
           )}
@@ -1604,7 +1877,7 @@ export default function RAGPage() {
               exit={{ x: "100%", opacity: 0 }}
               transition={{ duration: 0.3 }}
               onClick={(e) => e.stopPropagation()}
-              className="absolute inset-y-0 right-0 z-40 w-full lg:static lg:inset-auto lg:z-auto lg:w-[38%] shrink-0 bg-white border-l border-zinc-200 flex flex-col overflow-hidden shadow-xl"
+              className="absolute inset-y-0 right-0 z-50 w-full sm:w-[480px] lg:static lg:inset-auto lg:z-auto lg:w-[38%] shrink-0 bg-white border-l border-zinc-200 flex flex-col overflow-hidden shadow-xl"
             >
               <div className="h-11 shrink-0 bg-zinc-50 border-b border-zinc-200 px-4 flex items-center justify-between">
                 <span className="text-xs font-bold text-zinc-800">PDF Source Inspector</span>
@@ -1632,8 +1905,7 @@ export default function RAGPage() {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   VOICE MODE PANEL — light, on-brand card matching the rest of
-   the workspace (white/zinc/blue) instead of a dark "AI slop" orb.
+   VOICE MODE PANEL
    ═══════════════════════════════════════════════════════════ */
 
 function VoiceModePanel({
@@ -1670,11 +1942,11 @@ function VoiceModePanel({
           initial={{ opacity: 0, scale: 0.97, y: -8 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.97, y: -8 }}
-          className="relative bg-gradient-to-br from-white via-blue-50/40 to-white border border-blue-200/70 rounded-2xl p-5 mb-6 shadow-sm overflow-hidden"
+          className="relative bg-gradient-to-br from-white via-blue-50/40 to-white border border-blue-200/70 rounded-2xl p-4 sm:p-5 mb-4 sm:mb-6 shadow-sm overflow-hidden"
         >
           <div className="absolute top-0 right-0 w-32 h-32 bg-blue-100/50 rounded-bl-full blur-2xl pointer-events-none" />
 
-          <div className="relative flex items-center gap-4">
+          <div className="relative flex items-center gap-3 sm:gap-4">
             {/* Mic Button */}
             <div className="relative shrink-0">
               <motion.div
@@ -1685,29 +1957,29 @@ function VoiceModePanel({
               <button
                 type="button"
                 onClick={onToggleRecord}
-                className={`relative z-10 w-14 h-14 rounded-full flex items-center justify-center text-white shadow-md transition-all ${accent.button}`}
+                className={`relative z-10 w-12 h-12 sm:w-14 sm:h-14 rounded-full flex items-center justify-center text-white shadow-md transition-all ${accent.button}`}
                 title={isRecording ? "Stop Recording" : "Start Voice Query"}
               >
                 {isRecording ? (
-                  <Square className="w-5 h-5" />
+                  <Square className="w-4 h-4 sm:w-5 sm:h-5" />
                 ) : isSpeaking ? (
-                  <Volume2 className="w-5 h-5 animate-pulse" />
+                  <Volume2 className="w-4 h-4 sm:w-5 sm:h-5 animate-pulse" />
                 ) : (
-                  <Mic className="w-5 h-5" />
+                  <Mic className="w-4 h-4 sm:w-5 sm:h-5" />
                 )}
               </button>
             </div>
 
             {/* Status + Waveform */}
             <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 mb-1.5">
+              <div className="flex items-center gap-2 mb-1">
                 <span className={`w-1.5 h-1.5 rounded-full ${accent.dot} ${state !== "idle" ? "animate-pulse" : ""}`} />
-                <span className="text-xs font-mono font-bold uppercase tracking-wider text-zinc-900">
+                <span className="text-[11px] sm:text-xs font-mono font-bold uppercase tracking-wider text-zinc-900 truncate">
                   {isRecording ? `Listening · ${recordingTime}s` : isSpeaking ? "Speaking Response" : "Voice Mode Active"}
                 </span>
               </div>
 
-              <div className="flex items-end gap-1 h-5 mb-1.5">
+              <div className="flex items-end gap-1 h-4 sm:h-5 mb-1">
                 {barHeights.map((h, i) => (
                   <span
                     key={i}
@@ -1717,12 +1989,12 @@ function VoiceModePanel({
                 ))}
               </div>
 
-              <p className="text-[11px] text-zinc-500 leading-relaxed truncate">
+              <p className="text-[10px] sm:text-[11px] text-zinc-500 leading-relaxed truncate">
                 {isRecording
-                  ? "Click the button again to stop and send your question."
+                  ? "Click again to stop and send."
                   : isSpeaking
                   ? "Reading the answer aloud."
-                  : "Click the mic to ask a question by voice."}
+                  : "Click mic to speak."}
               </p>
             </div>
 
@@ -1730,7 +2002,7 @@ function VoiceModePanel({
               <button
                 type="button"
                 onClick={onStopSpeaking}
-                className="shrink-0 text-[11px] font-mono font-bold text-blue-600 hover:text-blue-700 border border-blue-200 hover:bg-blue-50 px-3 py-1.5 rounded-lg transition-colors"
+                className="shrink-0 text-[10px] sm:text-[11px] font-mono font-bold text-blue-600 hover:text-blue-700 border border-blue-200 hover:bg-blue-50 px-2.5 sm:px-3 py-1.5 rounded-lg transition-colors"
               >
                 Stop
               </button>
@@ -1738,7 +2010,7 @@ function VoiceModePanel({
           </div>
 
           {voiceError && (
-            <div className="relative mt-3.5 pt-3 border-t border-zinc-100 flex items-center gap-2 text-[11px] font-mono text-red-600">
+            <div className="relative mt-3 pt-2.5 border-t border-zinc-100 flex items-center gap-2 text-[11px] font-mono text-red-600">
               <AlertCircle className="w-3.5 h-3.5 shrink-0" />
               <span>{voiceError}</span>
             </div>
