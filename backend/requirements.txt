@@ -32,3 +32,5 @@ scikit-learn
 networkx
 httpx
 pytest
+opencv-python
+pyzbar

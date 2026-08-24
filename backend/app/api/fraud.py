@@ -135,3 +135,35 @@ def get_scan(scan_id: str, db: Session = Depends(get_db)):
         "status": scan.status,
         "result": scan.result,
     }
+
+
+@router.post("/bundle")
+def triangulate_bundle(payload: dict, db: Session = Depends(get_db)):
+    """
+    Cross-triangulates a bundle of completed document scans.
+    Payload: {"scan_ids": ["scan_id_1", "scan_id_2", ...]}
+    """
+    scan_ids = payload.get("scan_ids", [])
+    if not scan_ids or not isinstance(scan_ids, list):
+        raise HTTPException(status_code=400, detail="Must provide a list of 'scan_ids'.")
+
+    scans = db.query(FraudScan).filter(FraudScan.id.in_(scan_ids)).all()
+    if not scans:
+        raise HTTPException(status_code=404, detail="No matching scans found for the provided scan_ids.")
+
+    doc_results = []
+    for s in scans:
+        res = s.result or {}
+        doc_results.append({
+            "scan_id": s.id,
+            "filename": s.filename,
+            "content_type": s.content_type,
+            "risk_score": res.get("risk_score"),
+            "verdict": res.get("verdict"),
+            "steps": res.get("steps", []),
+        })
+
+    from ..services.fraud_bundle_triangulation import triangulate_document_bundle
+    bundle_analysis = triangulate_document_bundle(doc_results)
+    return bundle_analysis
+
