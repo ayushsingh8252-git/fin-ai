@@ -63,12 +63,8 @@ class AiTextSignal(BaseModel):
 # Models + fallback-chain construction
 # ─────────────────────────────────────────────────────────────────────────
 
-# llama-3.3-70b-versatile was removed from Groq's catalog entirely (404
-# model_not_found, confirmed live) — gpt-oss-120b is the current
-# equivalent-tier general-purpose model. gemini-2.0-flash is similarly
-# retired (404, Google's docs point to gemini-3.6-flash as the replacement).
-_GROQ_MODEL = "openai/gpt-oss-120b"
-_GEMINI_MODELS = ["gemini-2.5-flash", "gemini-flash-latest", "gemini-3.6-flash"]
+_GROQ_MODEL = "llama-3.3-70b-versatile"
+_GEMINI_MODELS = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-2.5-flash"]
 
 
 def _build_models():

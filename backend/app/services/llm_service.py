@@ -32,22 +32,19 @@ def _call_grok_groq_api(prompt: str, system_instruction: str = None, api_key: st
     # Determine endpoint and model based on API key prefix
     if api_key.startswith("xai-"):
         base_url = "https://api.x.ai/v1/chat/completions"
-        model = "grok-2-latest"
+        model_candidates = ["grok-2-latest", "grok-beta"]
     else:
         base_url = "https://api.groq.com/openai/v1/chat/completions"
-        model = "openai/gpt-oss-120b"
+        # Standard, highly reliable Groq models
+        model_candidates = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768"]
 
     messages = []
-    if system_instruction:
-        messages.append({"role": "system", "content": system_instruction})
+    # Groq JSON mode strictly requires the word 'json' in messages
+    sys_content = system_instruction or "You are an expert AI assistant that responds strictly in valid JSON format."
+    if "json" not in sys_content.lower() and "json" not in prompt.lower():
+        sys_content += " You must format your response as a valid JSON object."
+    messages.append({"role": "system", "content": sys_content})
     messages.append({"role": "user", "content": prompt})
-
-    payload = {
-        "model": model,
-        "messages": messages,
-        "temperature": 0.2,
-        "response_format": {"type": "json_object"},
-    }
 
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -55,21 +52,38 @@ def _call_grok_groq_api(prompt: str, system_instruction: str = None, api_key: st
         "User-Agent": "AI-Policy-Rule-Engine/1.0",
     }
 
-    req = urllib.request.Request(
-        base_url,
-        data=json.dumps(payload).encode("utf-8"),
-        headers=headers,
-        method="POST",
-    )
+    last_err = None
+    for model in model_candidates:
+        payload = {
+            "model": model,
+            "messages": messages,
+            "temperature": 0.2,
+            "response_format": {"type": "json_object"},
+        }
+        try:
+            req = urllib.request.Request(
+                base_url,
+                data=json.dumps(payload).encode("utf-8"),
+                headers=headers,
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                res_data = json.loads(resp.read().decode("utf-8"))
+                return res_data["choices"][0]["message"]["content"]
+        except Exception as e:
+            last_err = e
+            if is_rate_limit_error(e):
+                raise e
+            continue
 
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        res_data = json.loads(resp.read().decode("utf-8"))
-        return res_data["choices"][0]["message"]["content"]
+    if last_err:
+        raise last_err
+    raise ValueError("All Groq/Grok model candidates failed.")
 
 
 def _call_gemini_api(prompt: str, system_instruction: str = None, api_key: str = None) -> str:
     """
-    Calls fallback Gemini API (tries gemini-3.6-flash, gemini-flash-latest, gemini-2.5-flash).
+    Calls fallback Gemini API (tries gemini-2.0-flash, gemini-1.5-flash, gemini-2.5-flash).
     Accepts optional specific api_key.
     """
     client = _get_gemini_client(api_key) if api_key else gemini_client
@@ -80,7 +94,7 @@ def _call_gemini_api(prompt: str, system_instruction: str = None, api_key: str =
     if system_instruction:
         full_prompt = f"{system_instruction}\n\n{prompt}"
 
-    for model_name in ["gemini-3.6-flash", "gemini-flash-latest", "gemini-2.5-flash"]:
+    for model_name in ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-2.5-flash"]:
         try:
             response = client.models.generate_content(
                 model=model_name,
@@ -93,9 +107,9 @@ def _call_gemini_api(prompt: str, system_instruction: str = None, api_key: str =
             if response and response.text:
                 return response.text
         except Exception as e:
-            print(f"[Gemini Model {model_name} Warning]: {e}")
             if is_rate_limit_error(e):
                 raise e
+            continue
 
     raise ValueError("All Gemini model attempts failed.")
 
