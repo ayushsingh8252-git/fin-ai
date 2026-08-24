@@ -7,13 +7,52 @@ from .api import upload, query, rules, audio, fraud, interview, auth, telephonic
 from .database import engine
 from . import models
 
-# Create database tables automatically
-models.Base.metadata.create_all(bind=engine)
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # ── Startup Warmup ──
+    # 1. Warm up embedding model (bge-base-en-v1.5) & run dummy forward-pass
+    # to eliminate the 17.4s cold-start on the first user query.
+    try:
+        print("[Lifespan Startup] Pre-warming embedding model (bge-base-en-v1.5)...")
+        from .services.detection import get_embedding_model
+        model = get_embedding_model()
+        model.encode("startup warmup query")
+        print("[Lifespan Startup] Embedding model pre-warmed successfully (weights cached in RAM)!")
+    except Exception as e:
+        print(f"[Lifespan Startup Warning] Embedding model warmup failed: {e}")
+
+    # 2. Warm up Pinecone vector index connection pool
+    try:
+        from .services.canonicalization import get_pinecone_index
+        get_pinecone_index()
+        print("[Lifespan Startup] Pinecone vector index connection pool warmed!")
+    except Exception as e:
+        print(f"[Lifespan Startup Warning] Pinecone index warmup failed: {e}")
+
+    # 3. Pre-warm local fallback retrieval caches
+    try:
+        from .services.local_fallback_retrieval import prewarm_caches
+        prewarm_caches()
+    except Exception as e:
+        print(f"[Lifespan Startup Warning] Local fallback cache prewarm failed: {e}")
+
+    # 4. Refresh live LLM keys
+    try:
+        from .services.key_manager import key_manager
+        key_manager.refresh_keys()
+    except Exception as e:
+        print(f"[Lifespan Startup Warning] Key manager refresh failed: {e}")
+
+    yield
+
 
 app = FastAPI(
     title="AI Policy Intelligence Platform API",
     description="Backend API for the rule intelligence engine.",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan
 )
 
 cors_origins = [o.strip() for o in settings.CORS_ORIGINS.split(",") if o.strip()]
@@ -62,13 +101,6 @@ app.include_router(mcp.router, prefix="/api/v1")
 os.makedirs("uploads", exist_ok=True)
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
-@app.on_event("startup")
-def _prewarm_local_fallback_retrieval():
-    # Kicks off the local (Pinecone-free) semantic search cache build in a
-    # background thread so it's likely warm by the time a Pinecone outage
-    # actually needs it — see services/local_fallback_retrieval.py.
-    from .services.local_fallback_retrieval import prewarm_caches
-    prewarm_caches()
 
 
 @app.get("/")
