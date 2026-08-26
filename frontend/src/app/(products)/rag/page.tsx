@@ -87,7 +87,7 @@ type DocumentItem = {
   fileName: string;
   uploadedAt: string;
   extractedRules: Rule[];
-  status: "idle" | "processing" | "completed" | "failed";
+  status: "idle" | "uploaded" | "processing" | "completed" | "failed";
   chunkCount?: number;
 };
 
@@ -256,7 +256,15 @@ export default function RAGPage() {
   const [currentDocId, setCurrentDocId] = useState<string | null>(null);
   const [currentFileName, setCurrentFileName] = useState<string | null>(null);
   const [extractedRules, setExtractedRules] = useState<Rule[]>([]);
-  const [docStatus, setDocStatus] = useState<"idle" | "processing" | "completed" | "failed">("idle");
+  const [docStatus, setDocStatus] = useState<"idle" | "uploaded" | "processing" | "completed" | "failed">("idle");
+  const [docError, setDocError] = useState<string | null>(null);
+  const [isRetryingDoc, setIsRetryingDoc] = useState(false);
+  // "uploaded" and "processing" both mean "not queryable yet" — the backend
+  // reports "uploaded" the instant the file is saved (before the background
+  // ingestion thread has even started) and "processing" once it's actually
+  // parsing/chunking/embedding. Either way the corpus for this document isn't
+  // searchable yet, so both states gate the chat input identically.
+  const isDocIndexing = docStatus === "uploaded" || docStatus === "processing";
   const [activeSource, setActiveSource] = useState<Source | null>(null);
   const [activeSourceMsgId, setActiveSourceMsgId] = useState<string | null>(null);
 
@@ -721,6 +729,7 @@ export default function RAGPage() {
 
         setExtractedRules(rules);
         setDocStatus(status);
+        setDocError(typeof data.error === "string" ? data.error : null);
         if (targetDocId) {
           setDocuments((prev) =>
             prev.map((doc) =>
@@ -753,12 +762,39 @@ export default function RAGPage() {
   useEffect(() => {
     fetchRules();
     const interval = setInterval(() => {
-      if (docStatus === "processing") {
+      if (docStatus === "processing" || docStatus === "uploaded") {
         fetchRules();
       }
     }, 2500);
     return () => clearInterval(interval);
   }, [currentDocId, docStatus]);
+
+  // Retries ingestion for a document that failed, via the idempotent
+  // reprocess endpoint (deletes any partial chunks/rules/vectors first, so
+  // this never double-indexes). Resumes the existing poll loop above once
+  // the backend confirms it re-queued the job.
+  const retryDocument = async (docId: string) => {
+    setIsRetryingDoc(true);
+    try {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      const res = await fetch(`${apiUrl}/api/v1/documents/${docId}/reprocess`, { method: "POST" });
+      if (res.ok) {
+        setDocStatus("uploaded");
+        setDocError(null);
+        setDocuments((prev) => prev.map((d) => (d.id === docId ? { ...d, status: "uploaded" } : d)));
+        if (docId === currentDocId) {
+          fetchRules(docId);
+        }
+      } else {
+        const data = await res.json().catch(() => null);
+        setDocError(data?.detail || "Retry failed. Please try re-uploading the file.");
+      }
+    } catch {
+      setDocError("Retry failed — could not reach the backend.");
+    } finally {
+      setIsRetryingDoc(false);
+    }
+  };
 
   // Handle File Upload
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -769,7 +805,8 @@ export default function RAGPage() {
     setExtractedRules([]);
     setCurrentDocId(null);
     setCurrentFileName(file.name);
-    setDocStatus("processing");
+    setDocStatus("uploaded");
+    setDocError(null);
     setActiveSource(null);
 
     const tempDocId = "doc-" + Date.now();
@@ -778,7 +815,7 @@ export default function RAGPage() {
       fileName: file.name,
       uploadedAt: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       extractedRules: [],
-      status: "processing",
+      status: "uploaded",
     };
 
     setDocuments((prev) => [...prev, newDoc]);
@@ -794,11 +831,28 @@ export default function RAGPage() {
         body: formData,
       }).catch(() => null);
 
-      const docId = res && res.ok ? (await res.json()).results?.[0]?.document_id || tempDocId : tempDocId;
+      // The /upload response only means "file saved, queued" — real ingestion
+      // (parse -> chunk -> embed -> index) runs async in a background thread
+      // on the backend. Status here is deliberately "uploaded", not
+      // "completed": the poll loop above (fetchRules while status is
+      // "uploaded"/"processing") is the only source of truth for when this
+      // document is actually queryable. If the HTTP call itself failed, this
+      // is a genuine failure — the backend never received the file — so it's
+      // marked "failed" rather than silently claiming success.
+      if (!res || !res.ok) {
+        throw new Error(`Upload request failed${res ? ` (${res.status})` : ""}`);
+      }
+      const uploadData = await res.json();
+      const result = uploadData.results?.[0];
+      if (!result || result.status === "failed") {
+        throw new Error(result?.reason || "Upload was rejected by the server.");
+      }
+
+      const docId = result.document_id;
       setCurrentDocId(docId);
 
       setDocuments((prev) =>
-        prev.map((d) => (d.id === tempDocId ? { ...d, id: docId, status: "completed" } : d))
+        prev.map((d) => (d.id === tempDocId ? { ...d, id: docId, status: "uploaded" } : d))
       );
 
       setMessages((prev) => [
@@ -806,12 +860,22 @@ export default function RAGPage() {
         {
           id: (Date.now() + 1).toString(),
           role: "assistant",
-          content: `Indexed \`${file.name}\`. Extracting vector chunks and rules now — check the Extracted Rules tab for live progress.`,
+          content: `Received \`${file.name}\`. Indexing now — check the Extracted Rules tab for live progress. You'll be able to ask questions about it once indexing finishes.`,
         },
       ]);
-    } catch {
+    } catch (err) {
       setCurrentDocId(tempDocId);
-      setDocStatus("completed");
+      setDocStatus("failed");
+      setDocError(err instanceof Error ? err.message : "Upload failed.");
+      setDocuments((prev) => prev.map((d) => (d.id === tempDocId ? { ...d, status: "failed" } : d)));
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: (Date.now() + 1).toString(),
+          role: "assistant",
+          content: `Could not index \`${file.name}\` — the upload failed. You can try uploading it again.`,
+        },
+      ]);
     } finally {
       setIsUploading(false);
     }
@@ -851,11 +915,16 @@ export default function RAGPage() {
         body: JSON.stringify({ url }),
       }).catch(() => null);
 
-      const docId = res && res.ok ? (await res.json()).document_id || tempDocId : tempDocId;
+      if (!res || !res.ok) {
+        throw new Error(`Crawl request failed${res ? ` (${res.status})` : ""}`);
+      }
+      const docId = (await res.json()).document_id || tempDocId;
       setCurrentDocId(docId);
+      setDocStatus("processing");
+      setDocError(null);
 
       setDocuments((prev) =>
-        prev.map((d) => (d.id === tempDocId ? { ...d, id: docId, status: "completed" } : d))
+        prev.map((d) => (d.id === tempDocId ? { ...d, id: docId, status: "processing" } : d))
       );
 
       setMessages((prev) => [
@@ -863,14 +932,22 @@ export default function RAGPage() {
         {
           id: (Date.now() + 1).toString(),
           role: "assistant",
-          content: res && res.ok
-            ? `Crawled and indexed \`${url}\`. Extracting vector chunks and rules now — check the Extracted Rules tab for live progress.`
-            : `Could not crawl \`${url}\`. The page may block automated access or the URL is unreachable.`,
+          content: `Crawling \`${url}\`. Indexing now — check the Extracted Rules tab for live progress. You'll be able to ask questions about it once indexing finishes.`,
         },
       ]);
     } catch {
       setCurrentDocId(tempDocId);
-      setDocStatus("completed");
+      setDocStatus("failed");
+      setDocError("The page may block automated access or the URL is unreachable.");
+      setDocuments((prev) => prev.map((d) => (d.id === tempDocId ? { ...d, status: "failed" } : d)));
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: (Date.now() + 1).toString(),
+          role: "assistant",
+          content: `Could not crawl \`${url}\`. The page may block automated access or the URL is unreachable.`,
+        },
+      ]);
     } finally {
       setIsCrawlingLink(false);
       setLinkInputValue("");
@@ -891,7 +968,7 @@ export default function RAGPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!input.trim() || isLoading) return;
+    if (!input.trim() || isLoading || isDocIndexing) return;
     const userQuery = input.trim();
     setInput("");
     await submitQuery(userQuery);
@@ -1024,6 +1101,24 @@ export default function RAGPage() {
         ]);
         return;
       }
+    }
+
+    // Slash-command tool calls above are unaffected, but a real document
+    // question asked while the just-uploaded document is still indexing
+    // would hit an incomplete (or empty) corpus and come back with a
+    // hollow "missing from context" answer — this is the race condition
+    // fix: refuse the query and say so, instead of asking anyway.
+    if (isDocIndexing) {
+      setMessages((prev) => [
+        ...prev,
+        { id: Date.now().toString(), role: "user", content: userQuery },
+        {
+          id: (Date.now() + 1).toString(),
+          role: "assistant",
+          content: `\`${currentFileName || "This document"}\` is still being indexed. You can ask questions once processing is complete.`,
+        },
+      ]);
+      return;
     }
 
     setMessages((prev) => [...prev, { id: Date.now().toString(), role: "user", content: userQuery }]);
@@ -1617,6 +1712,33 @@ export default function RAGPage() {
                     )}
                   </AnimatePresence>
 
+                  {isDocIndexing && (
+                    <div className="mb-2 p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-[11px] font-mono text-amber-800 flex items-center gap-2 shadow-xs">
+                      <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0 text-amber-600" />
+                      <span>
+                        <span className="font-semibold">{currentFileName || "This document"}</span> is still being
+                        indexed. You can ask questions once processing is complete.
+                      </span>
+                    </div>
+                  )}
+                  {docStatus === "failed" && (
+                    <div className="mb-2 p-2.5 rounded-xl bg-red-50 border border-red-200 text-[11px] font-mono text-red-800 flex items-center gap-2 shadow-xs">
+                      <AlertCircle className="w-3.5 h-3.5 shrink-0 text-red-600" />
+                      <span className="flex-1">
+                        Indexing <span className="font-semibold">{currentFileName || "this document"}</span> failed
+                        {docError ? `: ${docError}` : "."}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => currentDocId && retryDocument(currentDocId)}
+                        disabled={isRetryingDoc || !currentDocId}
+                        className="px-2 py-1 rounded-lg bg-red-600 hover:bg-red-700 text-white text-[10px] font-bold transition-colors disabled:opacity-40 shrink-0"
+                      >
+                        {isRetryingDoc ? "Retrying..." : "Retry"}
+                      </button>
+                    </div>
+                  )}
+
                   <form onSubmit={handleSubmit} className="flex gap-1.5 sm:gap-2 items-center">
                     <input
                       type="file"
@@ -1679,7 +1801,8 @@ export default function RAGPage() {
 
                     <button
                       type="submit"
-                      disabled={isLoading || !input.trim()}
+                      disabled={isLoading || !input.trim() || isDocIndexing}
+                      title={isDocIndexing ? "Document is still indexing — please wait" : undefined}
                       className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center shadow-md shadow-blue-600/20 transition-all disabled:opacity-40 shrink-0"
                     >
                       <Send className="w-4 h-4 sm:w-5 sm:h-5" />
@@ -1694,14 +1817,33 @@ export default function RAGPage() {
           {activeTab === "rules" && (
             <div className="flex-1 overflow-y-auto p-4 sm:p-6 bg-zinc-50/40">
               <div className="max-w-2xl mx-auto space-y-3">
-                {docStatus === "processing" && (
+                {isDocIndexing && (
                   <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs font-mono text-amber-800 flex items-center gap-2 shadow-xs">
                     <Loader2 className="w-4 h-4 animate-spin shrink-0 text-amber-600" />
-                    <span className="font-semibold">Extracting vector rules...</span>
+                    <span className="font-semibold">
+                      {docStatus === "uploaded" ? "Queued for indexing..." : "Extracting vector rules..."}
+                    </span>
                   </div>
                 )}
 
-                {docStatus === "processing" && extractedRules.length === 0 && (
+                {docStatus === "failed" && (
+                  <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-xs font-mono text-red-800 flex items-center gap-2 shadow-xs">
+                    <AlertCircle className="w-4 h-4 shrink-0 text-red-600" />
+                    <span className="flex-1">
+                      Indexing failed{docError ? `: ${docError}` : "."}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => currentDocId && retryDocument(currentDocId)}
+                      disabled={isRetryingDoc || !currentDocId}
+                      className="px-2.5 py-1 rounded-lg bg-red-600 hover:bg-red-700 text-white text-[10px] font-bold transition-colors disabled:opacity-40 shrink-0"
+                    >
+                      {isRetryingDoc ? "Retrying..." : "Retry"}
+                    </button>
+                  </div>
+                )}
+
+                {isDocIndexing && extractedRules.length === 0 && (
                   <div className="space-y-3" aria-hidden="true">
                     {[0, 1, 2].map((i) => (
                       <div
@@ -1719,7 +1861,7 @@ export default function RAGPage() {
                   </div>
                 )}
 
-                {extractedRules.length === 0 && docStatus !== "processing" && (
+                {extractedRules.length === 0 && !isDocIndexing && docStatus !== "failed" && (
                   <div className="p-8 text-center border-2 border-dashed border-zinc-200 rounded-2xl bg-white">
                     <Search className="w-8 h-8 text-zinc-300 mx-auto mb-3" />
                     <p className="text-xs font-semibold text-zinc-700">NO RULES EXTRACTED</p>

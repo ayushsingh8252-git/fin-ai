@@ -16,6 +16,22 @@ class Settings(BaseSettings):
 
     TAVILY_API_KEY: str = ""
 
+    # Retrieval — hybrid search (dense Pinecone/local-cosine + sparse BM25,
+    # fused via Reciprocal Rank Fusion; see services/retrieval.py and
+    # services/sparse_retrieval.py). Defaults on since it's additive on top
+    # of the existing dense path (BM25 runs alongside it, never instead of
+    # it) — set false to fall back to the previous dense-only behavior, or to
+    # A/B it in the evaluation suite.
+    ENABLE_HYBRID_SEARCH: bool = True
+
+    # Reranking — a genuine cross-encoder re-scores the fused candidate set
+    # pairwise against the query (see services/reranking.py), instead of the
+    # cheap same-scores sort used when this is off. Off by default: it lazily
+    # loads a ~17MB transformer model on first use, and this box has a
+    # documented history of OOM crashes under memory pressure — turn on only
+    # once you've confirmed headroom (GET /health, or just watch it not crash).
+    ENABLE_CROSS_ENCODER_RERANK: bool = False
+
     # OAuth client ID from Google Cloud Console (Credentials > OAuth 2.0 Client
     # IDs > Web application). Must match NEXT_PUBLIC_GOOGLE_CLIENT_ID on the
     # frontend — used to reject ID tokens issued for a different app.

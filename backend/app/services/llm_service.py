@@ -7,6 +7,7 @@ from google.genai import types
 from ..config import settings
 from .resilience import retry_with_backoff
 from .key_manager import key_manager, is_rate_limit_error
+from .model_config import GROQ_MODELS, GEMINI_MODELS, XAI_GROK_MODELS
 
 # Global default Gemini Client (if single key configured in settings)
 gemini_client = genai.Client(api_key=settings.GEMINI_API_KEY) if settings.GEMINI_API_KEY else None
@@ -32,11 +33,10 @@ def _call_grok_groq_api(prompt: str, system_instruction: str = None, api_key: st
     # Determine endpoint and model based on API key prefix
     if api_key.startswith("xai-"):
         base_url = "https://api.x.ai/v1/chat/completions"
-        model_candidates = ["grok-2-latest", "grok-beta"]
+        model_candidates = XAI_GROK_MODELS
     else:
         base_url = "https://api.groq.com/openai/v1/chat/completions"
-        # Standard, highly reliable Groq models
-        model_candidates = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768"]
+        model_candidates = GROQ_MODELS
 
     messages = []
     # Groq JSON mode strictly requires the word 'json' in messages
@@ -83,8 +83,8 @@ def _call_grok_groq_api(prompt: str, system_instruction: str = None, api_key: st
 
 def _call_gemini_api(prompt: str, system_instruction: str = None, api_key: str = None) -> str:
     """
-    Calls fallback Gemini API (tries gemini-2.0-flash, gemini-1.5-flash, gemini-2.5-flash).
-    Accepts optional specific api_key.
+    Calls fallback Gemini API, trying each model in model_config.GEMINI_MODELS
+    in order. Accepts optional specific api_key.
     """
     client = _get_gemini_client(api_key) if api_key else gemini_client
     if not client:
@@ -94,7 +94,7 @@ def _call_gemini_api(prompt: str, system_instruction: str = None, api_key: str =
     if system_instruction:
         full_prompt = f"{system_instruction}\n\n{prompt}"
 
-    for model_name in ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-2.5-flash"]:
+    for model_name in GEMINI_MODELS:
         try:
             response = client.models.generate_content(
                 model=model_name,
@@ -114,15 +114,21 @@ def _call_gemini_api(prompt: str, system_instruction: str = None, api_key: str =
     raise ValueError("All Gemini model attempts failed.")
 
 
-def generate_json(prompt: str, system_instruction: str = None) -> dict | list:
+def generate_json(prompt: str, system_instruction: str = None, trace_sink: list | None = None) -> dict | list:
     """
     Executes JSON generation with multi-key round-robin rotation for Groq primary
     and automatic Gemini multi-key fallback, protected by rate-limit cooldowns.
+
+    `trace_sink`, if given, collects one attempt record per provider/key tried
+    (see key_manager.execute_json_generation) — optional, request-level LLM
+    observability for the caller's trace (services/trace.py).
     """
-    return key_manager.execute_json_generation(prompt, system_instruction)
+    return key_manager.execute_json_generation(prompt, system_instruction, trace_sink=trace_sink)
 
 
-def generate_json_resilient(prompt: str, system_instruction: str = None, max_attempts: int = 2) -> dict | list:
+def generate_json_resilient(
+    prompt: str, system_instruction: str = None, max_attempts: int = 2, trace_sink: list | None = None
+) -> dict | list:
     """
     Thin retry wrapper around generate_json() for callers with deterministic fallbacks.
     """
@@ -130,6 +136,7 @@ def generate_json_resilient(prompt: str, system_instruction: str = None, max_att
         generate_json,
         prompt,
         system_instruction,
+        trace_sink=trace_sink,
         max_attempts=max_attempts,
         base_delay=0.3,
         max_delay=2.0,

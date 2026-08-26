@@ -5,7 +5,21 @@ import logging
 from threading import Lock
 from typing import List, Dict, Optional, Callable, Set
 
+from dotenv import load_dotenv
+
 logger = logging.getLogger(__name__)
+
+# The numbered key vars this module discovers (GROQ_API_KEY_1, GOOGLE_API_KEY_1,
+# ...) live only in AI-Policy-Rule-Engine/.env — pydantic-settings (config.py)
+# reads that file into its own Settings object, but does NOT copy it into
+# os.environ, and nothing else in this app calls load_dotenv() anywhere.
+# Docker's `env_file:` directive happens to inject the same values as real
+# container environment variables, which is the only reason this worked
+# before — a plain local `uvicorn app.main:app` (or any script importing this
+# module directly) found zero keys. python-dotenv never overrides a variable
+# that's already set (override=False is the default), so this is a no-op,
+# not a behavior change, wherever the real env already has these set.
+load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", ".env"))
 
 COOLDOWN_DEFAULT_SECONDS = 60
 
@@ -219,12 +233,22 @@ class LLMKeyManager:
         groq_fn: Callable = None,
         gemini_fn: Callable = None,
         parse_fn: Callable = None,
+        trace_sink: Optional[list] = None,
     ):
         """
         Main execution flow:
         1. Round-robin Groq keys. Try next key on failure/429.
         2. Fallback to Gemini keys if all Groq keys fail.
         3. Re-raise exception if all keys fail.
+
+        `trace_sink`, if given, gets one dict appended per provider attempt
+        (provider, key label, success, latency_ms, error) — observability for
+        the LLM section of a request trace (see services/trace.py). Optional
+        and additive: every existing caller that doesn't pass it behaves
+        exactly as before. Attempt granularity is per-provider-key, not
+        per-model-candidate — _call_grok_groq_api/_call_gemini_api each try
+        several model IDs internally without reporting back which one
+        actually answered, so that finer level isn't visible here.
         """
         from .llm_service import _call_grok_groq_api, _call_gemini_api, _parse_json
 
@@ -234,6 +258,17 @@ class LLMKeyManager:
             gemini_fn = _call_gemini_api
         if parse_fn is None:
             parse_fn = _parse_json
+
+        def _record(provider: str, key_info: "APIKeyInfo", success: bool, latency_ms: float, error: str = None):
+            if trace_sink is not None:
+                trace_sink.append({
+                    "provider": provider,
+                    "key_label": key_info.label,
+                    "attempt": len(trace_sink) + 1,
+                    "success": success,
+                    "latency_ms": round(latency_ms, 1),
+                    "error": error,
+                })
 
         groq_errors = []
         tried_groq_labels = set()
@@ -245,11 +280,15 @@ class LLMKeyManager:
                 break
 
             tried_groq_labels.add(key_info.label)
+            attempt_start = time.time()
             try:
                 raw_out = groq_fn(prompt, system_instruction, api_key=key_info.api_key)
-                return parse_fn(raw_out)
+                result = parse_fn(raw_out)
+                _record("groq", key_info, True, (time.time() - attempt_start) * 1000)
+                return result
             except Exception as e:
                 err_type = type(e).__name__
+                _record("groq", key_info, False, (time.time() - attempt_start) * 1000, f"{err_type}: {e}")
                 if is_rate_limit_error(e):
                     self.mark_cooldown(key_info, error_type=f"{err_type}: 429/Quota")
                 else:
@@ -275,11 +314,15 @@ class LLMKeyManager:
                 break
 
             tried_gemini_labels.add(key_info.label)
+            attempt_start = time.time()
             try:
                 raw_out = gemini_fn(prompt, system_instruction, api_key=key_info.api_key)
-                return parse_fn(raw_out)
+                result = parse_fn(raw_out)
+                _record("gemini", key_info, True, (time.time() - attempt_start) * 1000)
+                return result
             except Exception as e:
                 err_type = type(e).__name__
+                _record("gemini", key_info, False, (time.time() - attempt_start) * 1000, f"{err_type}: {e}")
                 if is_rate_limit_error(e):
                     self.mark_cooldown(key_info, error_type=f"{err_type}: 429/Quota")
                 else:

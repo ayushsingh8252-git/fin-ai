@@ -25,6 +25,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 
 from ..config import settings
 from .resilience import retry_with_backoff
+from .model_config import GROQ_MODELS, GEMINI_MODELS
 
 # ─────────────────────────────────────────────────────────────────────────
 # Structured-output schemas
@@ -63,33 +64,34 @@ class AiTextSignal(BaseModel):
 # Models + fallback-chain construction
 # ─────────────────────────────────────────────────────────────────────────
 
-_GROQ_MODEL = "llama-3.3-70b-versatile"
-_GEMINI_MODELS = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-2.5-flash"]
+# Model IDs come from model_config.py (shared with llm_service.py and
+# screening_llm_service.py) rather than being hardcoded here — see that
+# module's docstring for why this used to drift out of sync.
 
 
 def _build_models():
     groq_key = settings.GROQ_API_KEY or settings.GROK_API_KEY
-    groq_llm = ChatGroq(model=_GROQ_MODEL, api_key=groq_key, temperature=0.1, timeout=30) if groq_key else None
+    groq_llms = (
+        [ChatGroq(model=m, api_key=groq_key, temperature=0.1, timeout=30) for m in GROQ_MODELS]
+        if groq_key
+        else []
+    )
     gemini_llms = (
         [
             ChatGoogleGenerativeAI(model=m, api_key=settings.GEMINI_API_KEY, temperature=0.1, timeout=30)
-            for m in _GEMINI_MODELS
+            for m in GEMINI_MODELS
         ]
         if settings.GEMINI_API_KEY
         else []
     )
-    return groq_llm, gemini_llms
+    return groq_llms, gemini_llms
 
 
-_groq_llm, _gemini_llms = _build_models()
+_groq_llms, _gemini_llms = _build_models()
 
 
 def _structured_chain(prompt: ChatPromptTemplate, schema: type[BaseModel]):
-    legs = []
-    if _groq_llm is not None:
-        legs.append(_groq_llm.with_structured_output(schema))
-    for llm in _gemini_llms:
-        legs.append(llm.with_structured_output(schema))
+    legs = [llm.with_structured_output(schema) for llm in (*_groq_llms, *_gemini_llms)]
     if not legs:
         raise RuntimeError("No LLM provider configured (missing GROQ_API_KEY / GEMINI_API_KEY).")
     primary, *rest = legs

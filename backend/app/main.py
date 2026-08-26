@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import os
 from .config import settings
-from .api import upload, query, rules, audio, fraud, interview, auth, telephonic, hiring, screening, orchestrator, mcp
+from .api import upload, query, rules, audio, fraud, interview, auth, telephonic, hiring, screening, orchestrator, mcp, observability
 from .database import engine
 from . import models
 
@@ -37,6 +37,15 @@ async def lifespan(app: FastAPI):
         prewarm_caches()
     except Exception as e:
         print(f"[Lifespan Startup Warning] Local fallback cache prewarm failed: {e}")
+
+    # 3b. Pre-warm the BM25 sparse-retrieval indexes (hybrid search's sparse
+    # half) — same rationale as step 3: build once in the background at
+    # startup instead of paying the cost on the first live query.
+    try:
+        from .services.sparse_retrieval import prewarm_indexes
+        prewarm_indexes()
+    except Exception as e:
+        print(f"[Lifespan Startup Warning] BM25 index prewarm failed: {e}")
 
     # 4. Refresh live LLM keys
     try:
@@ -96,6 +105,7 @@ app.include_router(hiring.router, prefix="/api/v1")
 app.include_router(screening.router, prefix="/api/v1")
 app.include_router(orchestrator.router, prefix="/api/v1")
 app.include_router(mcp.router, prefix="/api/v1")
+app.include_router(observability.router, prefix="/api/v1")
 
 # Mount uploads directory for static file serving
 os.makedirs("uploads", exist_ok=True)

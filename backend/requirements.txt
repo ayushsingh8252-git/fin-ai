@@ -3,8 +3,8 @@ uvicorn[standard]
 PyMuPDF
 requests
 beautifulsoup4
-spacy
 sentence-transformers
+rank-bm25
 transformers
 pinecone
 sqlalchemy
@@ -16,6 +16,7 @@ google-genai
 python-multipart
 pydantic
 pydantic-settings
+python-dotenv
 langdetect
 gTTS
 pydub

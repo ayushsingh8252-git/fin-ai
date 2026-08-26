@@ -1,0 +1,55 @@
+Ayush Singh 
+AI Backend Engineer 
+ 
+ayushrajput8252@gmail.com | +917209602122 | linkedin.com/in/ayush-singh 
+ 
+Education 
+Parul University, B.Tech in Computer Science 
+2022 – 2026 
+Experience 
+OpneEyes – AI Backend 
+May 26 - Ongoing 
+• Built enterprise-scale multimodal AI systems using RAG pipelines, improving ground-truth accuracy by 33% 
+• Developed and deployed ML models to generate enterprise-grade, personalized assessment questions at scale. 
+• Deployed scalable AI infrastructure using Docker and AWS services for production environments. 
+ 
+Logicmotive – AI & Cloud Intern                                                                                                                                      Aug  25 – Apr  26 
+• Developed pipeline using AWS S3, Bedrock Knowledge Bases, Titan Embeddings, OpenSearch for search. 
+• Built scalable backend in Python + LangChain for retrieval pipelines and prompt orchestration 
+• Deployed using Docker (multi-stage builds + DockerSlim), AWS ECR, App Runner, reducing image size by 
+~60–70% and improving deployment efficiency. 
+ 
+Skills 
+GenAI/AI: RAG, LangChain, LangGraph, LLMs, Embeddings, Vector Search, Prompt Engineering 
+Backend: FastAPI, REST APIs, Microservices 
+Cloud : AWS(EC2, S3, IAM, VPC, Lambda) 
+Devops: Docker, Kubernetes, Jenkins, Terraform, CI/CD, Linux, 
+Git, GitHub Actions 
+Databases: MySQL, PineCone, PostgressSQL 
+Projects 
+Local Vendor Automation - AI/ML Developer (Hackathon Top 10/1000, ₹5000 Prize) 
+Github 
+Tech Stack: Python, LangChain, Gemini API, Ollama, EasyOCR, Transfer Learning, RAG 
+• Built an AI onboarding automation system with OCR PAN verification and fraud checks.. 
+• Developed transfer learning image classifier for auto product categorization.. 
+• Built a FastAPI backend to connect OCR + classifier + RAG chatbotinto one integrated workflow. 
+• Implemented RAG chatbot + safety filtering layer for grounded FAQ responses. 
+ 
+Production AI Agent Live | Github 
+Tech Stack: LangGraph, Langchain, Gemini, Grok, SQL, Docker, FastAPI, AWS, kubernetes 
+• Built and deployed an AI multi-agent platform using FastAPI, React, LangGraph, and Pinecone with scalable AI 
+workflows. 
+• Optimized deployment using multi-stage Docker builds and slim images, reducing container size by ~60%. 
+• Automated AWS EC2 infrastructure with Terraform and integrated Amazon S3 for PDF storage and management. 
+ 
+E-commerce Hackathon Project Live | Github 
+Tech Stack: Docker, Kubernetes Jenkins, AWS-EC2, Linux 
+• Deployed a production-ready Online Shopping Portal using Docker, Kubernetes, Jenkins, and AWS EC2. 
+• Improved deployment speed by 50% and reduced Docker image size by 1GB using multi-stage builds. 
+• Automated setup and delivery using Bash, Docker Compose, and CI/CD. 
+• Hosted on AWS EC2 with scalable and reliable architecture. 
+ 
+ACHIEVEMENTS 
+• Top 10 / 1000 teams — PU Code Hackathon 3.0 (₹5000 Prize) 
+• Ranked Top 20% on LeetCode and Rank 5 among 9000 Students 
+• GFG 3-Star | CodeChef 2-Star 

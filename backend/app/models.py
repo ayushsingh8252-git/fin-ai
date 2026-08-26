@@ -227,6 +227,31 @@ class GraphEdge(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
+class QueryTrace(Base):
+    """One row per /query request — structured execution observability (see
+    docs/platform-status-audit-2026-08-26-rag-improvement-pass.md). Looked up
+    by request_id via GET /api/v1/observability/trace/{request_id}; the last
+    N rows are scanned for aggregate stats via GET /api/v1/observability/stats.
+
+    `trace` holds the full structured payload (query processing, retrieval,
+    CRAG, adaptive/ARAG, reranking, web search, LLM attempts, final response)
+    as one JSON blob rather than a wide fixed column set — the shape can
+    evolve without another migration for every new field the pipeline grows.
+    Never contains API keys, full prompts, or full answer text — see
+    services/trace.py, which builds this and mirrors guardrails.py's
+    "never log secrets" convention."""
+
+    __tablename__ = "query_traces"
+
+    request_id = Column(String, primary_key=True, index=True)
+    document_id = Column(String, nullable=True, index=True)
+    query_text = Column(String, nullable=True)
+    status = Column(String, default="ok", index=True)  # "ok" | "blocked" | "error"
+    total_latency_ms = Column(Integer, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+    trace = Column(JSON, default=dict)
+
+
 class Rule(Base):
     __tablename__ = "rules"
 

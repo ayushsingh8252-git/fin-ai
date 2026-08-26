@@ -271,9 +271,10 @@ def process_document_task(document_id: str, file_path: str):
         if doc:
             meta = dict(doc.metadata_ or {})
             meta["status"] = "failed"
+            meta["error"] = str(e)
             doc.metadata_ = meta
             db.commit()
-            
+
         return {"status": "error", "message": str(e)}
     finally:
         db.close()

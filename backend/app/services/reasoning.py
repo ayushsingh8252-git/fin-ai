@@ -25,7 +25,13 @@ _EMPTY_BOLD_RE = re.compile(r"(\*\*|__)(\s*)\1")
 def strip_empty_emphasis(text: str) -> str:
     return _EMPTY_BOLD_RE.sub(lambda m: m.group(2), text)
 
-def generate_answer_with_fallback(query: str, retrieved_rules: list[dict], retrieved_chunks: list[dict], document_id: str | None = None) -> dict:
+def generate_answer_with_fallback(
+    query: str,
+    retrieved_rules: list[dict],
+    retrieved_chunks: list[dict],
+    document_id: str | None = None,
+    trace: dict | None = None,
+) -> dict:
     """
     Adaptive-Corrective RAG reasoning pipeline (CRAG + HyDE + Step-Back + Cross-Encoder Fusion).
     Falls back gracefully to legacy reasoning if adaptive pipeline errors.
@@ -36,10 +42,13 @@ def generate_answer_with_fallback(query: str, retrieved_rules: list[dict], retri
             query=query,
             initial_rules=retrieved_rules,
             initial_chunks=retrieved_chunks,
-            document_id=document_id
+            document_id=document_id,
+            trace=trace,
         )
     except Exception as e:
         print(f"[Adaptive RAG Engine Error, falling back to legacy reasoning]: {e}")
+        if trace is not None:
+            trace["adaptive_pipeline_error"] = str(e)
         return generate_legacy_answer(query, retrieved_rules, retrieved_chunks)
 
 
