@@ -8,6 +8,7 @@ from .retrieval import retrieve_rules_and_chunks_parallel, _query_pinecone, get_
 from .llm_service import generate_json_resilient
 from .web_service import tavily_search
 from .reranking import cross_encoder_rerank as _rerank_candidates
+from . import live_status
 from ..config import settings
 from ..database import SessionLocal
 from ..models import Chunk
@@ -343,6 +344,16 @@ def execute_adaptive_rag_pipeline(
     """
     llm_sink = trace.setdefault("llm_attempts", []) if trace is not None else None
 
+    # Live-progress mirror only (see services/live_status.py) — every call
+    # below is a thin, additive republish of a value this function already
+    # computes into audit_trace/trace; none of it changes grading,
+    # thresholds, branching, or candidate selection.
+    _live_request_id = trace.get("request_id") if trace is not None else None
+
+    def _stage(name: str, status: str, data: Optional[dict] = None):
+        if _live_request_id:
+            live_status.update_stage(_live_request_id, name, status, data)
+
     audit_trace = {
         "initial_grade": None,
         "initial_confidence": 0.0,
@@ -360,6 +371,7 @@ def execute_adaptive_rag_pipeline(
     audit_trace["initial_grade"] = grade
     audit_trace["initial_confidence"] = confidence
     audit_trace["initial_candidate_count"] = len(initial_candidates)
+    _stage("crag", "done", {"grade": grade, "confidence": confidence, "candidate_count": len(initial_candidates)})
 
     # Step 3: Branching Execution
     if grade == "HIGH":
@@ -378,6 +390,8 @@ def execute_adaptive_rag_pipeline(
         secondary_candidates = execute_secondary_search(blended_search, document_id=document_id, top_k=top_k, trace=trace)
         candidate_pools.append(secondary_candidates)
 
+    _stage("adaptive", "running", {"branches_executed": list(audit_trace["branches_executed"])})
+
     # Step 4: Still Weak Check -> Step-Back Prompting
     merged_so_far = merge_and_deduplicate_candidates(candidate_pools)
     max_score = max((c.get("score", 0.0) for c in merged_so_far), default=0.0)
@@ -389,6 +403,7 @@ def execute_adaptive_rag_pipeline(
         candidate_pools.append(step_back_candidates)
         merged_so_far = merge_and_deduplicate_candidates(candidate_pools)
         max_score = max((c.get("score", 0.0) for c in merged_so_far), default=0.0)
+        _stage("adaptive", "running", {"branches_executed": list(audit_trace["branches_executed"]), "step_back_triggered": True})
 
     # Step 5: Still No Evidence Check -> Web Search
     web_sources = []
@@ -398,6 +413,11 @@ def execute_adaptive_rag_pipeline(
         web_results = tavily_search(query)
         audit_trace["web_search_result_count"] = len(web_results) if web_results else 0
         audit_trace["web_search_latency_ms"] = round((time.perf_counter() - _web_start) * 1000, 1)
+        _stage("tools_web", "done", {
+            "used": True,
+            "result_count": audit_trace["web_search_result_count"],
+            "latency_ms": audit_trace["web_search_latency_ms"],
+        })
         if web_results:
             for wr in web_results:
                 web_sources.append({"title": wr.get("title", "Web Source"), "url": wr.get("url", "")})
@@ -425,6 +445,7 @@ def execute_adaptive_rag_pipeline(
         "reranked_count": len(top_candidates),
         "latency_ms": round((time.perf_counter() - _rerank_start) * 1000, 1),
     }
+    _stage("reranking", "done", audit_trace["reranking"])
 
     # Step 8: Evidence Validator
     has_valid_evidence, validated_candidates = validate_evidence(query, top_candidates, crag_grade=grade)
@@ -480,12 +501,14 @@ def execute_adaptive_rag_pipeline(
     }}
     """
 
+    _stage("generating", "running")
     try:
         final_res = generate_json_resilient(synthesis_prompt, max_attempts=2, trace_sink=llm_sink)
         if isinstance(final_res, dict):
             answer_text = str(final_res.get("answer", "")).strip()
             if answer_text and "required info missing" not in answer_text.lower():
                 mode = "web" if audit_trace["web_search_triggered"] else ("rules" if any(c.get("type") == "rule" for c in validated_candidates) else "chunks")
+                _stage("generating", "done", {"retrieval_mode": mode})
                 return {
                     "answer": answer_text,
                     "sources": sources,
@@ -497,6 +520,7 @@ def execute_adaptive_rag_pipeline(
 
     # Fallback to direct top candidate text if LLM formatting fails
     if validated_candidates:
+        _stage("generating", "done", {"retrieval_mode": "chunks", "fallback": "top_candidate_text"})
         return {
             "answer": validated_candidates[0]["content"][:350],
             "sources": sources,
@@ -504,6 +528,7 @@ def execute_adaptive_rag_pipeline(
             "adaptive_trace": audit_trace
         }
 
+    _stage("generating", "done", {"retrieval_mode": "missing", "llm_synthesis_failed": True})
     return {
         "answer": "Required info missing from document context.",
         "sources": [],

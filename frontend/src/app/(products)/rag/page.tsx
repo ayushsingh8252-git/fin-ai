@@ -17,6 +17,11 @@ import { motion, AnimatePresence } from "framer-motion";
 import dynamic from "next/dynamic";
 import ChatMarkdown from "@/components/ChatMarkdown";
 import AgentLatencyAnimation from "@/components/ai-assistant/AgentLatencyAnimation";
+import RagExecutionTrace, { type LiveTraceSnapshot } from "@/components/ai-assistant/RagExecutionTrace";
+
+function liveTraceNeedsRefresh(snapshot: LiveTraceSnapshot | null): boolean {
+  return snapshot === null || snapshot.status === "running";
+}
 
 function GithubIcon({ className }: { className?: string }) {
   return (
@@ -61,6 +66,11 @@ type Message = {
   isError?: boolean;
   latencyMs?: number;
   retrieval_mode?: "rules" | "chunks" | "missing";
+  requestId?: string;
+  // Snapshot of the live execution trace at the moment this message's
+  // answer arrived — kept so the collapsed post-completion trace bar
+  // (see RagExecutionTrace) can render without another network call.
+  liveTrace?: LiveTraceSnapshot;
 };
 
 type ChatSession = {
@@ -274,6 +284,21 @@ export default function RAGPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [lastQueryFailed, setLastQueryFailed] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  // Live RAG execution trace for the in-flight query — polled from
+  // GET /api/v1/observability/live/{request_id}, cleared once the answer
+  // arrives (the final snapshot lives on the Message itself from then on).
+  const [liveTrace, setLiveTrace] = useState<LiveTraceSnapshot | null>(null);
+  const livePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Mirrors `liveTrace` for synchronous reads inside submitQuery's async
+  // closure, which otherwise captures a stale value from render time and
+  // would miss every update the poll interval made while awaiting the
+  // main query response.
+  const liveTraceRef = useRef<LiveTraceSnapshot | null>(null);
+  useEffect(() => {
+    return () => {
+      if (livePollRef.current) clearInterval(livePollRef.current);
+    };
+  }, []);
 
   // ── Add Link (Web Crawl) State ──
   const [showLinkInput, setShowLinkInput] = useState(false);
@@ -1053,6 +1078,42 @@ export default function RAGPage() {
     }
   };
 
+  // Polls GET /api/v1/observability/live/{request_id} (a cheap in-memory
+  // lookup server-side, see live_status.py) while a query is in flight, so
+  // the UI can show real backend stage progress instead of a generic
+  // spinner. Stops itself the moment the backend reports a terminal status
+  // — never polls /stats, and never runs longer than one query's lifetime.
+  const stopLivePoll = () => {
+    if (livePollRef.current) {
+      clearInterval(livePollRef.current);
+      livePollRef.current = null;
+    }
+  };
+
+  const startLivePoll = (requestId: string) => {
+    stopLivePoll();
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+    let ticks = 0;
+    const MAX_TICKS = 150; // ~60s safety cutoff at 400ms/tick
+    livePollRef.current = setInterval(async () => {
+      ticks += 1;
+      if (ticks > MAX_TICKS) {
+        stopLivePoll();
+        return;
+      }
+      try {
+        const res = await fetch(`${apiUrl}/api/v1/observability/live/${requestId}`);
+        if (!res.ok) return;
+        const snap: LiveTraceSnapshot = await res.json();
+        liveTraceRef.current = snap;
+        setLiveTrace(snap);
+        if (snap.status !== "running") stopLivePoll();
+      } catch {
+        // Transient fetch failure — skip this tick, try again next one.
+      }
+    }, 400);
+  };
+
   const submitQuery = async (rawQuery: string) => {
     if (!rawQuery.trim() || isLoading) return;
 
@@ -1124,6 +1185,14 @@ export default function RAGPage() {
     setMessages((prev) => [...prev, { id: Date.now().toString(), role: "user", content: userQuery }]);
     setIsLoading(true);
     setLastQueryFailed(false);
+    setLiveTrace(null);
+    liveTraceRef.current = null;
+
+    // Generated client-side so the live execution trace can start polling
+    // the instant this request is sent, instead of only learning the
+    // request_id once the full (multi-second) pipeline response arrives.
+    const requestId = crypto.randomUUID();
+    startLivePoll(requestId);
 
     try {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -1133,6 +1202,7 @@ export default function RAGPage() {
         body: JSON.stringify({
           query: userQuery,
           top_k: 5,
+          request_id: requestId,
         }),
       });
 
@@ -1140,6 +1210,20 @@ export default function RAGPage() {
       const data = await res.json();
       const endTime = performance.now();
       const latency = Math.round(endTime - startTime);
+
+      // The answer has now fully arrived, so the backend has already
+      // finalized this request's trace — but the 400ms poll tick may not
+      // have caught up yet. One guaranteed last fetch (only when needed)
+      // beats showing a stale "still running" stage next to a finished answer.
+      if (liveTraceNeedsRefresh(liveTraceRef.current)) {
+        try {
+          const liveRes = await fetch(`${apiUrl}/api/v1/observability/live/${requestId}`);
+          if (liveRes.ok) liveTraceRef.current = await liveRes.json();
+        } catch {
+          // Best-effort only — the collapsed trace just falls back to
+          // whatever the last successful poll captured, if anything.
+        }
+      }
 
       const newMsg: Message = {
         id: (Date.now() + 1).toString(),
@@ -1152,6 +1236,8 @@ export default function RAGPage() {
         translated_query: data.translated_query,
         retrieval_mode: data.retrieval_mode,
         latencyMs: latency,
+        requestId: data.request_id ?? requestId,
+        liveTrace: liveTraceRef.current ?? undefined,
       };
 
       setMessages((prev) => [...prev, newMsg]);
@@ -1171,6 +1257,8 @@ export default function RAGPage() {
       setMessages((prev) => [...prev, errorMsg]);
     } finally {
       setIsLoading(false);
+      stopLivePoll();
+      setLiveTrace(null);
     }
   };
 
@@ -1507,6 +1595,10 @@ export default function RAGPage() {
                           </div>
                         )}
 
+                        {msg.role === "assistant" && !msg.isError && msg.liveTrace && (
+                          <RagExecutionTrace snapshot={msg.liveTrace} collapsed latencyMs={msg.latencyMs} />
+                        )}
+
                         <div className="flex items-start gap-2">
                           <div
                             className={`p-3.5 sm:p-4 rounded-2xl text-[13px] leading-relaxed shadow-xs flex-1 ${
@@ -1580,6 +1672,8 @@ export default function RAGPage() {
                       </div>
                     </motion.div>
                   ))}
+
+                  {isLoading && liveTrace && <RagExecutionTrace snapshot={liveTrace} />}
 
                   <AgentLatencyAnimation
                     isLoading={isLoading}

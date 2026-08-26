@@ -3,8 +3,36 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models import QueryTrace
+from ..services import live_status
 
 router = APIRouter()
+
+
+@router.get("/observability/live/{request_id}")
+async def get_live_trace(request_id: str, db: Session = Depends(get_db)):
+    """
+    Lightweight per-request progress feed for the frontend's live execution
+    trace UI — cheap in-memory lookup (services/live_status.py), not a DB
+    query, while a request is still running. Falls back to the persisted
+    QueryTrace row (reshaped into the same stage-oriented view) once the
+    in-memory entry is gone, so the frontend can poll this single endpoint
+    throughout a query's lifetime and after, without branching on which
+    phase it's in. Distinct from /stats (never touched by this — that
+    endpoint scans up to `limit` full trace rows and is explicitly not meant
+    for per-request polling).
+    """
+    live = live_status.get(request_id)
+    if live is not None:
+        live["live"] = True
+        return live
+
+    row = db.query(QueryTrace).filter(QueryTrace.request_id == request_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Trace not found")
+
+    reshaped = live_status.reshape_persisted_trace(row.trace or {})
+    reshaped["live"] = False
+    return reshaped
 
 
 @router.get("/observability/trace/{request_id}")

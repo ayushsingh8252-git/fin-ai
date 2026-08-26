@@ -26,9 +26,23 @@ from ..models import QueryTrace
 logger = logging.getLogger(__name__)
 
 
-def new_trace(endpoint: str, query_text: str, document_id: str | None, top_k: int) -> dict:
+def new_trace(
+    endpoint: str,
+    query_text: str,
+    document_id: str | None,
+    top_k: int,
+    client_request_id: str | None = None,
+) -> dict:
+    """`client_request_id`, if given, lets a caller (the frontend) know the
+    request_id *before* this request finishes — needed for the live progress
+    view in services/live_status.py, since otherwise request_id is only
+    discoverable in the final response body, well after the pipeline has
+    already run. Falls back to server-generated if absent, so every existing
+    caller (including callers that never pass it) behaves exactly as before.
+    Not validated/trusted for anything beyond an opaque tracking key: never
+    used in a query, a file path, or persisted anywhere but this trace row."""
     return {
-        "request_id": f"req_{uuid.uuid4().hex[:16]}",
+        "request_id": client_request_id or f"req_{uuid.uuid4().hex[:16]}",
         "endpoint": endpoint,
         "query_preview": (query_text or "")[:200],
         "document_id": document_id,

@@ -7,6 +7,7 @@ from .cache import get_cached_embedding, set_cached_embedding
 from .resilience import call_with_resilience, CircuitOpenError, get_breaker
 from .local_fallback_retrieval import local_semantic_search
 from .sparse_retrieval import bm25_search
+from . import live_status
 from ..config import settings
 
 logger = logging.getLogger(__name__)
@@ -215,7 +216,7 @@ def retrieve_rules_and_chunks_parallel(
 
     if trace is not None:
         pinecone_state = get_breaker("pinecone").state
-        trace.setdefault("retrieval", {}).setdefault("calls", []).append({
+        round_info = {
             "mode": "hybrid" if hybrid else "dense",
             "dense_count": len(dense_rules) + len(dense_chunks),
             "sparse_count": len(sparse_rules) + len(sparse_chunks),
@@ -223,6 +224,14 @@ def retrieve_rules_and_chunks_parallel(
             "latency_ms": round((time.perf_counter() - _start) * 1000, 1),
             "pinecone_circuit_state": pinecone_state,
             "used_local_fallback": pinecone_state != "closed",
-        })
+        }
+        calls = trace.setdefault("retrieval", {}).setdefault("calls", [])
+        calls.append(round_info)
+        # Live-progress mirror only (see services/live_status.py) — CRAG's
+        # rewrite/HyDE/step-back branches call this function again for the
+        # same request, so "rounds" grows across calls rather than being
+        # overwritten; this line changes no retrieval behavior, it only
+        # republishes the same `calls` list this function already builds.
+        live_status.update_stage(trace["request_id"], "hybrid_search", "running", {"rounds": list(calls)})
 
     return rules, chunks

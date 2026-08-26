@@ -1,11 +1,12 @@
 import time
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from fastapi import APIRouter, HTTPException
 from ..services.retrieval import retrieve_rules_and_chunks_parallel
 from ..services.reasoning import generate_answer_with_fallback
 from ..services.cache import get_cached_query, set_cached_query
 from ..services.guardrails import check_input, check_output
 from ..services.trace import new_trace, persist_trace
+from ..services import live_status
 from ..database import SessionLocal
 from ..models import Document
 from ..services.multilingual import (
@@ -21,11 +22,37 @@ class QueryRequest(BaseModel):
     query: str
     top_k: int = 5
     document_id: str | None = None
+    # Client-generated (frontend: crypto.randomUUID()), so the frontend can
+    # start polling GET /api/v1/observability/live/{request_id} for stage
+    # progress the instant this request is sent, instead of only learning
+    # the request_id once the full 5-30s pipeline finishes. Opaque tracking
+    # key only — length-capped, never trusted for anything else. Optional
+    # so any caller that omits it gets the previous server-generated ID.
+    request_id: str | None = Field(default=None, max_length=100)
 
 @router.post("/query")
-async def process_query(request: QueryRequest):
+def process_query(request: QueryRequest):
+    # Plain `def`, not `async def` — this function's body is entirely
+    # synchronous (embedding model, Pinecone/HTTP calls, LLM calls), and
+    # declaring it `async def` with no `await` inside pins the single event
+    # loop thread for this request's full 5-30s duration, starving every
+    # other concurrent request (including a client's own live-progress poll
+    # of GET /observability/live/{request_id} for *this same* request — see
+    # live_status.py). FastAPI/Starlette automatically dispatches a sync
+    # `def` route to its thread pool instead, so the event loop stays free.
+    # No behavior change to the pipeline itself: every call below already
+    # runs synchronously either way, and the modules it touches (cache.py,
+    # resilience.py's CircuitBreaker, sparse_retrieval.py/
+    # local_fallback_retrieval.py's caches, key_manager.py) already guard
+    # their shared state with locks for retrieval.py's own internal
+    # ThreadPoolExecutor, so genuine cross-request concurrency here isn't a
+    # new hazard.
     _request_start = time.perf_counter()
-    trace = new_trace("/api/v1/query", request.query, request.document_id, request.top_k)
+    trace = new_trace(
+        "/api/v1/query", request.query, request.document_id, request.top_k,
+        client_request_id=request.request_id,
+    )
+    live_status.start(trace["request_id"])
     status = "ok"
 
     try:
@@ -40,6 +67,7 @@ async def process_query(request: QueryRequest):
         trace["guardrails"]["input"] = {"allowed": input_check.allowed, "reason": input_check.reason}
         if not input_check.allowed:
             status = "blocked"
+            live_status.finish(trace["request_id"], "blocked")
             return {
                 "answer": "I can't process that request. Please rephrase your question about the platform or its policies.",
                 "sources": [],
@@ -84,6 +112,8 @@ async def process_query(request: QueryRequest):
                     "blocked_reason": f"document_{doc_status}",
                     "latency_ms": round((time.perf_counter() - _request_start) * 1000, 1),
                 }
+                live_status.update_stage(trace["request_id"], "retrieving", "done", {"document_status": doc_status})
+                live_status.finish(trace["request_id"], "blocked")
                 return {
                     "answer": message,
                     "sources": [],
@@ -100,8 +130,10 @@ async def process_query(request: QueryRequest):
             "hit": cached_result is not None,
             "latency_ms": round((time.perf_counter() - _cache_start) * 1000, 1),
         }
+        live_status.update_stage(trace["request_id"], "retrieving", "done", {"cache_hit": cached_result is not None})
         if cached_result:
             cached_result["request_id"] = trace["request_id"]
+            live_status.finish(trace["request_id"], "ok", cached_result)
             return cached_result
 
         # 1. Language Detection via langdetect
@@ -126,6 +158,7 @@ async def process_query(request: QueryRequest):
 
         # 3. Parallel Vector Retrieval for Rules AND Raw Chunks (dense +,
         # when enabled, sparse BM25 fused via RRF — see retrieval.py)
+        live_status.update_stage(trace["request_id"], "hybrid_search", "running")
         retrieved_rules, retrieved_chunks = retrieve_rules_and_chunks_parallel(
             search_query, request.top_k, request.document_id, trace=trace
         )
@@ -202,3 +235,4 @@ async def process_query(request: QueryRequest):
     finally:
         trace.setdefault("final", {}).setdefault("latency_ms", round((time.perf_counter() - _request_start) * 1000, 1))
         persist_trace(trace, status=status)
+        live_status.finish(trace["request_id"], status, trace.get("final"))
