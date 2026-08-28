@@ -1296,7 +1296,7 @@ export default function RAGPage() {
           <Link href="/" className="flex items-center gap-2 group">
             <BrandMark variant="dark" />
             <span className="font-bold text-[14px] sm:text-[15px] tracking-tight text-zinc-900 truncate">
-              AgenticFlow <span className="text-blue-600 font-mono text-[10px] sm:text-xs uppercase ml-1 px-1.5 py-0.5 rounded bg-blue-50 border border-blue-200 hidden md:inline">RAG Workspace</span>
+              Fin AI <span className="text-blue-600 font-mono text-[10px] sm:text-xs uppercase ml-1 px-1.5 py-0.5 rounded bg-blue-50 border border-blue-200 hidden md:inline">RAG Workspace</span>
             </span>
           </Link>
         </div>

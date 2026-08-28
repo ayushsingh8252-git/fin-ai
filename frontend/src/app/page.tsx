@@ -15,7 +15,7 @@ import {
   FolderOpen,
   Phone, Video, Minus, Plus, ShieldCheck, BadgeCheck, Lock, Calculator,
   Scale, UserCheck, ClipboardX, ShieldAlert, MousePointer2,
-  Award, Mail, ClipboardList, Target, Crown, FileSearch, ChevronDown,
+  Award, Mail, ClipboardList, Target, FileSearch, ChevronDown,
 } from "lucide-react";
 
 /* ── Inline GitHub Icon ── */
@@ -148,7 +148,7 @@ export default function LandingPage() {
           <Link href="/" className="flex items-center gap-2.5 group">
             <BrandMark variant="dark" />
             <span className="font-bold text-[16px] tracking-tight text-zinc-900">
-              AgenticFlow
+              Fin AI
             </span>
           </Link>
 
@@ -231,18 +231,18 @@ export default function LandingPage() {
       </nav>
 
       {/* ─── HERO SECTION ─── */}
-      <section id="platform" className="relative pt-28 pb-16 md:pt-36 md:pb-24 overflow-hidden z-10">
+      <section id="platform" className="relative pt-20 pb-10 md:pt-28 md:pb-16 overflow-hidden z-10">
         <div className="max-w-6xl mx-auto px-6">
           <div className="grid lg:grid-cols-[1fr_440px] gap-12 items-start">
             {/* Left Column */}
-            <div className="pt-4 relative">
+            <div className="relative">
               <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-zinc-200 bg-zinc-50 mb-6">
                 <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
                 <span className="text-[12px] font-medium text-zinc-600">The #1 Enterprise Agentic AI Engine</span>
               </div>
 
               <h1 className="text-[clamp(2.1rem,4.6vw,3.6rem)] font-extrabold leading-[1.08] tracking-tight text-zinc-900 mb-6">
-                AgenticFlow — Enterprise AI{" "}
+                Fin AI — Enterprise AI{" "}
                 <span className="relative inline-block text-blue-600">
                   Agent Orchestration
                   <DoodleUnderline className="absolute left-0 -bottom-2.5 w-full text-blue-600" />
@@ -284,12 +284,12 @@ export default function LandingPage() {
       </section>
 
       {/* ─── CAPABILITIES BENTO GRID ─── */}
-      <section id="capabilities" className="py-20 relative z-10 border-t border-zinc-200/80 bg-zinc-50/50">
+      <section id="capabilities" className="py-24 relative z-10 border-t border-zinc-200/80 bg-zinc-50/50">
         <div className="max-w-6xl mx-auto px-6">
           <SectionHeader
-            badge="Performance Capabilities"
-            title="Engineered for High-Consequence Enterprise Scale"
-            subtitle="RAG retrieval, fraud forensics, voice screening, and interview automation — live and tested, not mockups."
+            badge="Live Product Tour"
+            title="Every Card Below Is a Real, Working Agent"
+            subtitle="Not slides. Click in — RAG retrieval, fraud checks, voice screening, and interviews, running for real."
           />
 
           {/* ── Working today — tested end-to-end against the real backend.
@@ -298,7 +298,7 @@ export default function LandingPage() {
               layout, so each gets the full row; Fraud Detection and Telephonic
               are both simple single-column cards, so they sit side by side at
               equal width — every row has cards that genuinely match. ── */}
-          <div className="grid md:grid-cols-2 gap-6 mt-14 items-stretch">
+          <div className="grid md:grid-cols-2 gap-8 mt-16 items-stretch">
             <div className="md:col-span-2">
               <RAGCardInteractive />
             </div>
@@ -327,7 +327,7 @@ export default function LandingPage() {
               Integrations spans full width since its content (a wrapped row
               of brand chips) reads better wide than squeezed into a third
               column. ── */}
-          <div className="grid md:grid-cols-3 gap-6 items-start">
+          <div className="grid md:grid-cols-3 gap-8 items-start">
             <OnboardingCardInteractive />
             <KnowledgeCardInteractive />
             <SecurityCardWhite />
@@ -345,7 +345,7 @@ export default function LandingPage() {
           <SectionHeader
             badge="Agent Orchestrator"
             title="Every Agent, Mapped to What It Actually Does"
-            subtitle="From foundational retrieval engines to outcome-facing automation — the full roster powering AgenticFlow."
+            subtitle="From foundational retrieval engines to outcome-facing automation — the full roster powering Fin AI."
           />
         </div>
         <div className="max-w-[1360px] mx-auto px-6 mt-16">
@@ -387,7 +387,7 @@ export default function LandingPage() {
           <SectionHeader
             badge="The Math"
             title="What 100 first-round screenings actually cost"
-            subtitle="Compare the full manual process: sourcing, screening, coordination, and interviews against AgenticFlow."
+            subtitle="Compare the full manual process: sourcing, screening, coordination, and interviews against Fin AI."
           />
 
           <MathComparisonCard />
@@ -433,7 +433,7 @@ function SiteFooter() {
             <Link href="/" className="flex items-center gap-2.5 mb-4">
               <BrandMark variant="light" />
               <span className="font-bold text-[16px] tracking-tight text-white">
-                AgenticFlow
+                Fin AI
               </span>
             </Link>
             <p className="text-[13px] text-zinc-400 leading-relaxed max-w-xs mb-5">
@@ -468,7 +468,7 @@ function SiteFooter() {
 
         <div className="flex flex-col sm:flex-row items-center justify-between gap-3 mt-14 pt-6 border-t border-white/10">
           <p className="text-[12px] text-zinc-500 font-mono">
-            AgenticFlow · Autonomous Enterprise AI Platform · © {new Date().getFullYear()}
+            Fin AI · Autonomous Enterprise AI Platform · © {new Date().getFullYear()}
           </p>
           <button
             onClick={() => reopenCookieConsent()}
@@ -973,17 +973,6 @@ function PreviewBadge() {
   );
 }
 
-/** Small "Featured" badge, in the same flat pill style as the other card
- * badges (WorkingBadge, PreviewBadge) — used inline in the badge row of the
- * two premium usage-based add-ons (Telephonic + Screening Agent). */
-function FeaturedBadge() {
-  return (
-    <span className="inline-flex items-center gap-1 text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-blue-50 border border-blue-200 text-blue-700 shrink-0">
-      <Crown className="w-2.5 h-2.5" /> FEATURED
-    </span>
-  );
-}
-
 /* ── 1. AGENT TRACE — plain-language walkthrough of what the agent is doing,
    with the underlying technical detail tucked behind an optional disclosure
    rather than shown by default. ── */
@@ -1400,7 +1389,7 @@ function AutomationCardInteractive() {
           </div>
           <h3 className="text-[16px] font-bold text-zinc-900 mb-2">Enterprise Orchestration Layer</h3>
           <p className="text-[13px] text-zinc-600 leading-relaxed mb-5">
-            Autonomous multi-step reasoning, MCP tool selection, human-in-the-loop approvals, interview scheduling, and deterministic execution — see it run a full agentic hiring pipeline.
+            One agent runs the full hiring pipeline — reasoning, tool calls, and human approval — end to end.
           </p>
 
           <div className="p-3.5 bg-amber-50/60 border border-amber-200 rounded-xl text-xs text-zinc-800">
@@ -1434,8 +1423,8 @@ function AutomationCardInteractive() {
 
 /* ── Fraud Detection — a live agent, continuously scanning the pre/post-join lifecycle ── */
 function FraudDetectionCard() {
-  const preJoin = ["Resume authenticity check", "Duplicate identity scan", "Reference cross-check"];
-  const postJoin = ["Credential re-verification", "Expense anomaly detection", "Access pattern monitoring"];
+  const preJoin = ["Resume authenticity check", "Duplicate identity scan"];
+  const postJoin = ["Credential re-verification", "Expense anomaly detection"];
   const allChecks = [...preJoin, ...postJoin];
 
   const [activeIdx, setActiveIdx] = useState(0);
@@ -1456,7 +1445,7 @@ function FraudDetectionCard() {
 
       <h3 className="text-[16px] font-bold text-zinc-900 mb-1.5">Fraud Detection</h3>
       <p className="text-[13px] text-zinc-600 leading-relaxed mb-5">
-        A shared detection layer that screens every candidate and employee at each stage — before and after they join — catching duplicate identities, fabricated credentials, and policy violations before they get costly.
+        Screens every candidate and employee before and after they join — catching duplicate identities and fabricated credentials before they get costly.
       </p>
 
       <div className="grid grid-cols-2 gap-2.5">
@@ -1490,7 +1479,7 @@ function FraudDetectionCard() {
             <Brain className="w-4 h-4" />
           </div>
           <p className="text-[12px] text-zinc-700 leading-snug">
-            <span className="font-bold text-zinc-900">One shared fraud memory</span> across every hire and every stage — no duplicate checks, no blind spots between systems.
+            <span className="font-bold text-zinc-900">One shared fraud memory</span> — no duplicate checks, no blind spots.
           </p>
         </div>
 
@@ -1510,7 +1499,6 @@ function TelephonicAgentCard() {
   const features = [
     "Up to 500 calls/day",
     "Auto hand-off to interviews",
-    "Excel + resume upload",
     "WhatsApp verified numbers",
   ];
 
@@ -1520,10 +1508,7 @@ function TelephonicAgentCard() {
           <div className="card-icon-badge">
             <Phone className="w-5 h-5" />
           </div>
-          <div className="flex items-center gap-1.5">
-            <WorkingBadge />
-            <FeaturedBadge />
-          </div>
+          <WorkingBadge />
         </div>
         <h3 className="text-[16px] font-bold text-zinc-900 mb-1.5">Telephonic Agent</h3>
         <p className="text-[13px] text-zinc-500 mb-5">AI voice screening · pay only for connects</p>
@@ -1541,10 +1526,10 @@ function TelephonicAgentCard() {
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-x-3 gap-y-2.5 mb-6 pt-1 border-t border-zinc-100">
+        <div className="space-y-2 mb-6">
           {features.map((f) => (
-            <div key={f} className="flex items-start gap-1.5 text-[12px] text-zinc-700 leading-snug pt-3">
-              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-px" />
+            <div key={f} className="flex items-center gap-1.5 text-[12px] text-zinc-700 leading-snug">
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
               {f}
             </div>
           ))}
@@ -1570,7 +1555,6 @@ function ScreeningAgentCard() {
   const features = [
     { label: "BrewShield proctoring", icon: <ShieldCheck className="w-3 h-3 text-blue-600" /> },
     { label: "PDF report per candidate", icon: <CheckCircle2 className="w-3 h-3 text-emerald-600" /> },
-    { label: "Bulk invite", icon: <CheckCircle2 className="w-3 h-3 text-emerald-600" /> },
     { label: "JD + resume aware", icon: <CheckCircle2 className="w-3 h-3 text-emerald-600" /> },
   ];
 
@@ -1582,10 +1566,7 @@ function ScreeningAgentCard() {
               <div className="card-icon-badge">
                 <Video className="w-5 h-5" />
               </div>
-              <div className="flex items-center gap-1.5">
-                <WorkingBadge />
-                <FeaturedBadge />
-              </div>
+              <WorkingBadge />
             </div>
             <h3 className="text-[16px] font-bold text-zinc-900 mb-1.5">Screening Agent</h3>
             <p className="text-[13px] text-zinc-500 mb-5">3D avatar interviews · pay per interview</p>
@@ -1741,7 +1722,7 @@ function MathComparisonCard() {
 
       <div className="relative">
         <div className="text-[11px] font-mono font-bold uppercase tracking-widest text-blue-100 mb-3">
-          Manual vs. AgenticFlow · {MATH_CANDIDATES} candidates
+          Manual vs. Fin AI · {MATH_CANDIDATES} candidates
         </div>
         <p className="text-[19px] sm:text-[26px] font-bold text-white mb-8 leading-snug">
           You spend <span className="line-through decoration-2 decoration-orange-200/80 text-orange-100">{inr(MATH_MANUAL_COST)}</span> doing this by hand.
@@ -1755,7 +1736,7 @@ function MathComparisonCard() {
           </div>
           <div className="p-5 rounded-2xl bg-white/15 ring-1 ring-white/25 shadow-lg shadow-black/10">
             <div className="text-2xl sm:text-3xl font-extrabold text-emerald-300 font-mono">{inr(MATH_AI_COST)}</div>
-            <div className="text-[13px] font-bold text-white mt-1.5">AgenticFlow cost</div>
+            <div className="text-[13px] font-bold text-white mt-1.5">Fin AI cost</div>
             <div className="text-[11px] text-blue-100/80 mt-0.5">Telephonic Agent + Screening Agent, end to end</div>
           </div>
           <div className="p-5 rounded-2xl bg-white/5 ring-1 ring-white/10">

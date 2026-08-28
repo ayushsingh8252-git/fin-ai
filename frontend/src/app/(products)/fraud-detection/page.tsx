@@ -1,10 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState, type ComponentType } from "react";
-import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  ArrowLeft, ArrowRight, Upload, FileText, Image as ImageIcon, ShieldAlert, ScanSearch,
+  ArrowRight, Upload, FileText, Image as ImageIcon, ShieldAlert, ScanSearch,
   Calculator, Layers, Type, Brain, CheckCircle2, XCircle, AlertTriangle,
   MinusCircle, Loader2, RotateCcw, X, Sparkles, ShieldCheck, Zap, Radio, FileScan,
   Fingerprint, FileSearch, Camera, ScanFace, CreditCard, IdCard, Landmark,
@@ -267,12 +266,8 @@ export default function FraudDetectionPage() {
 
   return (
     <div className="min-h-screen bg-white text-zinc-900 bg-white-grid relative selection:bg-blue-500/20">
-      <nav className="sticky top-0 z-30 bg-white/85 backdrop-blur-md border-b border-zinc-200/80">
+      <div className="border-b border-zinc-200/80 bg-white">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between">
-          <Link href="/" className="flex items-center gap-2 text-sm font-bold text-zinc-900 hover:text-blue-600 transition-colors">
-            <ArrowLeft className="w-4 h-4" />
-            <span className="hidden sm:inline">Back to Platform</span>
-          </Link>
           <div className="flex items-center gap-2">
             <ShieldAlert className="w-4 h-4 text-blue-600" />
             <span className="text-sm font-bold text-zinc-900">Fraud Detection Live Agent</span>
@@ -285,7 +280,7 @@ export default function FraudDetectionPage() {
             <span className="hidden sm:inline">Restart</span>
           </button>
         </div>
-      </nav>
+      </div>
 
       <HeroSection />
 
@@ -324,7 +319,7 @@ export default function FraudDetectionPage() {
 
       <footer className="border-t border-zinc-200 bg-white py-10">
         <div className="max-w-6xl mx-auto px-6 text-center text-[12px] text-zinc-500 font-mono">
-          AgenticFlow · Fraud Detection Live Agent — every score above is computed live from your uploaded document. Nothing here is simulated.
+          Fin AI · Fraud Detection Live Agent — every score above is computed live from your uploaded document. Nothing here is simulated.
         </div>
       </footer>
     </div>

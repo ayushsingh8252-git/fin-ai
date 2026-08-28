@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect, useRef, useSyncExternalStore } from "react";
-import Link from "next/link";
 import { motion, AnimatePresence, useInView } from "framer-motion";
 import {
   ArrowLeft, Brain, GitBranch, GitPullRequest, FileText,
@@ -14,6 +13,7 @@ import {
 import {
   getSyncedHiresSnapshot, getSyncedHiresServerSnapshot, subscribeSyncedHires, type SyncedHire,
 } from "@/lib/hiringSync";
+import { EmptyState } from "@/components/ui/empty-state";
 
 /* ═══════════════════════════════════════════════════════════
    HOOKS
@@ -191,23 +191,18 @@ export default function KnowledgePage() {
 
   return (
     <div className="min-h-screen bg-white text-zinc-900 bg-white-grid relative selection:bg-blue-500/20">
-      {/* NAV */}
-      <nav className="sticky top-0 z-30 bg-white/80 backdrop-blur-md border-b border-zinc-200/80">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between">
-          <Link href="/" className="flex items-center gap-2 text-sm font-bold text-zinc-900 hover:text-blue-600 transition-colors">
-            <ArrowLeft className="w-4 h-4" />
-            <span className="hidden sm:inline">Back to Platform</span>
-          </Link>
+      {/* PAGE HEADER */}
+      <div className="border-b border-zinc-200/80 bg-white">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-14 flex items-center">
           <div className="flex items-center gap-2">
             <Brain className="w-4 h-4 text-blue-600" />
             <span className="text-sm font-bold text-zinc-900">Knowledge Transfer Engine</span>
           </div>
-          <div className="w-20" />
         </div>
-      </nav>
+      </div>
 
       {/* SECTION TABS / NEW-HIRE SWITCHER */}
-      <div className="sticky top-14 z-20 bg-white/90 backdrop-blur-sm border-b border-zinc-200/60">
+      <div className="sticky top-12 z-20 bg-white/90 backdrop-blur-sm border-b border-zinc-200/60">
         <div className="max-w-7xl mx-auto px-4 sm:px-6">
           {viewingHire ? (
             <div className="flex items-center gap-2 py-2.5 overflow-x-auto scrollbar-hide">
@@ -618,7 +613,11 @@ function PRSection({ prs, filter, setFilter, searchQuery, setSearchQuery }: {
 
       <div className="space-y-2">
         {prs.length === 0 ? (
-          <p className="text-xs text-zinc-500 p-6 bg-zinc-50 rounded-xl border border-zinc-200 text-center">No pull requests match your filter.</p>
+          <EmptyState
+            icon={GitPullRequest}
+            title="No pull requests match your filter"
+            description="Try a different status filter, or clear it to see every pull request again."
+          />
         ) : (
           prs.map(pr => <PRCard key={pr.id} pr={pr} />)
         )}

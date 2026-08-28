@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  ArrowLeft, Zap, Upload, FileText, ScanSearch, Mail, Target, ClipboardList,
+  Zap, Upload, FileText, ScanSearch, Mail, Target, ClipboardList,
   Award, ShieldCheck, UserPlus, BookOpen, CheckCircle2, Loader2, X, Search,
   ArrowUpDown, ChevronLeft, ChevronRight, Sparkles, Send, RotateCcw, Users,
   KeyRound, Laptop2, Building2, ScrollText, Video, CalendarClock, ClipboardCheck,
@@ -13,6 +13,8 @@ import {
   AlertTriangle, Calendar, Clock, Phone, Play, CalendarDays,
 } from "lucide-react";
 import { writeSyncedHires, clearSyncedHires } from "@/lib/hiringSync";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { StatusPill, type StatusTone } from "@/components/ui/status-pill";
 
 /* ═══════════════════════════════════════════════════════════
    TYPES
@@ -565,13 +567,9 @@ export default function HiringAutomationPage() {
 
   return (
     <div className="min-h-screen bg-white text-zinc-900 bg-white-grid relative selection:bg-blue-500/20">
-      {/* NAV */}
-      <nav className="sticky top-0 z-30 bg-white/85 backdrop-blur-md border-b border-zinc-200/80">
+      {/* PAGE HEADER */}
+      <div className="border-b border-zinc-200/80 bg-white">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between">
-          <Link href="/" className="flex items-center gap-2 text-sm font-bold text-zinc-900 hover:text-blue-600 transition-colors">
-            <ArrowLeft className="w-4 h-4" />
-            <span className="hidden sm:inline">Back to Platform</span>
-          </Link>
           <div className="flex items-center gap-2">
             <Zap className="w-4 h-4 text-amber-500 fill-amber-500" />
             <span className="text-sm font-bold text-zinc-900">Agentic Hiring Pipeline</span>
@@ -584,7 +582,7 @@ export default function HiringAutomationPage() {
             <span className="hidden sm:inline">Restart Demo</span>
           </button>
         </div>
-      </nav>
+      </div>
 
       {/* CONDENSED STICKY PIPELINE — stays pinned under the nav while scrolling */}
       <PipelineStickyBar nodeStatus={nodeStatus} />
@@ -868,7 +866,7 @@ function PipelineStickyBar({ nodeStatus }: { nodeStatus: (idx: number) => NodeSt
   const pct = Math.round((doneCount / PIPELINE_NODES.length) * 100);
 
   return (
-    <div className="sticky top-14 z-20 bg-white/90 backdrop-blur-md border-b border-zinc-200/70">
+    <div className="sticky top-12 z-20 bg-white/90 backdrop-blur-md border-b border-zinc-200/70">
       <div className="max-w-6xl mx-auto px-4 sm:px-6 py-2 flex items-center gap-3">
         <div className="flex items-center gap-1.5 shrink-0">
           <Bot className="w-3.5 h-3.5 text-blue-600" />
@@ -1088,32 +1086,32 @@ function CandidateSpreadsheet({ candidates }: { candidates: Candidate[] }) {
       </div>
 
       <div className="overflow-x-auto">
-        <table className="w-full text-xs">
-          <thead>
-            <tr className="bg-zinc-50 text-zinc-500 border-b border-zinc-200">
-              <th className="px-4 py-2.5 text-left w-8">
+        <Table className="text-xs">
+          <TableHeader>
+            <TableRow className="bg-zinc-50 text-zinc-500 border-zinc-200 hover:bg-zinc-50">
+              <TableHead className="px-4 py-2.5 w-8 h-auto">
                 <input type="checkbox" checked={paged.length > 0 && selected.length === paged.length} onChange={toggleSelectAll} className="rounded border-zinc-300" />
-              </th>
-              <th className="px-3 py-2.5 text-left font-bold cursor-pointer select-none" onClick={() => toggleSort("name")}>
+              </TableHead>
+              <TableHead className="px-3 py-2.5 h-auto font-bold cursor-pointer select-none" onClick={() => toggleSort("name")}>
                 <span className="flex items-center gap-1">Candidate Name <SortIcon active={sortKey === "name"} /></span>
-              </th>
-              <th className="px-3 py-2.5 text-left font-bold">Email</th>
-              <th className="px-3 py-2.5 text-left font-bold cursor-pointer select-none" onClick={() => toggleSort("ats")}>
+              </TableHead>
+              <TableHead className="px-3 py-2.5 h-auto font-bold">Email</TableHead>
+              <TableHead className="px-3 py-2.5 h-auto font-bold cursor-pointer select-none" onClick={() => toggleSort("ats")}>
                 <span className="flex items-center gap-1">ATS Score <SortIcon active={sortKey === "ats"} /></span>
-              </th>
-              <th className="px-3 py-2.5 text-left font-bold">Resume Status</th>
-              <th className="px-3 py-2.5 text-left font-bold cursor-pointer select-none" onClick={() => toggleSort("experience")}>
+              </TableHead>
+              <TableHead className="px-3 py-2.5 h-auto font-bold">Resume Status</TableHead>
+              <TableHead className="px-3 py-2.5 h-auto font-bold cursor-pointer select-none" onClick={() => toggleSort("experience")}>
                 <span className="flex items-center gap-1">Experience <SortIcon active={sortKey === "experience"} /></span>
-              </th>
-              <th className="px-3 py-2.5 text-left font-bold">Skills</th>
-              <th className="px-3 py-2.5 text-left font-bold">Current Status</th>
-            </tr>
-          </thead>
-          <tbody>
+              </TableHead>
+              <TableHead className="px-3 py-2.5 h-auto font-bold">Skills</TableHead>
+              <TableHead className="px-3 py-2.5 h-auto font-bold">Current Status</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {paged.map((r, i) => (
-              <tr key={r.id} className={`border-b border-zinc-100 hover:bg-blue-50/30 transition-colors ${i % 2 === 1 ? "bg-zinc-50/40" : ""}`}>
-                <td className="px-4 py-3"><input type="checkbox" checked={selected.includes(r.id)} onChange={() => toggleSelect(r.id)} className="rounded border-zinc-300" /></td>
-                <td className="px-3 py-3">
+              <TableRow key={r.id} className={`border-zinc-100 hover:bg-blue-50/30 ${i % 2 === 1 ? "bg-zinc-50/40" : ""}`}>
+                <TableCell className="px-4 py-3"><input type="checkbox" checked={selected.includes(r.id)} onChange={() => toggleSelect(r.id)} className="rounded border-zinc-300" /></TableCell>
+                <TableCell className="px-3 py-3">
                   <div className="flex items-center gap-2.5">
                     <div className={`w-7 h-7 rounded-full border flex items-center justify-center text-[10px] font-bold shrink-0 ${r.avatarBg} ${r.avatarText}`}>{r.name[0]}</div>
                     <div>
@@ -1121,23 +1119,23 @@ function CandidateSpreadsheet({ candidates }: { candidates: Candidate[] }) {
                       <div className="text-[10px] text-zinc-400 font-mono flex items-center gap-1"><FileText className="w-2.5 h-2.5" />{r.resumeFile}</div>
                     </div>
                   </div>
-                </td>
-                <td className="px-3 py-3 font-mono text-zinc-600">{r.email || "—"}</td>
-                <td className="px-3 py-3">
+                </TableCell>
+                <TableCell className="px-3 py-3 font-mono text-zinc-600">{r.email || "—"}</TableCell>
+                <TableCell className="px-3 py-3">
                   <span className={`font-mono font-bold px-2 py-0.5 rounded-full border ${r.ats >= 90 ? "bg-emerald-50 border-emerald-200 text-emerald-700" : "bg-blue-50 border-blue-200 text-blue-700"}`}>{r.ats}%</span>
-                </td>
-                <td className="px-3 py-3"><span className="text-emerald-600 font-bold flex items-center gap-1"><CheckCircle2 className="w-3.5 h-3.5" />Parsed</span></td>
-                <td className="px-3 py-3 text-zinc-700">{r.experience}</td>
-                <td className="px-3 py-3">
+                </TableCell>
+                <TableCell className="px-3 py-3"><span className="text-emerald-600 font-bold flex items-center gap-1"><CheckCircle2 className="w-3.5 h-3.5" />Parsed</span></TableCell>
+                <TableCell className="px-3 py-3 text-zinc-700">{r.experience}</TableCell>
+                <TableCell className="px-3 py-3">
                   <div className="flex flex-wrap gap-1 max-w-[220px]">
                     {r.skills.map((s) => <span key={s} className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-zinc-100 border border-zinc-200 text-zinc-600">{s}</span>)}
                   </div>
-                </td>
-                <td className="px-3 py-3"><span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-700">{r.status}</span></td>
-              </tr>
+                </TableCell>
+                <TableCell className="px-3 py-3"><StatusPill tone="warning">{r.status}</StatusPill></TableCell>
+              </TableRow>
             ))}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       </div>
 
       <div className="px-5 py-3 flex items-center justify-between border-t border-zinc-100 text-[11px] text-zinc-500">
@@ -1181,7 +1179,7 @@ function HumanInLoopPanel({
         <button
           onClick={onGenerate}
           disabled={locked || !requirement.trim()}
-          className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-zinc-900 text-white text-xs font-bold hover:bg-blue-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+          className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-blue-600 text-white text-xs font-bold hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
         >
           <Sparkles className="w-3.5 h-3.5 text-amber-400" /> Generate Assignment
         </button>
@@ -1359,10 +1357,10 @@ function EvaluationTable({
         </button>
       </div>
       <div className="overflow-x-auto">
-        <table className="w-full text-xs">
-          <thead>
-            <tr className="bg-zinc-50 text-zinc-500 border-b border-zinc-200">
-              <th className="px-4 py-2.5 text-left">
+        <Table className="text-xs">
+          <TableHeader>
+            <TableRow className="bg-zinc-50 text-zinc-500 border-zinc-200 hover:bg-zinc-50">
+              <TableHead className="px-4 py-2.5 h-auto">
                 <input
                   type="checkbox"
                   checked={allPendingSelected}
@@ -1371,22 +1369,27 @@ function EvaluationTable({
                   className="w-3.5 h-3.5 rounded border-zinc-300 accent-blue-600 disabled:opacity-40"
                   aria-label="Select all pending candidates"
                 />
-              </th>
-              <th className="px-3 py-2.5 text-left font-bold">Candidate</th>
-              <th className="px-3 py-2.5 text-left font-bold">ATS</th>
-              <th className="px-3 py-2.5 text-left font-bold">Match Score</th>
-              <th className="px-3 py-2.5 text-left font-bold">Email Status</th>
-              <th className="px-3 py-2.5 text-left font-bold">MCP Status</th>
-              <th className="px-3 py-2.5 text-left font-bold">Recommendation</th>
-              <th className="px-3 py-2.5 text-left font-bold">HR Approval</th>
-            </tr>
-          </thead>
-          <tbody>
+              </TableHead>
+              <TableHead className="px-3 py-2.5 h-auto font-bold">Candidate</TableHead>
+              <TableHead className="px-3 py-2.5 h-auto font-bold">ATS</TableHead>
+              <TableHead className="px-3 py-2.5 h-auto font-bold">Match Score</TableHead>
+              <TableHead className="px-3 py-2.5 h-auto font-bold">Email Status</TableHead>
+              <TableHead className="px-3 py-2.5 h-auto font-bold">MCP Status</TableHead>
+              <TableHead className="px-3 py-2.5 h-auto font-bold">Recommendation</TableHead>
+              <TableHead className="px-3 py-2.5 h-auto font-bold">HR Approval</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {candidates.map((c, i) => {
               const approved = !!approvals[c.id];
+              const recTone: StatusTone =
+                c.recommendation === "Strong Hire" ? "success"
+                  : c.recommendation === "Not a Fit" ? "danger"
+                  : c.recommendation === "Consider" ? "warning"
+                  : "info";
               return (
-                <tr key={c.id} className={`border-b border-zinc-100 hover:bg-blue-50/30 transition-colors ${i % 2 === 1 ? "bg-zinc-50/40" : ""}`}>
-                  <td className="px-4 py-3">
+                <TableRow key={c.id} className={`border-zinc-100 hover:bg-blue-50/30 ${i % 2 === 1 ? "bg-zinc-50/40" : ""}`}>
+                  <TableCell className="px-4 py-3">
                     <input
                       type="checkbox"
                       checked={selected.includes(c.id)}
@@ -1395,47 +1398,36 @@ function EvaluationTable({
                       className="w-3.5 h-3.5 rounded border-zinc-300 accent-blue-600 disabled:opacity-40"
                       aria-label={`Select ${c.name}`}
                     />
-                  </td>
-                  <td className="px-3 py-3">
+                  </TableCell>
+                  <TableCell className="px-3 py-3">
                     <div className="flex items-center gap-2.5">
                       <div className={`w-7 h-7 rounded-full border flex items-center justify-center text-[10px] font-bold shrink-0 ${c.avatarBg} ${c.avatarText}`}>{c.name[0]}</div>
                       <span className="font-bold text-zinc-900">{c.name}</span>
                     </div>
-                  </td>
-                  <td className="px-3 py-3 font-mono font-bold text-zinc-700">{c.ats}%</td>
-                  <td className="px-3 py-3">
+                  </TableCell>
+                  <TableCell className="px-3 py-3 font-mono font-bold text-zinc-700">{c.ats}%</TableCell>
+                  <TableCell className="px-3 py-3">
                     <span className="font-mono font-bold px-2 py-0.5 rounded-full border bg-blue-50 border-blue-200 text-blue-700">{c.matchScore ?? "—"}%</span>
-                  </td>
-                  <td className="px-3 py-3">
-                    <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 flex items-center gap-1 w-fit"><MailCheck className="w-3 h-3" />{c.emailStatus}</span>
-                  </td>
-                  <td className="px-3 py-3">
-                    <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-700 flex items-center gap-1 w-fit"><Plug className="w-3 h-3" />{c.mcpStatus}</span>
-                  </td>
-                  <td className="px-3 py-3">
-                    <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-full border flex items-center gap-1 w-fit ${
-                      c.recommendation === "Strong Hire" ? "bg-emerald-50 border-emerald-200 text-emerald-700"
-                        : c.recommendation === "Not a Fit" ? "bg-red-50 border-red-200 text-red-700"
-                        : c.recommendation === "Consider" ? "bg-amber-50 border-amber-200 text-amber-700"
-                        : "bg-blue-50 border-blue-200 text-blue-700"
-                    }`}>
-                      <Star className="w-3 h-3" />{c.recommendation || "Pending"}
-                    </span>
-                  </td>
-                  <td className="px-3 py-3">
-                    <span
-                      className={`text-[10px] font-bold px-3 py-1.5 rounded-lg flex items-center gap-1 w-fit ${
-                        approved ? "bg-emerald-50 border border-emerald-200 text-emerald-700" : "bg-zinc-100 border border-zinc-200 text-zinc-500"
-                      }`}
-                    >
+                  </TableCell>
+                  <TableCell className="px-3 py-3">
+                    <StatusPill tone="success"><MailCheck className="w-3 h-3" />{c.emailStatus}</StatusPill>
+                  </TableCell>
+                  <TableCell className="px-3 py-3">
+                    <StatusPill tone="warning"><Plug className="w-3 h-3" />{c.mcpStatus}</StatusPill>
+                  </TableCell>
+                  <TableCell className="px-3 py-3">
+                    <StatusPill tone={recTone}><Star className="w-3 h-3" />{c.recommendation || "Pending"}</StatusPill>
+                  </TableCell>
+                  <TableCell className="px-3 py-3">
+                    <StatusPill tone={approved ? "success" : "neutral"}>
                       {approved ? <><CheckCircle2 className="w-3 h-3" /> Approved</> : "Pending"}
-                    </span>
-                  </td>
-                </tr>
+                    </StatusPill>
+                  </TableCell>
+                </TableRow>
               );
             })}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       </div>
     </div>
   );
@@ -1508,7 +1500,7 @@ function InterviewSchedulingPanel({
         <button
           onClick={onContinue}
           disabled={locked}
-          className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-zinc-900 text-white text-xs font-bold hover:bg-blue-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm shrink-0"
+          className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-blue-600 text-white text-xs font-bold hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm shrink-0"
         >
           {locked ? <><CheckCircle2 className="w-3.5 h-3.5" /> Continued to Onboarding</> : <>Continue to Onboarding <ArrowUpRight className="w-3.5 h-3.5" /></>}
         </button>
@@ -1558,33 +1550,33 @@ function CandidateScoresTable({ candidates }: { candidates: Candidate[] }) {
         </p>
       </div>
       <div className="overflow-x-auto">
-        <table className="w-full text-xs">
-          <thead>
-            <tr className="bg-zinc-50 text-zinc-500 border-b border-zinc-200">
-              <th className="px-4 py-2.5 text-left font-bold">Candidate Name</th>
-              <th className="px-3 py-2.5 text-left font-bold">Telephonic Screening Score</th>
-              <th className="px-3 py-2.5 text-left font-bold">AI Interview Agent Score</th>
-            </tr>
-          </thead>
-          <tbody>
+        <Table className="text-xs">
+          <TableHeader>
+            <TableRow className="bg-zinc-50 text-zinc-500 border-zinc-200 hover:bg-zinc-50">
+              <TableHead className="px-4 py-2.5 h-auto font-bold">Candidate Name</TableHead>
+              <TableHead className="px-3 py-2.5 h-auto font-bold">Telephonic Screening Score</TableHead>
+              <TableHead className="px-3 py-2.5 h-auto font-bold">AI Interview Agent Score</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {scheduled.map((c, i) => (
-              <tr key={c.id} className={`border-b border-zinc-100 hover:bg-blue-50/30 transition-colors ${i % 2 === 1 ? "bg-zinc-50/40" : ""}`}>
-                <td className="px-4 py-3">
+              <TableRow key={c.id} className={`border-zinc-100 hover:bg-blue-50/30 ${i % 2 === 1 ? "bg-zinc-50/40" : ""}`}>
+                <TableCell className="px-4 py-3">
                   <div className="flex items-center gap-2.5">
                     <div className={`w-7 h-7 rounded-full border flex items-center justify-center text-[10px] font-bold shrink-0 ${c.avatarBg} ${c.avatarText}`}>{c.name[0]}</div>
                     <span className="font-bold text-zinc-900">{c.name}</span>
                   </div>
-                </td>
-                <td className="px-3 py-3">
+                </TableCell>
+                <TableCell className="px-3 py-3">
                   <ScoreCell score={c.telephonicScore} isReal={c.telephonicScoreIsReal} />
-                </td>
-                <td className="px-3 py-3">
+                </TableCell>
+                <TableCell className="px-3 py-3">
                   <ScoreCell score={c.aiInterviewScore} isReal={c.aiInterviewScoreIsReal} />
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             ))}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       </div>
     </div>
   );
@@ -1816,7 +1808,7 @@ function OnboardingPanel({
                 {showContinue && (
                   <button
                     onClick={onContinue}
-                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-zinc-900 text-white text-xs font-bold hover:bg-blue-600 transition-colors shadow-sm"
+                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 text-white text-xs font-bold hover:bg-blue-700 transition-colors shadow-sm"
                   >
                     Continue to Knowledge Transfer <ArrowUpRight className="w-3.5 h-3.5" />
                   </button>
@@ -1928,7 +1920,7 @@ function KnowledgeTransferPanel({
                 {showFinish && (
                   <button
                     onClick={onFinish}
-                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-zinc-900 text-white text-xs font-bold hover:bg-blue-600 transition-colors shadow-sm"
+                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 text-white text-xs font-bold hover:bg-blue-700 transition-colors shadow-sm"
                   >
                     <PartyPopper className="w-3.5 h-3.5 text-amber-400" /> Finish Workflow
                   </button>

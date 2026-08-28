@@ -37,10 +37,10 @@ export interface AIAssistantConfig {
 }
 
 export const ASSISTANT_CONFIG: AIAssistantConfig = {
-  name: "AgenticFlow",
+  name: "Fin AI",
   subtitle: "Enterprise AI Assistant",
   greeting: "Hi there",
-  intro: "I'm your AgenticFlow assistant — ask me about HR policy or the platform itself.",
+  intro: "I'm your Fin AI assistant — ask me about HR policy or the platform itself.",
   closingPrompt: "How can I help you today?",
   speakCta: "Speak with AI",
 };
@@ -424,7 +424,7 @@ export default function AIAssistantWidget({ config = ASSISTANT_CONFIG }: { confi
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={(e) => { if (e.key === "Enter") submitQuery(input); }}
-                  placeholder="Ask about HR policy or the AgenticFlow platform…"
+                  placeholder="Ask about HR policy or the Fin AI platform…"
                   className="flex-1 min-w-0 bg-transparent text-[13px] text-zinc-900 placeholder:text-zinc-400 focus:outline-none py-1.5"
                 />
                 <button
@@ -435,7 +435,7 @@ export default function AIAssistantWidget({ config = ASSISTANT_CONFIG }: { confi
                   <Send className="w-3.5 h-3.5" />
                 </button>
               </div>
-              <p className="text-center text-[10px] text-zinc-400 font-mono mt-2">Powered by AgenticFlow RAG Engine</p>
+              <p className="text-center text-[10px] text-zinc-400 font-mono mt-2">Powered by Fin AI RAG Engine</p>
             </div>
           </motion.div>
         )}

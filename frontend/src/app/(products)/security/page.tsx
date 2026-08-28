@@ -1,13 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  ArrowLeft, Shield, KeyRound, ScrollText, Activity, DatabaseBackup, UploadCloud,
+  Shield, KeyRound, ScrollText, Activity, DatabaseBackup, UploadCloud,
   Folder, FolderOpen, File, ChevronDown, Clock, Users, Cpu, Check,
   CheckCircle2, AlertTriangle, XCircle,
 } from "lucide-react";
+import { StatusPill, type StatusTone } from "@/components/ui/status-pill";
 
 /* ═══════════════════════════════════════════════════════════
    TEAM DIRECTORY
@@ -128,19 +128,23 @@ const SECURITY_FOLDERS = [
    SHARED BITS
    ═══════════════════════════════════════════════════════════ */
 
-const STATUS_STYLE: Record<Status, { pill: string; icon: React.ReactNode }> = {
-  success: { pill: "bg-emerald-50 border-emerald-200 text-emerald-700", icon: <CheckCircle2 className="w-3 h-3" /> },
-  flagged: { pill: "bg-amber-50 border-amber-200 text-amber-700", icon: <AlertTriangle className="w-3 h-3" /> },
-  blocked: { pill: "bg-red-50 border-red-200 text-red-600", icon: <XCircle className="w-3 h-3" /> },
+const STATUS_TONE: Record<Status, StatusTone> = {
+  success: "success",
+  flagged: "warning",
+  blocked: "danger",
+};
+const STATUS_ICON: Record<Status, React.ReactNode> = {
+  success: <CheckCircle2 className="w-3 h-3" />,
+  flagged: <AlertTriangle className="w-3 h-3" />,
+  blocked: <XCircle className="w-3 h-3" />,
 };
 
-function StatusPill({ status }: { status: Status }) {
-  const s = STATUS_STYLE[status];
+function SecurityStatusPill({ status }: { status: Status }) {
   return (
-    <span className={`inline-flex items-center gap-1 text-[10px] font-mono font-bold px-2 py-0.5 rounded-full border shrink-0 ${s.pill}`}>
-      {s.icon}
+    <StatusPill tone={STATUS_TONE[status]} className="font-mono shrink-0">
+      {STATUS_ICON[status]}
       {status.toUpperCase()}
-    </span>
+    </StatusPill>
   );
 }
 
@@ -229,7 +233,7 @@ function EntryDetail({
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <span className="text-[10px] font-mono text-zinc-400 flex items-center gap-1"><Clock className="w-3 h-3" />{e.time}</span>
-            <StatusPill status={e.status} />
+            <SecurityStatusPill status={e.status} />
           </div>
         </div>
       ))}
@@ -307,13 +311,9 @@ export default function SecurityExplorerPage() {
 
   return (
     <div className="min-h-screen bg-white text-zinc-900 bg-white-grid relative selection:bg-blue-500/20">
-      {/* NAV */}
-      <nav className="sticky top-0 z-30 bg-white/80 backdrop-blur-md border-b border-zinc-200/80">
+      {/* PAGE HEADER */}
+      <div className="border-b border-zinc-200/80 bg-white">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between">
-          <Link href="/" className="flex items-center gap-2 text-sm font-bold text-zinc-900 hover:text-blue-600 transition-colors">
-            <ArrowLeft className="w-4 h-4" />
-            <span className="hidden sm:inline">Back to Platform</span>
-          </Link>
           <div className="flex items-center gap-2">
             <Shield className="w-4 h-4 text-blue-600" />
             <span className="text-sm font-bold text-zinc-900">Security & Compliance Explorer</span>
@@ -323,7 +323,7 @@ export default function SecurityExplorerPage() {
             <span className="hidden sm:inline">MONITORING ACTIVE</span>
           </div>
         </div>
-      </nav>
+      </div>
 
       {/* Toast */}
       <AnimatePresence>

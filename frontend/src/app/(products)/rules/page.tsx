@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Search, Filter, ShieldCheck, FileText, RefreshCw } from "lucide-react";
+import { Search, ShieldCheck, RefreshCw } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
+import { EmptyState } from "@/components/ui/empty-state";
 
 type RuleItem = {
   id: string;
@@ -53,88 +54,92 @@ export default function RulesExplorerPage() {
 
   const getTypeColor = (type: string) => {
     switch((type || "").toUpperCase()) {
-      case "OBLIGATION": return "bg-blue-500/10 text-blue-500 border-blue-500/20";
-      case "PROHIBITION": return "bg-red-500/10 text-red-500 border-red-500/20";
-      case "PERMISSION": return "bg-emerald-500/10 text-emerald-500 border-emerald-500/20";
-      default: return "bg-amber-500/10 text-amber-500 border-amber-500/20";
+      case "OBLIGATION": return "bg-blue-500/10 text-blue-600 border-blue-500/20";
+      case "PROHIBITION": return "bg-red-500/10 text-red-600 border-red-500/20";
+      case "PERMISSION": return "bg-emerald-500/10 text-emerald-600 border-emerald-500/20";
+      default: return "bg-amber-500/10 text-amber-600 border-amber-500/20";
     }
   };
 
   return (
-    <div className="flex flex-col h-full bg-zinc-950 p-8 overflow-auto">
+    <div className="flex flex-col min-h-screen bg-white bg-white-grid relative p-8 overflow-auto">
       <div className="max-w-6xl w-full mx-auto space-y-6">
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
           <div>
-            <h1 className="text-3xl font-bold tracking-tight text-zinc-100 mb-2">Rule Explorer</h1>
-            <p className="text-zinc-400">Search and filter through all live extracted and validated policy rules.</p>
+            <h1 className="text-3xl font-bold tracking-tight text-zinc-900 mb-2">Rule Explorer</h1>
+            <p className="text-zinc-500">Search and filter through all live extracted and validated policy rules.</p>
           </div>
-          
+
           <div className="flex items-center gap-2">
-            <Button 
-              variant="outline" 
+            <Button
+              variant="outline"
               onClick={fetchRules}
-              className="border-zinc-800 bg-zinc-900 text-zinc-300 hover:bg-zinc-800 hover:text-white"
             >
               <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? "animate-spin" : ""}`} />
               Refresh Rules
             </Button>
           </div>
         </div>
-        
-        <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden shadow-lg">
-          <div className="p-4 border-b border-zinc-800 bg-zinc-950/50 flex gap-4">
+
+        <div className="bg-white border border-zinc-200 rounded-xl overflow-hidden shadow-sm">
+          <div className="p-4 border-b border-zinc-200 bg-zinc-50/70 flex gap-4">
             <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-500" />
-              <Input 
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-400" />
+              <Input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search extracted rules, document IDs, or sections..." 
-                className="pl-9 bg-zinc-900 border-zinc-800 text-zinc-100 placeholder:text-zinc-500 focus-visible:ring-indigo-500"
+                placeholder="Search extracted rules, document IDs, or sections..."
+                className="pl-9"
               />
             </div>
           </div>
-          
+
           <Table>
-            <TableHeader className="bg-zinc-950">
-              <TableRow className="border-zinc-800 hover:bg-transparent">
-                <TableHead className="text-zinc-400 font-medium">Rule ID</TableHead>
-                <TableHead className="text-zinc-400 font-medium">Canonical Rule</TableHead>
-                <TableHead className="text-zinc-400 font-medium">Type</TableHead>
-                <TableHead className="text-zinc-400 font-medium">Confidence</TableHead>
-                <TableHead className="text-zinc-400 font-medium">Page</TableHead>
-                <TableHead className="text-zinc-400 font-medium">Section</TableHead>
+            <TableHeader className="bg-zinc-50">
+              <TableRow className="border-zinc-200 hover:bg-transparent">
+                <TableHead className="text-zinc-500 font-medium">Rule ID</TableHead>
+                <TableHead className="text-zinc-500 font-medium">Canonical Rule</TableHead>
+                <TableHead className="text-zinc-500 font-medium">Type</TableHead>
+                <TableHead className="text-zinc-500 font-medium">Confidence</TableHead>
+                <TableHead className="text-zinc-500 font-medium">Page</TableHead>
+                <TableHead className="text-zinc-500 font-medium">Section</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {isLoading ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="h-24 text-center text-zinc-400">
+                  <TableCell colSpan={6} className="h-24 text-center text-zinc-500">
                     Loading live extracted rules from backend...
                   </TableCell>
                 </TableRow>
               ) : filteredRules.length > 0 ? (
                 filteredRules.map((rule) => (
-                  <TableRow key={rule.id} className="border-zinc-800/50 hover:bg-zinc-800/50 transition-colors">
-                    <TableCell className="font-mono text-xs text-zinc-500">{rule.id.substring(0, 8)}...</TableCell>
-                    <TableCell className="font-medium text-zinc-200">{rule.canonical_rule}</TableCell>
+                  <TableRow key={rule.id} className="border-zinc-100 hover:bg-zinc-50 transition-colors">
+                    <TableCell className="font-mono text-xs text-zinc-400">{rule.id.substring(0, 8)}...</TableCell>
+                    <TableCell className="font-medium text-zinc-800">{rule.canonical_rule}</TableCell>
                     <TableCell>
                       <Badge variant="outline" className={getTypeColor(rule.type)}>
                         {rule.type || "GUIDELINE"}
                       </Badge>
                     </TableCell>
                     <TableCell>
-                      <span className="text-sm font-medium text-zinc-300">{rule.confidence}%</span>
+                      <span className="text-sm font-medium text-zinc-700">{rule.confidence}%</span>
                     </TableCell>
-                    <TableCell className="text-zinc-400 text-sm">
+                    <TableCell className="text-zinc-500 text-sm">
                       Page {rule.page || 1}
                     </TableCell>
-                    <TableCell className="text-zinc-400 text-sm">{rule.section || "General"}</TableCell>
+                    <TableCell className="text-zinc-500 text-sm">{rule.section || "General"}</TableCell>
                   </TableRow>
                 ))
               ) : (
-                <TableRow>
-                  <TableCell colSpan={6} className="h-24 text-center text-zinc-500">
-                    No extracted rules found. Ingest a document on the Upload page to view live rules.
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={6}>
+                    <EmptyState
+                      icon={ShieldCheck}
+                      title="No extracted rules yet"
+                      description="Ingest a document on the Upload page — once processing finishes, its validated rules will show up here automatically."
+                      className="border-none"
+                    />
                   </TableCell>
                 </TableRow>
               )}

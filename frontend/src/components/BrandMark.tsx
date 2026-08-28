@@ -1,4 +1,4 @@
-/** AgenticFlow logomark — two agent nodes flowing into one orchestrated
+/** Fin AI logomark — two agent nodes flowing into one orchestrated
  * core, standing in for the generic bolt icon everywhere the brand mark
  * appears (main nav, footer, RAG workspace nav). `variant` picks the two
  * color pairings those spots already used ("dark" tile for light

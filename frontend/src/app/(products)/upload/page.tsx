@@ -5,6 +5,7 @@ import { UploadCloud, File, FileAudio, CheckCircle, AlertCircle, X, Shield, Musi
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
+import { Badge } from "@/components/ui/badge";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -99,89 +100,90 @@ export default function UploadPage() {
   };
 
   return (
-    <div className="flex flex-col h-full bg-zinc-950 p-8 overflow-auto">
+    <div className="flex flex-col min-h-screen bg-white bg-white-grid relative p-8 overflow-auto">
       <div className="max-w-4xl w-full mx-auto space-y-8">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight text-zinc-100 mb-2">Ingest Documents & Audio</h1>
-          <p className="text-zinc-400">Upload PDF documents, Audio files (.mp3, .wav, .m4a), or plain text/markdown (.md, .txt) for automatic STT transcription, chunking & RAG vector indexing.</p>
+          <h1 className="text-3xl font-bold tracking-tight text-zinc-900 mb-2">Ingest Documents & Audio</h1>
+          <p className="text-zinc-500">Upload PDF documents, Audio files (.mp3, .wav, .m4a), or plain text/markdown (.md, .txt) for automatic STT transcription, chunking & RAG vector indexing.</p>
         </div>
-        
-        <Card className="bg-zinc-900 border-zinc-800">
+
+        <Card>
           <CardHeader>
-            <CardTitle className="text-zinc-100">Upload Policy Files & Audio</CardTitle>
-            <CardDescription className="text-zinc-400">Drag and drop your PDF policies or Audio files here.</CardDescription>
+            <CardTitle>Upload Policy Files & Audio</CardTitle>
+            <CardDescription>Drag and drop your PDF policies or Audio files here.</CardDescription>
           </CardHeader>
           <CardContent>
-            <div 
+            <div
               className={`border-2 border-dashed rounded-xl p-12 text-center transition-colors cursor-pointer
-                ${isDragging ? "border-indigo-500 bg-indigo-500/10" : "border-zinc-700 hover:border-zinc-500 bg-zinc-950"}
+                ${isDragging ? "border-blue-500 bg-blue-500/5" : "border-zinc-300 hover:border-zinc-400 bg-zinc-50"}
               `}
               onDragOver={handleDragOver}
               onDragLeave={handleDragLeave}
               onDrop={handleDrop}
               onClick={() => document.getElementById("fileInput")?.click()}
             >
-              <input 
-                id="fileInput" 
-                type="file" 
-                multiple 
+              <input
+                id="fileInput"
+                type="file"
+                multiple
                 accept=".pdf,.mp3,.wav,.m4a,.ogg,.flac,.aac,.webm,.wma,.md,.txt,application/pdf,audio/*,text/plain,text/markdown"
-                className="hidden" 
+                className="hidden"
                 onChange={(e) => addFiles(e.target.files)}
               />
               <div className="flex flex-col items-center justify-center gap-4">
-                <div className="flex items-center gap-3 p-4 rounded-full bg-zinc-900 border border-zinc-800">
-                  <UploadCloud className="h-8 w-8 text-indigo-400" />
-                  <Music className="h-8 w-8 text-amber-400" />
+                <div className="flex items-center gap-3 p-4 rounded-full bg-white border border-zinc-200 shadow-sm">
+                  <UploadCloud className="h-8 w-8 text-blue-600" />
+                  <Music className="h-8 w-8 text-amber-500" />
                 </div>
                 <div>
-                  <p className="text-lg font-medium text-zinc-200">Click or drag PDF, Audio, or Text files here</p>
+                  <p className="text-lg font-medium text-zinc-800">Click or drag PDF, Audio, or Text files here</p>
                   <p className="text-sm text-zinc-500 mt-1">Supports PDF, MP3, WAV, M4A, OGG, WEBM, MD, TXT (Max size: 100MB)</p>
                 </div>
               </div>
             </div>
-            
+
             {files.length > 0 && (
               <div className="mt-8 space-y-4">
-                <h3 className="font-medium text-zinc-200">Processing Queue</h3>
+                <h3 className="font-medium text-zinc-800">Processing Queue</h3>
                 <div className="space-y-3">
                   {files.map((file) => (
-                    <div key={file.id} className="flex items-center gap-4 p-4 rounded-lg bg-zinc-950 border border-zinc-800">
+                    <div key={file.id} className="flex items-center gap-4 p-4 rounded-lg bg-zinc-50 border border-zinc-200">
                       {file.isAudio ? (
                         <FileAudio className="h-8 w-8 text-amber-500 shrink-0" />
                       ) : (
-                        <File className="h-8 w-8 text-indigo-500 shrink-0" />
+                        <File className="h-8 w-8 text-blue-600 shrink-0" />
                       )}
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
-                          <p className="text-sm font-medium text-zinc-200 truncate">{file.file.name}</p>
+                          <p className="text-sm font-medium text-zinc-800 truncate">{file.file.name}</p>
                           {file.isAudio && (
-                            <span className="text-[10px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20">
-                              Audio STT
-                            </span>
+                            <Badge variant="warning">Audio STT</Badge>
                           )}
                         </div>
                         <div className="flex items-center gap-4 mt-2">
-                          <Progress value={file.progress} className="h-1.5 flex-1 bg-zinc-800" />
-                          <span className="text-xs text-zinc-400 w-12 text-right">{file.progress}%</span>
+                          <Progress value={file.progress} className="h-1.5 flex-1" />
+                          <span className="text-xs text-zinc-500 w-12 text-right">{file.progress}%</span>
                         </div>
+                        {file.status === "error" && file.message && (
+                          <p className="mt-1.5 text-xs text-red-600">{file.message}</p>
+                        )}
                       </div>
                       <div className="flex items-center justify-end w-24">
                         {file.status === "idle" && (
-                          <Button variant="ghost" size="icon" onClick={() => removeFile(file.id)} className="text-zinc-500 hover:text-red-400">
+                          <Button variant="ghost" size="icon" onClick={() => removeFile(file.id)} className="text-zinc-400 hover:text-red-600">
                             <X className="h-4 w-4" />
                           </Button>
                         )}
-                        {file.status === "uploading" && <span className="text-xs text-indigo-400 animate-pulse">Uploading...</span>}
+                        {file.status === "uploading" && <span className="text-xs text-blue-600 animate-pulse">Uploading...</span>}
                         {file.status === "success" && <CheckCircle className="h-5 w-5 text-emerald-500" />}
                         {file.status === "error" && <AlertCircle className="h-5 w-5 text-red-500" />}
                       </div>
                     </div>
                   ))}
                 </div>
-                
-                <div className="flex justify-end pt-4 border-t border-zinc-800">
-                  <Button onClick={uploadFiles} className="bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg shadow-indigo-900/20">
+
+                <div className="flex justify-end pt-4 border-t border-zinc-200">
+                  <Button variant="brand" onClick={uploadFiles}>
                     <Shield className="h-4 w-4 mr-2" />
                     Process Documents
                   </Button>
@@ -190,8 +192,6 @@ export default function UploadPage() {
             )}
           </CardContent>
         </Card>
-        
-        {/* Pipeline stage visualizer can be added here if needed */}
       </div>
     </div>
   );

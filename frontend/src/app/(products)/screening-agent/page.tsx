@@ -26,7 +26,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import {
-  ArrowLeft, ArrowRight, Sparkles, ShieldCheck, Video, Mic,
+  ArrowRight, Sparkles, ShieldCheck, Video, Mic,
   Bot, Award, Radio, Target, ListChecks, Lightbulb, Gauge,
   CalendarClock, Mail, Loader2,
 } from "lucide-react";
@@ -43,12 +43,8 @@ const INTERVIEWER_NAME = "Ayush";
 export default function ScreeningAgentPage() {
   return (
     <div className="min-h-screen bg-white text-zinc-900 bg-white-grid relative selection:bg-blue-500/20">
-      <nav className="sticky top-0 z-30 bg-white/85 backdrop-blur-md border-b border-zinc-200/80">
+      <div className="border-b border-zinc-200/80 bg-white">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between">
-          <Link href="/" className="flex items-center gap-2 text-sm font-bold text-zinc-900 hover:text-blue-600 transition-colors">
-            <ArrowLeft className="w-4 h-4" />
-            <span className="hidden sm:inline">Back to Platform</span>
-          </Link>
           <div className="flex items-center gap-2">
             <Video className="w-4 h-4 text-blue-600" />
             <span className="text-sm font-bold text-zinc-900">Screening Agent</span>
@@ -60,7 +56,7 @@ export default function ScreeningAgentPage() {
             Open Telephonic Agent <ArrowRight className="w-3.5 h-3.5" />
           </Link>
         </div>
-      </nav>
+      </div>
 
       <HeroSection />
       <ScheduledInterviewsSection />
@@ -71,7 +67,7 @@ export default function ScreeningAgentPage() {
 
       <footer className="border-t border-zinc-200 bg-white py-10">
         <div className="max-w-6xl mx-auto px-6 text-center text-[12px] text-zinc-500 font-mono">
-          AgenticFlow · Screening Agent — the live interview above is real (camera, proctoring, Groq, transcription),
+          Fin AI · Screening Agent — the live interview above is real (camera, proctoring, Groq, transcription),
           and its report is generated from your actual answers. Only the &ldquo;Create in Minutes&rdquo; step below is a mockup.
         </div>
       </footer>

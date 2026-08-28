@@ -736,7 +736,7 @@ export default function InterviewRoom({
         <div className="p-4 sm:p-5 flex items-center justify-between border-b border-zinc-100 flex-wrap gap-3">
           <div className="flex items-center gap-2 text-zinc-500">
             <span className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-blue-600 text-xs font-bold text-white">A</span>
-            <span className="text-sm font-bold text-zinc-800">AgenticFlow · Screening Agent</span>
+            <span className="text-sm font-bold text-zinc-800">Fin AI · Screening Agent</span>
           </div>
           <div className="flex items-center gap-2">
             {!roleFieldsLocked && (

@@ -5,11 +5,12 @@ import Link from "next/link";
 import { motion } from "framer-motion";
 import { askAssistant } from "@/components/ai-assistant/AIAssistantWidget";
 import {
-  ArrowLeft, Phone, Sparkles, ArrowRight, Globe, Clock, MessageSquare, RefreshCw,
+  Phone, Sparkles, ArrowRight, Globe, Clock, MessageSquare, RefreshCw,
   BarChart3, CheckCircle2, Upload, FileText, Code2, MessageCircle,
   User, MapPin, Briefcase, Languages, ShieldCheck, Target, PhoneMissed,
   Loader2, Bot, PhoneCall, AlertTriangle, PhoneOff, CalendarClock, Mail,
 } from "lucide-react";
+import { StatusPill, type StatusTone } from "@/components/ui/status-pill";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -105,12 +106,8 @@ const TRANSCRIPT_PREVIEW = [
 export default function TelephonicAgentPage() {
   return (
     <div className="min-h-screen bg-white text-zinc-900 bg-white-grid relative selection:bg-blue-500/20">
-      <nav className="sticky top-0 z-30 bg-white/85 backdrop-blur-md border-b border-zinc-200/80">
+      <div className="border-b border-zinc-200/80 bg-white">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between">
-          <Link href="/" className="flex items-center gap-2 text-sm font-bold text-zinc-900 hover:text-blue-600 transition-colors">
-            <ArrowLeft className="w-4 h-4" />
-            <span className="hidden sm:inline">Back to Platform</span>
-          </Link>
           <div className="flex items-center gap-2">
             <Phone className="w-4 h-4 text-blue-600" />
             <span className="text-sm font-bold text-zinc-900">Telephonic Agent</span>
@@ -122,7 +119,7 @@ export default function TelephonicAgentPage() {
             Open Hiring Pipeline <ArrowRight className="w-3.5 h-3.5" />
           </Link>
         </div>
-      </nav>
+      </div>
 
       <HeroSection />
       <RealCallSection />
@@ -135,7 +132,7 @@ export default function TelephonicAgentPage() {
 
       <footer className="border-t border-zinc-200 bg-white py-10">
         <div className="max-w-6xl mx-auto px-6 text-center text-[12px] text-zinc-500 font-mono">
-          AgenticFlow · Telephonic Agent — the &ldquo;Place a Real Call&rdquo; panel above places a real
+          Fin AI · Telephonic Agent — the &ldquo;Place a Real Call&rdquo; panel above places a real
           Twilio phone call. Everything below it is an illustrative product demo.
         </div>
       </footer>
@@ -591,25 +588,25 @@ function ScheduledInterviewsSection() {
 }
 
 function CallStatusBadge({ status }: { status: string }) {
-  const map: Record<string, { label: string; className: string; icon: ComponentType<{ className?: string }> }> = {
-    queued: { label: "Queued", className: "text-zinc-600 bg-zinc-100 border-zinc-200", icon: Loader2 },
-    initiated: { label: "Initiated", className: "text-blue-600 bg-blue-50 border-blue-200", icon: Loader2 },
-    ringing: { label: "Ringing", className: "text-blue-600 bg-blue-50 border-blue-200", icon: PhoneCall },
-    "in-progress": { label: "In progress", className: "text-emerald-600 bg-emerald-50 border-emerald-200", icon: PhoneCall },
-    answered: { label: "Answered", className: "text-emerald-600 bg-emerald-50 border-emerald-200", icon: PhoneCall },
-    completed: { label: "Completed", className: "text-emerald-600 bg-emerald-50 border-emerald-200", icon: CheckCircle2 },
-    "no-answer": { label: "No answer", className: "text-amber-600 bg-amber-50 border-amber-200", icon: PhoneMissed },
-    busy: { label: "Busy", className: "text-amber-600 bg-amber-50 border-amber-200", icon: PhoneMissed },
-    failed: { label: "Failed", className: "text-red-600 bg-red-50 border-red-200", icon: PhoneOff },
-    canceled: { label: "Canceled", className: "text-zinc-500 bg-zinc-100 border-zinc-200", icon: PhoneOff },
+  const map: Record<string, { label: string; tone: StatusTone; icon: ComponentType<{ className?: string }> }> = {
+    queued: { label: "Queued", tone: "neutral", icon: Loader2 },
+    initiated: { label: "Initiated", tone: "info", icon: Loader2 },
+    ringing: { label: "Ringing", tone: "info", icon: PhoneCall },
+    "in-progress": { label: "In progress", tone: "success", icon: PhoneCall },
+    answered: { label: "Answered", tone: "success", icon: PhoneCall },
+    completed: { label: "Completed", tone: "success", icon: CheckCircle2 },
+    "no-answer": { label: "No answer", tone: "warning", icon: PhoneMissed },
+    busy: { label: "Busy", tone: "warning", icon: PhoneMissed },
+    failed: { label: "Failed", tone: "danger", icon: PhoneOff },
+    canceled: { label: "Canceled", tone: "neutral", icon: PhoneOff },
   };
-  const entry = map[status] || { label: status, className: "text-zinc-600 bg-zinc-100 border-zinc-200", icon: Loader2 };
+  const entry = map[status] || { label: status, tone: "neutral" as StatusTone, icon: Loader2 };
   const Icon = entry.icon;
   const spin = Icon === Loader2;
   return (
-    <span className={`text-[11px] font-semibold px-2.5 py-1 rounded-full border flex items-center gap-1.5 ${entry.className}`}>
+    <StatusPill tone={entry.tone} className="text-[11px] font-semibold px-2.5 py-1">
       <Icon className={`w-3 h-3 ${spin ? "animate-spin" : ""}`} /> {entry.label}
-    </span>
+    </StatusPill>
   );
 }
 
@@ -671,7 +668,7 @@ function AgentProfileCard() {
         AS
       </div>
       <div className="relative text-lg font-extrabold text-white">{AGENT_NAME}</div>
-      <div className="relative text-[12px] text-blue-100 font-mono mt-1">Telephonic Agent · AgenticFlow</div>
+      <div className="relative text-[12px] text-blue-100 font-mono mt-1">Telephonic Agent · Fin AI</div>
       <div className="relative flex items-center gap-1.5 mt-4 px-3 py-1.5 rounded-full bg-white/15 border border-white/20 text-[11px] font-mono text-white">
         <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" /> Always on
       </div>
