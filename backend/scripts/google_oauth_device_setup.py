@@ -17,9 +17,9 @@ account):
      values, then run this script:
        cd backend && python scripts/google_oauth_device_setup.py
 
-On success, prints GOOGLE_OAUTH_REFRESH_TOKEN — paste it into .env and
-restart the backend. The Google Workspace connectors will then use this
-refresh token instead of the service-account path automatically (see
+On success, writes GOOGLE_OAUTH_REFRESH_TOKEN straight into .env — just
+restart the backend afterward. The Google Workspace connectors will then use
+this refresh token instead of the service-account path automatically (see
 _auth.py's get_access_token — OAuth mode is preferred whenever configured).
 """
 import sys
@@ -31,6 +31,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import requests  # noqa: E402
 
 from app.config import settings  # noqa: E402
+from app.services.env_persist import persist_env_var  # noqa: E402
 
 DEVICE_CODE_URL = "https://oauth2.googleapis.com/device/code"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -100,10 +101,9 @@ def main() -> int:
                 print("This usually means this account already authorized this client before — ")
                 print("revoke access at https://myaccount.google.com/permissions and re-run this script.")
                 return 1
+            persist_env_var("GOOGLE_OAUTH_REFRESH_TOKEN", refresh_token)
             print()
-            print("Success! Add this to your .env, then restart the backend:")
-            print()
-            print(f"GOOGLE_OAUTH_REFRESH_TOKEN={refresh_token}")
+            print("Success! GOOGLE_OAUTH_REFRESH_TOKEN written to .env — restart the backend to pick it up.")
             print()
             return 0
 

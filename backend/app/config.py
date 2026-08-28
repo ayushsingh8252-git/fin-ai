@@ -164,6 +164,14 @@ class Settings(BaseSettings):
     # Distinct from GOOGLE_CLIENT_ID above, which is only for verifying this
     # app's own Google Sign-In ID tokens — these are for calling Workspace
     # APIs as a user.
+    #
+    # 3. Browser-based one-time setup done as a live callback endpoint
+    #    (api/google_oauth.py) instead of scripts/google_oauth_browser_setup.py's
+    #    local CLI server — visit GET /auth/google/login, approve access, and
+    #    the callback mints GOOGLE_OAUTH_REFRESH_TOKEN above automatically.
+    #    Must be registered as an "Authorized redirect URI" on the OAuth
+    #    client (Web application type) in Google Cloud Console.
+    GOOGLE_AUTH_REDIRECT_URL: str = ""
 
     # Fraud detection pipeline
     FRAUD_ELA_THRESHOLD: float = 35.0
