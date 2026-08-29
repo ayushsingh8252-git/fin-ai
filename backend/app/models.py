@@ -293,3 +293,38 @@ class Rule(Base):
     metadata_ = Column("metadata", JSON, default={})
 
     document = relationship("Document", back_populates="rules")
+
+class VoicePrint(Base):
+    """One row per enrolled speaker.  The consolidated voiceprint embedding
+    is the centroid of all enrollment sample embeddings for this speaker,
+    updated incrementally each time a new sample is submitted.  Used by the
+    Voice Identification Tool (services/voice_identification.py) for 1:1
+    verification; the same embedding is also stored in the Pinecone
+    `voice-embeddings` index for 1:N identification search."""
+
+    __tablename__ = "voice_prints"
+
+    id = Column(String, primary_key=True, index=True)          # speaker_id
+    speaker_name = Column(String, nullable=False, index=True)
+    email = Column(String, nullable=True, index=True)
+    embedding = Column(JSON, nullable=True)        # centroid [float x 192]
+    enrollment_count = Column(Integer, default=0)
+    status = Column(String, default="enrolling")    # enrolling | active | disabled
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class VoiceEnrollment(Base):
+    """One row per enrollment audio sample submitted for a speaker.  Each
+    sample's individual embedding is kept so the centroid in VoicePrint can
+    be recomputed if a sample is later removed (e.g. a noisy recording the
+    user wants to discard)."""
+
+    __tablename__ = "voice_enrollments"
+
+    id = Column(String, primary_key=True, index=True)
+    speaker_id = Column(String, ForeignKey("voice_prints.id"), index=True)
+    embedding = Column(JSON, nullable=False)        # [float x 192]
+    audio_quality_score = Column(Float, nullable=True)
+    speech_duration_sec = Column(Float, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())

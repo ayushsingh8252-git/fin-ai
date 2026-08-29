@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import os
 from .config import settings
-from .api import upload, query, rules, audio, fraud, interview, auth, telephonic, hiring, screening, orchestrator, mcp, observability, google_oauth, agent, whatsapp
+from .api import upload, query, rules, audio, fraud, interview, auth, telephonic, hiring, screening, orchestrator, mcp, observability, google_oauth, agent, whatsapp, voice
 from .database import engine
 from . import models
 
@@ -53,6 +53,17 @@ async def lifespan(app: FastAPI):
         key_manager.refresh_keys()
     except Exception as e:
         print(f"[Lifespan Startup Warning] Key manager refresh failed: {e}")
+
+    # 5. Pre-warm ECAPA-TDNN speaker encoder for Voice Identification Tool
+    #    (~25MB model, ~3s first load).  Non-fatal if it fails — the model
+    #    will be loaded lazily on the first voice request instead.
+    try:
+        from .services.voice_identification import get_speaker_model
+        print("[Lifespan Startup] Pre-warming ECAPA-TDNN speaker encoder...")
+        get_speaker_model()
+        print("[Lifespan Startup] ECAPA-TDNN speaker encoder pre-warmed!")
+    except Exception as e:
+        print(f"[Lifespan Startup Warning] ECAPA-TDNN warmup failed (will load lazily): {e}")
 
     yield
 
@@ -107,6 +118,7 @@ app.include_router(orchestrator.router, prefix="/api/v1")
 app.include_router(mcp.router, prefix="/api/v1")
 app.include_router(observability.router, prefix="/api/v1")
 app.include_router(agent.router, prefix="/api/v1")
+app.include_router(voice.router, prefix="/api/v1")
 
 # Mounted at the root (not /api/v1) so the callback path matches
 # GOOGLE_AUTH_REDIRECT_URL in .env exactly: /auth/google/callback.

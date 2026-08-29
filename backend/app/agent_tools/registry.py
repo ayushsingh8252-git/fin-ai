@@ -42,9 +42,9 @@ def ensure_bootstrapped() -> None:
         return
     _bootstrapped = True
 
-    from . import fraud_tools, google_tools, hiring_tools, rag_tools, screening_tools, telephonic_tools, verification_tools, whatsapp_tools
+    from . import fraud_tools, google_tools, hiring_tools, rag_tools, screening_tools, telephonic_tools, verification_tools, whatsapp_tools, voice_id_tools
 
-    for module in (rag_tools, fraud_tools, telephonic_tools, screening_tools, hiring_tools, google_tools, whatsapp_tools, verification_tools):
+    for module in (rag_tools, fraud_tools, telephonic_tools, screening_tools, hiring_tools, google_tools, whatsapp_tools, verification_tools, voice_id_tools):
         register(module.connector)
 
 

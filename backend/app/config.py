@@ -208,6 +208,25 @@ class Settings(BaseSettings):
     # isn't on PATH by default — e.g. C:\Program Files\Tesseract-OCR\tesseract.exe.
     TESSERACT_CMD: str = ""
 
+    # --- Voice Identification Tool ---
+    # Pinecone index for 192-dim ECAPA-TDNN speaker embeddings (separate from
+    # the 768-dim policy-rules index used by the RAG engine).  Must be created
+    # manually in the Pinecone console with dimension=192, metric=cosine.
+    PINECONE_VOICE_INDEX_NAME: str = "voice-embeddings"
+    # Minimum cosine similarity to accept a speaker match.
+    VOICE_ID_SIMILARITY_THRESHOLD: float = 0.70
+    # Minimum gap between the #1 and #2 candidate scores — protects against
+    # ambiguous matches where two speakers sound almost equally similar.
+    VOICE_ID_MARGIN_THRESHOLD: float = 0.15
+    # VAD / quality-gate thresholds.
+    VOICE_ID_MIN_SPEECH_DURATION: float = 0.5   # seconds
+    VOICE_ID_MIN_ENROLLMENT_SAMPLES: int = 3
+    VOICE_ID_MAX_ENROLLMENT_SAMPLES: int = 10
+    # Anti-spoofing feature flags — disable individually if latency is critical.
+    VOICE_ID_REPLAY_DETECTION_ENABLED: bool = True
+    VOICE_ID_AI_VOICE_DETECTION_ENABLED: bool = True
+    VOICE_ID_CHALLENGE_ENABLED: bool = True
+
     model_config = SettingsConfigDict(
         env_file=("../.env", ".env"),
         env_file_encoding="utf-8",

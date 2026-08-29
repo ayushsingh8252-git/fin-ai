@@ -34,3 +34,5 @@ httpx
 pytest
 opencv-python
 pyzbar
+speechbrain
+torchaudio
