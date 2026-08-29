@@ -63,6 +63,11 @@ class ToolDefinition:
     name: str
     description: str
     input_schema: Dict[str, Any]  # JSON Schema: {"type": "object", "properties": {...}, "required": [...]}
+    # False only for a tool that reads purely local/already-persisted data and
+    # never calls out to the connector's external service — e.g. a message-
+    # status lookup that reads this app's own DB rather than the vendor API.
+    # Defaults True so every pre-existing connector's behavior is unchanged.
+    requires_config: bool = True
 
     def to_dict(self) -> Dict[str, Any]:
         return {"name": self.name, "description": self.description, "input_schema": self.input_schema}
@@ -108,8 +113,9 @@ class BaseMCPConnector(ABC):
         description: str,
         input_schema: Dict[str, Any],
         handler: Callable[[dict], dict],
+        requires_config: bool = True,
     ) -> None:
-        self._tools[name] = ToolDefinition(name=name, description=description, input_schema=input_schema)
+        self._tools[name] = ToolDefinition(name=name, description=description, input_schema=input_schema, requires_config=requires_config)
         self._handlers[name] = handler
 
     def is_configured(self) -> bool:
@@ -137,10 +143,11 @@ class BaseMCPConnector(ABC):
         if tool_name not in self._handlers:
             raise UnknownToolError(self.name, tool_name)
 
-        missing = self.missing_config()
-        if missing:
-            logger.warning("[MCP:%s] '%s' blocked — missing config: %s", self.name, tool_name, missing)
-            raise NotConfiguredError(self.display_name, missing)
+        if self._tools[tool_name].requires_config:
+            missing = self.missing_config()
+            if missing:
+                logger.warning("[MCP:%s] '%s' blocked — missing config: %s", self.name, tool_name, missing)
+                raise NotConfiguredError(self.display_name, missing)
 
         started = time.monotonic()
         try:

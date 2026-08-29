@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import os
 from .config import settings
-from .api import upload, query, rules, audio, fraud, interview, auth, telephonic, hiring, screening, orchestrator, mcp, observability, google_oauth
+from .api import upload, query, rules, audio, fraud, interview, auth, telephonic, hiring, screening, orchestrator, mcp, observability, google_oauth, agent, whatsapp
 from .database import engine
 from . import models
 
@@ -106,10 +106,15 @@ app.include_router(screening.router, prefix="/api/v1")
 app.include_router(orchestrator.router, prefix="/api/v1")
 app.include_router(mcp.router, prefix="/api/v1")
 app.include_router(observability.router, prefix="/api/v1")
+app.include_router(agent.router, prefix="/api/v1")
 
 # Mounted at the root (not /api/v1) so the callback path matches
 # GOOGLE_AUTH_REDIRECT_URL in .env exactly: /auth/google/callback.
 app.include_router(google_oauth.router)
+
+# Mounted at the root so the path matches exactly what's registered in the
+# Meta App Dashboard's webhook config: /webhooks/whatsapp (not /api/v1/...).
+app.include_router(whatsapp.router)
 
 # Mount uploads directory for static file serving
 os.makedirs("uploads", exist_ok=True)

@@ -252,6 +252,31 @@ class QueryTrace(Base):
     trace = Column(JSON, default=dict)
 
 
+class WhatsAppMessage(Base):
+    """One row per WhatsApp message this platform has sent or received via the
+    Meta Cloud API. Needed because Meta's API is send-only — there is no GET
+    endpoint to poll a message's delivery state, only asynchronous `statuses`
+    webhook events (see api/whatsapp.py's POST handler) — so
+    get_whatsapp_message_status (agent_tools/whatsapp_tools.py) reads this
+    table instead of calling Meta directly. `wamid` is Meta's own message ID,
+    used to correlate an outbound send with its later status callbacks."""
+
+    __tablename__ = "whatsapp_messages"
+
+    id = Column(String, primary_key=True, index=True)
+    wamid = Column(String, nullable=True, index=True)  # Meta's message ID, set once Meta accepts the send
+    direction = Column(String, index=True)  # "outbound" | "inbound"
+    to_number = Column(String, nullable=True, index=True)
+    from_number = Column(String, nullable=True, index=True)
+    message_type = Column(String, default="text")  # "text" | "template" | ...
+    body = Column(Text, nullable=True)
+    status = Column(String, default="queued", index=True)  # queued -> sent -> delivered -> read | failed
+    error_message = Column(Text, nullable=True)
+    raw_payload = Column(JSON, nullable=True)  # last webhook/send-response payload, for debugging
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class Rule(Base):
     __tablename__ = "rules"
 

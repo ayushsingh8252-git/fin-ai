@@ -173,6 +173,19 @@ class Settings(BaseSettings):
     #    client (Web application type) in Google Cloud Console.
     GOOGLE_AUTH_REDIRECT_URL: str = ""
 
+    # WhatsApp Agent — Meta WhatsApp Cloud API. ACCESS_TOKEN/PHONE_NUMBER_ID
+    # come from the Meta app dashboard (WhatsApp > API Setup); BUSINESS_ACCOUNT_ID
+    # is the WABA ID. VERIFY_TOKEN is a string you invent yourself and register
+    # in the same Meta webhook config screen — GET /webhooks/whatsapp checks the
+    # incoming hub.verify_token against this value, never a hard-coded one.
+    # Same "empty = not configured, fail with a clear error, never fake a
+    # response" convention as TWILIO_* / the MCP connectors above.
+    WHATSAPP_ACCESS_TOKEN: str = ""
+    WHATSAPP_PHONE_NUMBER_ID: str = ""
+    WHATSAPP_BUSINESS_ACCOUNT_ID: str = ""
+    WHATSAPP_VERIFY_TOKEN: str = ""
+    WHATSAPP_API_VERSION: str = "v21.0"
+
     # Fraud detection pipeline
     FRAUD_ELA_THRESHOLD: float = 35.0
     # Empty by default so pytesseract resolves `tesseract` from PATH, which is

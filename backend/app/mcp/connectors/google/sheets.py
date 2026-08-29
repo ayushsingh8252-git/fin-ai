@@ -23,6 +23,12 @@ class SheetsConnector(BaseMCPConnector):
 
     def register_tools(self) -> None:
         self._add_tool(
+            "create_spreadsheet",
+            "Create a new Google Sheet.",
+            {"type": "object", "properties": {"title": {"type": "string"}}, "required": ["title"]},
+            self._create_spreadsheet,
+        )
+        self._add_tool(
             "read_range",
             "Read a cell range.",
             {"type": "object", "properties": {"spreadsheet_id": {"type": "string"}, "range": {"type": "string", "description": "A1 notation, e.g. 'Sheet1!A1:C10'."}}, "required": ["spreadsheet_id", "range"]},
@@ -48,6 +54,12 @@ class SheetsConnector(BaseMCPConnector):
             },
             self._append_row,
         )
+
+    def _create_spreadsheet(self, params: dict) -> dict:
+        resp = google_api_request("mcp_google_sheets", "POST", SHEETS_BASE, SCOPES, json={"properties": {"title": params["title"]}})
+        raise_for_tool_error(resp, "Google Sheets")
+        data = resp.json()
+        return {"spreadsheet_id": data.get("spreadsheetId"), "title": (data.get("properties") or {}).get("title")}
 
     def _read_range(self, params: dict) -> dict:
         resp = google_api_request("mcp_google_sheets", "GET", f"{SHEETS_BASE}/{params['spreadsheet_id']}/values/{params['range']}", SCOPES)
