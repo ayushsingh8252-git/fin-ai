@@ -89,7 +89,7 @@ def _handle_schedule_or_reschedule(from_number: str, classification: dict, is_re
     # return a clear not_configured error, which is surfaced honestly below
     # rather than pretending a slot was booked.
     try:
-        registry.call_tool("google_calendar", "list_events", {})
+        registry.call_tool("google_calendar", "list_events", {"calendar_id": "primary"})
     except MCPToolError as e:
         if e.code == "not_configured":
             return (
