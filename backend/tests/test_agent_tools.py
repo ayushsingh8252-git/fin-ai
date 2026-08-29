@@ -105,9 +105,15 @@ def test_screening_tool_unknown_call_is_404():
 
 def test_whatsapp_send_without_config_is_503_not_crash():
     response = client.post("/api/v1/agent/tools/whatsapp/send_whatsapp_message/call", json={"recipient": "+15550001111", "message": "hi"})
-    # Passes whether or not this environment has WhatsApp configured — only
-    # asserts it never 500s, matching every other tool's config-check contract.
-    assert response.status_code in (200, 503)
+    # Passes in every environment this suite runs in — only asserts it never
+    # 500s, matching every other tool's config-check contract:
+    #   503 — WhatsApp isn't configured (no credentials in this environment)
+    #   400 — configured with real credentials, and Meta correctly rejects
+    #         this placeholder "+15550001111" recipient (a real API call and
+    #         a real rejection — not a crash)
+    #   200 — configured with real credentials AND this happens to be an
+    #         allowed test recipient
+    assert response.status_code in (200, 400, 503)
     if response.status_code == 503:
         assert response.json()["detail"]["code"] == "not_configured"
 

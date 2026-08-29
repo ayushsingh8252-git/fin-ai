@@ -60,40 +60,59 @@ def _graph_url(path: str) -> str:
     return f"https://graph.facebook.com/{settings.WHATSAPP_API_VERSION}/{path}"
 
 
-def _post(path: str, payload: dict) -> dict:
+def _raise_for_http_error(e: urllib.error.HTTPError) -> None:
+    error_body = e.read().decode("utf-8") if e.fp else "{}"
+    try:
+        parsed = json.loads(error_body)
+    except json.JSONDecodeError:
+        parsed = {"raw": error_body}
+    # Meta's own error payloads (rate limits, invalid recipient, expired
+    # token, template not approved, ...) are not transient network
+    # failures — retrying them can't help, so surface immediately
+    # rather than burning the retry budget.
+    raise WhatsAppAPIError(
+        f"WhatsApp API rejected the request ({e.code}): {parsed.get('error', {}).get('message', error_body)}",
+        status_code=e.code,
+        meta_error=parsed.get("error", {}),
+    ) from None
+
+
+def _request(path: str, method: str, payload: Optional[dict] = None) -> dict:
     url = _graph_url(path)
-    body = json.dumps(payload).encode("utf-8")
-    headers = {
-        "Authorization": f"Bearer {settings.WHATSAPP_ACCESS_TOKEN}",
-        "Content-Type": "application/json",
-    }
+    body = json.dumps(payload).encode("utf-8") if payload is not None else None
+    headers = {"Authorization": f"Bearer {settings.WHATSAPP_ACCESS_TOKEN}"}
+    if body is not None:
+        headers["Content-Type"] = "application/json"
 
     def _do_request() -> dict:
-        req = urllib.request.Request(url, data=body, headers=headers, method="POST")
+        req = urllib.request.Request(url, data=body, headers=headers, method=method)
         try:
             with urllib.request.urlopen(req, timeout=15) as resp:
                 return json.loads(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as e:
-            error_body = e.read().decode("utf-8") if e.fp else "{}"
-            try:
-                parsed = json.loads(error_body)
-            except json.JSONDecodeError:
-                parsed = {"raw": error_body}
-            # Meta's own error payloads (rate limits, invalid recipient, expired
-            # token, template not approved, ...) are not transient network
-            # failures — retrying them can't help, so surface immediately
-            # rather than burning the retry budget.
-            raise WhatsAppAPIError(
-                f"WhatsApp API rejected the request ({e.code}): {parsed.get('error', {}).get('message', error_body)}",
-                status_code=e.code,
-                meta_error=parsed.get("error", {}),
-            ) from None
+            _raise_for_http_error(e)
 
     return call_with_resilience(
         "whatsapp", _do_request,
         max_attempts=3, base_delay=0.4, max_delay=3.0,
         non_retryable=(WhatsAppAPIError,),
     )
+
+
+def _post(path: str, payload: dict) -> dict:
+    return _request(path, "POST", payload)
+
+
+def _get(path: str) -> dict:
+    return _request(path, "GET")
+
+
+def get_phone_number_info() -> dict:
+    """Read-only Meta Graph API call against the configured
+    WHATSAPP_PHONE_NUMBER_ID — verifies the access token and phone number ID
+    are valid without sending any message. A pure connectivity/auth check."""
+    _require_configured()
+    return _get(f"{settings.WHATSAPP_PHONE_NUMBER_ID}?fields=id,display_phone_number,verified_name,quality_rating")
 
 
 def send_text_message(to: str, body: str, preview_url: bool = False) -> dict:
