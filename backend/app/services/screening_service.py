@@ -1,6 +1,7 @@
 import os
 import tempfile
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional
 
 from .parsing import parse_pdf
@@ -25,8 +26,21 @@ def parse_resume_and_generate_questions(
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
 
-    resume_profile = get_resume_profile(resume_text)
-    jd_profile = get_jd_profile(jd_text) if jd_text and jd_text.strip() else None
+    # resume_profile and jd_profile are two independent LLM calls (different
+    # inputs, no data dependency between them) that used to run sequentially
+    # — that's pure added wall-clock latency for no reason, since network-bound
+    # LLM calls parallelize fine over threads. Same token/dollar cost either
+    # way, just not serialized. generate_question_set still runs after, since
+    # it genuinely depends on both results.
+    if jd_text and jd_text.strip():
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            resume_future = pool.submit(get_resume_profile, resume_text)
+            jd_future = pool.submit(get_jd_profile, jd_text)
+            resume_profile = resume_future.result()
+            jd_profile = jd_future.result()
+    else:
+        resume_profile = get_resume_profile(resume_text)
+        jd_profile = None
     questions = generate_question_set(role_title, resume_profile, jd_profile)
 
     return {

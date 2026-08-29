@@ -64,6 +64,9 @@ _REQUIREMENT_STOPWORDS = {
     "requirements", "nice", "have", "familiarity", "familiar", "hands",
     "need", "needs", "needed", "someone", "person", "people", "background",
     "environment", "level", "based", "across", "into", "can", "well",
+    "backend", "frontend", "fullstack", "engineer", "engineering",
+    "developer", "development", "senior", "junior", "mid", "position",
+    "opportunity", "company", "great", "highly", "motivated", "passionate",
 }
 
 
@@ -281,6 +284,82 @@ def match_candidate_to_requirement(candidate: Dict[str, Any], requirement: str, 
     result.setdefault("recommendation", _recommendation_from_score(result["match_score"]))
     result["candidate_name"] = candidate.get("name")
     return result
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Actionable resume summary — deliberately zero-LLM.
+#
+# Every input here (ats_score, skills, experience, email/phone) was already
+# extracted by extract_resume_fields()'s single LLM call during parsing —
+# this function only re-derives human-readable bullet points from data that
+# already exists in memory. It makes no network call and costs no LLM
+# tokens, so it's safe to call on every candidate, every time a recruiter
+# opens a profile, with no added latency or spend. The optional
+# `requirement` skill-gap comparison reuses _tokenize_requirement /
+# _skill_matches_text — the same deterministic matcher _fallback_match()
+# already uses — rather than a second LLM call.
+# ─────────────────────────────────────────────────────────────────────────
+
+
+def generate_actionable_summary(candidate: Dict[str, Any], requirement: Optional[str] = None) -> Dict[str, Any]:
+    """Turns an already-parsed candidate (from extract_resume_fields /
+    parse_resume_pdf) into a short headline + concrete, recruiter-actionable
+    bullet points. Pure post-processing of existing fields — no LLM call."""
+    points: List[str] = []
+
+    ats_score = candidate.get("ats_score")
+    try:
+        ats_score = int(ats_score)
+    except (TypeError, ValueError):
+        ats_score = None
+    if ats_score is not None:
+        if ats_score >= 85:
+            points.append(f"Resume is well-structured and ATS-friendly ({ats_score}/100).")
+        elif ats_score >= 60:
+            points.append(f"Resume structure is usable but could be tightened for ATS parsing ({ats_score}/100).")
+        else:
+            points.append(f"Resume formatting/completeness is weak ({ats_score}/100) — may get filtered by automated ATS screens.")
+
+    if not candidate.get("email"):
+        points.append("No email address found on the resume — verify contact details before outreach.")
+    if not candidate.get("phone"):
+        points.append("No phone number found on the resume — verify contact details before outreach.")
+
+    experience = candidate.get("experience")
+    if not experience or experience == "Not specified":
+        points.append("Experience duration wasn't clearly stated — confirm with the candidate directly.")
+
+    skills = candidate.get("skills") or []
+    if not isinstance(skills, list):
+        skills = []
+    if not skills:
+        points.append("No skills were extracted — resume may lack a clear skills section.")
+    elif len(skills) < 3:
+        points.append(f"Only {len(skills)} skill(s) detected — resume may be light on keyword coverage.")
+
+    requirement_gap: Optional[Dict[str, Any]] = None
+    if requirement and requirement.strip():
+        match = _fallback_match(candidate, requirement)
+        requirement_gap = match
+        matched = match["matched_skills"]
+        missing = match["missing_skills"]
+        total = len(matched) + len(missing)
+        if total > 0:
+            points.append(
+                f"Matches {len(matched)}/{total} requirement keywords"
+                + (f": {', '.join(matched[:6])}" if matched else "") + "."
+            )
+        if missing:
+            points.append(f"Missing likely-required keywords: {', '.join(missing[:6])}.")
+        points.append(f"Deterministic fit against this requirement: {match['recommendation']} ({match['match_score']}/100).")
+
+    return {
+        "candidate_name": candidate.get("name"),
+        "headline_summary": candidate.get("summary") or "",
+        "actionable_points": points,
+        "requirement_gap": requirement_gap,
+        "generated_from": "deterministic-no-llm",
+    }
 
 
 def _fallback_assignment(requirement: str) -> Dict[str, Any]:

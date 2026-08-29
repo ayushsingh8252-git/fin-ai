@@ -39,6 +39,7 @@ from typing import Any, Dict, List, Optional
 
 from ..mcp.base import BaseMCPConnector, MCPToolError
 from ..services.hiring_service import (
+    generate_actionable_summary,
     generate_assignment,
     match_candidate_to_requirement,
     parse_resume_pdf,
@@ -97,6 +98,27 @@ class HiringConnector(BaseMCPConnector):
                 "required": ["requirement"],
             },
             handler=self._generate_candidate_assignment,
+        )
+        self._add_tool(
+            name="get_resume_actionable_summary",
+            description=(
+                "Zero-LLM headline + actionable bullet points for an already-parsed candidate "
+                "(from get_candidate_profile) — flags missing contact info, weak ATS score, thin "
+                "skill coverage, and (if a requirement brief is given) a deterministic keyword "
+                "gap analysis. Pass `candidate` to reuse an already-parsed profile at no extra "
+                "LLM cost/latency; pass `file_path` instead only if you haven't parsed it yet "
+                "(costs one LLM call, same as get_candidate_profile)."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "candidate": {"type": "object", "description": "The candidate dict returned by get_candidate_profile. Preferred — adds zero LLM cost."},
+                    "file_path": {"type": "string", "description": "Server-side path to a resume PDF, used only if `candidate` isn't already available."},
+                    "requirement": {"type": "string", "description": "Optional HR requirement brief for a deterministic (no-LLM) skill-gap breakdown."},
+                },
+                "required": [],
+            },
+            handler=self._get_resume_actionable_summary,
         )
         self._add_tool(
             name="run_candidate_screening",
@@ -204,6 +226,18 @@ class HiringConnector(BaseMCPConnector):
         if not requirement:
             raise MCPToolError("`requirement` is required", code="validation_error", status_code=400)
         return generate_assignment(requirement, params.get("role_title", "the open role"))
+
+    def _get_resume_actionable_summary(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        candidate = params.get("candidate")
+        file_path = params.get("file_path")
+        if not isinstance(candidate, dict):
+            if not file_path:
+                raise MCPToolError("Either `candidate` (preferred, zero LLM cost) or `file_path` is required", code="validation_error", status_code=400)
+            try:
+                candidate = parse_resume_pdf(file_path, file_path)
+            except Exception as e:
+                raise MCPToolError(f"Resume parsing failed: {e}", code="business_logic_error", status_code=502) from None
+        return generate_actionable_summary(candidate, params.get("requirement"))
 
     def _run_candidate_screening(self, params: Dict[str, Any]) -> Dict[str, Any]:
         from .screening_tools import connector as screening_connector
