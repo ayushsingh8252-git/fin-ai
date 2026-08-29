@@ -76,7 +76,7 @@ class Settings(BaseSettings):
 
     # Candidate-facing origin (the frontend's own URL), used to build interview
     # invite links — distinct from PUBLIC_BASE_URL, which is this backend's own
-    # public URL for Twilio webhooks.
+    # public URL for the Sarvam outbound-call webhook.
     FRONTEND_BASE_URL: str = "http://localhost:3000"
 
     DATABASE_URL: str = "sqlite:///./policy_engine.db"

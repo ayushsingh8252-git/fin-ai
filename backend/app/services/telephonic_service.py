@@ -3,8 +3,9 @@ Telephonic Agent call-turn generation.
 
 Same Groq-primary/Gemini-fallback JSON generation as the Screening Agent's
 interview_service, but tuned for a real phone call: every line here is read
-aloud by Twilio's text-to-speech, so it has to stay short, plain, and free
-of anything that only makes sense written down.
+aloud by text-to-speech (this opening line is passed to Sarvam as
+initial_bot_message — see api/telephonic.py's _dial), so it has to stay
+short, plain, and free of anything that only makes sense written down.
 """
 from typing import Any, Dict, List, Optional
 

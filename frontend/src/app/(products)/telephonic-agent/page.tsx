@@ -133,7 +133,7 @@ export default function TelephonicAgentPage() {
       <footer className="border-t border-zinc-200 bg-white py-10">
         <div className="max-w-6xl mx-auto px-6 text-center text-[12px] text-zinc-500 font-mono">
           Fin AI · Telephonic Agent — the &ldquo;Place a Real Call&rdquo; panel above places a real
-          phone call via Twilio or Sarvam AI. Everything below it is an illustrative product demo.
+          phone call via Sarvam AI. Everything below it is an illustrative product demo.
         </div>
       </footer>
     </div>
@@ -447,23 +447,32 @@ function RealCallSection() {
               />
             </label>
             <label className="block sm:col-span-2">
-              <span className="text-[11px] font-semibold text-zinc-500 mb-1 block">Calling provider</span>
-              <div className="flex rounded-lg border border-zinc-200 p-1 bg-zinc-50 w-fit">
-                {(["twilio", "sarvam"] as const).map((p) => (
-                  <button
-                    key={p}
-                    type="button"
-                    onClick={() => setProvider(p)}
-                    disabled={isActive}
-                    className={`px-3.5 py-1.5 rounded-md text-[12px] font-semibold capitalize transition-colors disabled:cursor-not-allowed ${
-                      provider === p ? "bg-white text-blue-700 shadow-sm border border-zinc-200" : "text-zinc-500 hover:text-zinc-700"
-                    }`}
-                  >
-                    {p === "twilio" ? "Twilio" : "Sarvam AI"}
-                  </button>
-                ))}
-              </div>
+              <span className="text-[11px] font-semibold text-zinc-500 mb-1 block">
+                Resume (optional) — briefs the call on the candidate&rsquo;s real background
+              </span>
+              <input
+                type="file"
+                accept="application/pdf"
+                disabled={isActive}
+                onChange={(e) => setResumeFile(e.target.files?.[0] || null)}
+                className="w-full text-[12.5px] text-zinc-600 file:mr-3 file:px-3 file:py-1.5 file:rounded-lg file:border-0 file:bg-blue-50 file:text-blue-700 file:text-[12px] file:font-semibold hover:file:bg-blue-100 disabled:opacity-60"
+              />
             </label>
+            {resumeFile && (
+              <label className="block sm:col-span-2">
+                <span className="text-[11px] font-semibold text-zinc-500 mb-1 block">
+                  Job requirement / JD (optional) — matched against the resume for strengths &amp; gaps
+                </span>
+                <textarea
+                  value={jobRequirement}
+                  onChange={(e) => setJobRequirement(e.target.value)}
+                  disabled={isActive}
+                  rows={2}
+                  placeholder="e.g. 3+ years backend, FastAPI, PostgreSQL, AWS..."
+                  className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-blue-400 bg-white disabled:bg-zinc-50 disabled:text-zinc-400 resize-none"
+                />
+              </label>
+            )}
           </div>
 
           <div className="p-5 sm:p-6">
@@ -504,6 +513,25 @@ function RealCallSection() {
 
                 {call.error_message && (
                   <p className="text-xs text-red-600 mb-3">{call.error_message}</p>
+                )}
+
+                {call.resume_extraction && (
+                  <div className="mb-3 rounded-xl border border-blue-100 bg-blue-50/60 p-3">
+                    <div className="text-[10px] font-mono font-bold text-blue-700 uppercase tracking-wider mb-1.5">
+                      Extracted from resume
+                    </div>
+                    <div className="text-[12px] text-zinc-700 space-y-1">
+                      {call.resume_extraction.experience && <p>Experience: {call.resume_extraction.experience}</p>}
+                      {call.resume_extraction.skills?.length > 0 && (
+                        <p>Skills: {call.resume_extraction.skills.join(", ")}</p>
+                      )}
+                      {call.resume_extraction.match && (
+                        <p>
+                          JD match: {call.resume_extraction.match.match_score}/100 — {call.resume_extraction.match.recommendation}
+                        </p>
+                      )}
+                    </div>
+                  </div>
                 )}
 
                 {call.transcript.length > 0 ? (

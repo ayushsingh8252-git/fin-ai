@@ -297,11 +297,14 @@ def _normalize_sarvam_status(raw: Optional[str]) -> Optional[str]:
 
 
 def _normalize_sarvam_transcript(raw: Any) -> List[dict]:
-    """Sarvam's outbound webhook doesn't have a documented transcript shape
-    available here, so this normalizes defensively across the field names
-    conversational-voice webhooks commonly use rather than assuming one exact
-    shape. If the real payload uses different keys, this is the place to
-    adjust once an actual webhook has been observed."""
+    """Normalizes Sarvam's per-turn transcript entries. Top-level key is
+    `interaction_transcript` (confirmed from a real webhook payload — see
+    sarvam_webhook below); `transcript`/`messages` are kept as fallbacks in
+    case that differs for a completed call vs. the busy/no-answer case
+    observed so far. Per-turn field names (role/speaker/from, text/message/
+    content) are still a best-effort guess since the observed payload's
+    transcript was null (call never connected) — adjust here once a real
+    completed-call transcript has been seen."""
     if not isinstance(raw, list):
         return []
     turns = []
@@ -319,11 +322,21 @@ def _normalize_sarvam_transcript(raw: Any) -> List[dict]:
 @router.post("/sarvam/webhook")
 async def sarvam_webhook(call_record_id: str, request: Request, db: Session = Depends(get_db)):
     """Sarvam's outbound-call result callback (webhook_config.url passed in
-    place_outbound_call above, metadata.lead_id carries call_record_id as a
-    backup). Scores the transcript once the call ends and closes the
+    place_outbound_call above; webhook_config.metadata.lead_id carries
+    call_record_id as a backup lookup if it's ever missing from the query
+    string). Scores the transcript once the call ends and closes the
     orchestrator session — Sarvam delivers the whole call in one shot at the
     end rather than turn-by-turn, so there's nothing analogous to per-turn
-    webhooks for this provider."""
+    webhooks for this provider.
+
+    Confirmed real payload shape (from a live "busy" outbound attempt):
+    {"attempt_id", "status", "channel_info": {...}, "duration",
+    "interaction_id", "failure_reason", "final_agent_variables",
+    "webhook_config": {"url", "metadata": {"lead_id"}}, "interaction_transcript"}.
+    `final_agent_variables` and any recording/audio URL were both null/absent
+    on this attempt since the call never connected — their shape on a
+    genuinely completed call is still unconfirmed, so the raw body is logged
+    below to make that easy to check once one comes in."""
     try:
         body = await request.json()
     except Exception:
@@ -331,9 +344,12 @@ async def sarvam_webhook(call_record_id: str, request: Request, db: Session = De
     if not isinstance(body, dict):
         body = {}
 
+    print(f"[Sarvam Webhook] call_record_id={call_record_id} body={body}")
+
     record = db.query(models.CallRecord).filter(models.CallRecord.id == call_record_id).first()
     if not record:
-        lead_id = (body.get("metadata") or {}).get("lead_id")
+        lead_id = ((body.get("webhook_config") or {}).get("metadata") or {}).get("lead_id") \
+            or (body.get("metadata") or {}).get("lead_id")
         if lead_id:
             record = db.query(models.CallRecord).filter(models.CallRecord.id == lead_id).first()
     if not record:
@@ -350,11 +366,13 @@ async def sarvam_webhook(call_record_id: str, request: Request, db: Session = De
     except (TypeError, ValueError):
         pass
 
-    transcript = _normalize_sarvam_transcript(body.get("transcript") or body.get("messages"))
+    transcript = _normalize_sarvam_transcript(
+        body.get("interaction_transcript") or body.get("transcript") or body.get("messages")
+    )
     if transcript:
         record.transcript = transcript
 
-    error_message = body.get("error") or body.get("error_message")
+    error_message = body.get("failure_reason") or body.get("error") or body.get("error_message")
     if error_message:
         record.error_message = str(error_message)
 
