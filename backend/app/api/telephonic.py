@@ -1,36 +1,26 @@
+import os
 import uuid
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Response
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
-from twilio.base.exceptions import TwilioRestException
-from twilio.rest import Client
-from twilio.twiml.voice_response import Gather, VoiceResponse
 
 from .. import models
 from ..config import settings
 from ..database import get_db
 from ..memory import global_memory, orchestrator
+from ..services import sarvam_service
+from ..services.hiring_service import match_candidate_to_requirement, parse_resume_pdf
 from ..services.telephonic_service import generate_call_evaluation, generate_call_turn
-from ..services.resilience import call_with_resilience, CircuitOpenError
-from ..services.guardrails import check_input, check_output
+from ..services.guardrails import check_output
 
 router = APIRouter(prefix="/telephonic", tags=["telephonic"])
 
 MAX_TURNS = 4
-GATHER_TIMEOUT_SEC = 10
-MAX_CONSECUTIVE_MISSES = 2
-LOW_CONFIDENCE_THRESHOLD = 0.5
 
-
-def _twilio_client() -> Client:
-    if not (settings.TWILIO_ACCOUNT_SID and settings.TWILIO_AUTH_TOKEN and settings.TWILIO_PHONE_NUMBER):
-        raise HTTPException(
-            status_code=503,
-            detail="Twilio isn't configured on the backend (missing TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN / TWILIO_PHONE_NUMBER).",
-        )
-    return Client(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
+RESUME_UPLOAD_DIR = os.path.join("uploads", "telephonic")
+os.makedirs(RESUME_UPLOAD_DIR, exist_ok=True)
 
 
 def _serialize(record: models.CallRecord) -> dict:
@@ -52,33 +42,32 @@ def _serialize(record: models.CallRecord) -> dict:
     }
 
 
-class PlaceCallRequest(BaseModel):
-    to: str
-    candidate_name: str = "there"
-    role_title: str = "the open role"
-
-
-@router.post("/call")
-def place_call(payload: PlaceCallRequest, db: Session = Depends(get_db)):
+def _dial(to: str, candidate_name: str, role_title: str, variables: Dict[str, Any], db: Session) -> dict:
+    """Creates the CallRecord and places the outbound Sarvam call with the
+    given agent_variables. Shared by /call (manually supplied or
+    ScreeningResult-autofilled variables) and /call-with-resume (variables
+    extracted straight from an uploaded resume)."""
     if not settings.PUBLIC_BASE_URL:
         raise HTTPException(
             status_code=503,
             detail=(
-                "PUBLIC_BASE_URL isn't set — Twilio needs a public HTTPS URL to fetch call "
-                "instructions from. Set it to an ngrok URL (dev) or this backend's deployed URL."
+                "PUBLIC_BASE_URL isn't set — Sarvam needs a public HTTPS URL to post the call "
+                "result back to. Set it to an ngrok URL (dev) or this backend's deployed URL."
             ),
         )
-    client = _twilio_client()
+
+    candidate_name = (candidate_name or "there").strip() or "there"
+    role_title = (role_title or "the open role").strip() or "the open role"
 
     # Shared/global memory: same convention as api/screening.py — every real
     # call that names a role grows the Role table from actual usage.
-    global_memory.upsert_role((payload.role_title or "the open role").strip())
+    global_memory.upsert_role(role_title)
 
     record = models.CallRecord(
         id=str(uuid.uuid4()),
-        to_number=payload.to,
-        candidate_name=payload.candidate_name or "there",
-        role_title=payload.role_title or "the open role",
+        to_number=to,
+        candidate_name=candidate_name,
+        role_title=role_title,
         status="queued",
         transcript=[],
     )
@@ -86,59 +75,182 @@ def place_call(payload: PlaceCallRequest, db: Session = Depends(get_db)):
     db.commit()
 
     base = settings.PUBLIC_BASE_URL.rstrip("/")
-    voice_url = f"{base}/api/v1/telephonic/voice?call_record_id={record.id}"
-    status_url = f"{base}/api/v1/telephonic/status?call_record_id={record.id}"
+    webhook_url = f"{base}/api/v1/telephonic/sarvam/webhook?call_record_id={record.id}"
+    agent_variables = sarvam_service.build_agent_variables({
+        **variables,
+        "candidate_name": candidate_name,
+        "role_applied_for": role_title,
+    })
 
-    def _create_call():
-        # Twilio trial accounts reject the request outright ("limited parameter
-        # access") the moment an explicit method/status_callback_method or a
-        # status_callback_event list is included — even though POST is already
-        # the default for both. Passing only `url` + `status_callback` (both
-        # POST by default, fires on completion) is the trial-safe shape; the
-        # same call works unmodified once the account is upgraded.
-        return client.calls.create(
-            to=payload.to,
-            from_=settings.TWILIO_PHONE_NUMBER,
-            url=voice_url,
-            status_callback=status_url,
-        )
+    # Same opening line generator the agent uses turn-by-turn on other call
+    # flows in this codebase, so the persona/greeting stays consistent.
+    opening = generate_call_turn([], candidate_name, role_title, MAX_TURNS)
+    opening_line = check_output(opening.get("question", "")).text
 
     try:
-        # Circuit breaker + exponential backoff (services/resilience.py) —
-        # retries only transient network failures talking to Twilio;
-        # TwilioRestException (an actual rejection, e.g. trial-account
-        # restrictions) is marked non_retryable since retrying it can't help.
-        # The breaker itself opens after repeated failures of either kind so
-        # a dead Twilio config/outage fails fast instead of being retried on
-        # every single call-placement request.
-        call = call_with_resilience(
-            "twilio", _create_call,
-            max_attempts=3, base_delay=0.4, max_delay=3.0,
-            non_retryable=(TwilioRestException,),
+        response = sarvam_service.place_outbound_call(
+            to_number=to,
+            agent_variables=agent_variables,
+            webhook_url=webhook_url,
+            lead_id=record.id,
+            initial_bot_message=opening_line,
         )
-    except TwilioRestException as e:
-        record.status = "failed"
-        record.error_message = e.msg
-        db.commit()
-        raise HTTPException(status_code=502, detail=f"Twilio rejected the call: {e.msg}")
-    except CircuitOpenError as e:
+    except sarvam_service.SarvamConfigError as e:
         record.status = "failed"
         record.error_message = str(e)
         db.commit()
-        raise HTTPException(status_code=502, detail=f"Twilio is currently unavailable, please try again shortly: {e}")
+        raise HTTPException(status_code=503, detail=str(e))
+    except sarvam_service.SarvamCallError as e:
+        record.status = "failed"
+        record.error_message = e.detail
+        db.commit()
+        raise HTTPException(status_code=502, detail=f"Sarvam rejected the call: {e.detail}")
     except Exception as e:
-        # Network-level failure talking to Twilio (timeout, connection reset) —
-        # not a Twilio rejection, but the candidate still doesn't get called,
-        # so treat it the same way rather than leaking a raw 500.
         record.status = "failed"
         record.error_message = str(e)
         db.commit()
-        raise HTTPException(status_code=502, detail=f"Could not reach Twilio: {e}")
+        raise HTTPException(status_code=502, detail=f"Could not reach Sarvam: {e}")
 
-    record.call_sid = call.sid
-    record.status = call.status or "queued"
+    record.call_sid = sarvam_service.extract_call_id(response)
+    record.status = "queued"
+    record.transcript = [{"role": "agent", "text": opening_line}]
     db.commit()
+
+    # Orchestration layer: register the candidate<->role relationship up front.
+    # Sarvam owns the live turn-by-turn exchange itself, so record_turn isn't
+    # called again until the webhook delivers the finished transcript in one
+    # shot (see sarvam_webhook below).
+    orchestrator.start_session("telephonic", record.to_number, record.role_title, session_id=record.id)
+    orchestrator.record_turn(record.id, question=opening_line)
+
     return _serialize(record)
+
+
+class PlaceCallRequest(BaseModel):
+    to: str
+    candidate_name: str = "there"
+    role_title: str = "the open role"
+    # Sarvam agent_variables overrides — auto-filled from the candidate's most
+    # recent ScreeningResult when omitted (see _autofill_sarvam_variables),
+    # but a caller that already has this data (the hiring pipeline, an MCP
+    # tool call) can pass it directly. To fill these from an uploaded resume
+    # instead, use POST /call-with-resume.
+    gender: Optional[str] = None
+    resume_summary: Optional[str] = None
+    job_requirements: Optional[str] = None
+    candidate_strengths: Optional[str] = None
+    candidate_weaknesses: Optional[str] = None
+    interview_summary: Optional[str] = None
+    notable_answers: Optional[str] = None
+    screening_disposition: Optional[str] = None
+
+
+def _autofill_sarvam_variables(payload: PlaceCallRequest, db: Session) -> Dict[str, Any]:
+    """Best-effort fill of Sarvam's agent_variables from the candidate's most
+    recent ScreeningResult (telephonic or interview screen) and the role's
+    stored JD, for any field the caller hasn't already supplied explicitly."""
+    result = None
+    if not all([
+        payload.candidate_strengths, payload.candidate_weaknesses,
+        payload.interview_summary, payload.screening_disposition, payload.job_requirements,
+    ]):
+        result = (
+            db.query(models.ScreeningResult)
+            .filter(models.ScreeningResult.candidate_name == payload.candidate_name)
+            .order_by(models.ScreeningResult.created_at.desc())
+            .first()
+        )
+    role = db.query(models.Role).filter(models.Role.title == payload.role_title).first()
+
+    return {
+        "gender": payload.gender,
+        "resume_summary": payload.resume_summary,
+        "job_requirements": payload.job_requirements or (result.jd_text_used if result else None) or (role.jd_text if role else None),
+        "candidate_strengths": payload.candidate_strengths or (", ".join(result.strengths) if result and result.strengths else None),
+        "candidate_weaknesses": payload.candidate_weaknesses or (", ".join(result.gaps) if result and result.gaps else None),
+        "interview_summary": payload.interview_summary or (result.summary if result else None),
+        "screening_disposition": payload.screening_disposition or (result.verdict if result else None),
+        "notable_answers": payload.notable_answers,
+    }
+
+
+@router.post("/call")
+def place_call(payload: PlaceCallRequest, db: Session = Depends(get_db)):
+    variables = _autofill_sarvam_variables(payload, db)
+    return _dial(payload.to, payload.candidate_name, payload.role_title, variables, db)
+
+
+@router.post("/call-with-resume")
+async def call_with_resume(
+    file: UploadFile = File(...),
+    to: str = Form(...),
+    candidate_name: Optional[str] = Form(None),
+    role_title: str = Form("the open role"),
+    job_requirement: Optional[str] = Form(None),
+    gender: Optional[str] = Form(None),
+    db: Session = Depends(get_db),
+):
+    """Places a Sarvam screening call whose agent_variables are extracted
+    straight from an uploaded resume, reusing the same resume-parsing and
+    requirement-matching tools the Agentic Hiring Pipeline already uses
+    (services/hiring_service.py's parse_resume_pdf / match_candidate_to_requirement)
+    rather than a separate extraction pipeline for this agent."""
+    ext = os.path.splitext(file.filename or "")[1].lower()
+    if ext != ".pdf":
+        raise HTTPException(status_code=400, detail="Only PDF resumes are supported.")
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+
+    cand_id = str(uuid.uuid4())
+    file_path = os.path.join(RESUME_UPLOAD_DIR, f"{cand_id}_{file.filename}")
+    with open(file_path, "wb") as f:
+        f.write(content)
+    try:
+        fields = parse_resume_pdf(file.filename or cand_id, file_path)
+    finally:
+        # Same convention as api/hiring.py's parse_resumes — the resume isn't
+        # retained beyond this pipeline run.
+        try:
+            os.remove(file_path)
+        except OSError:
+            pass
+
+    requirement = job_requirement
+    if not requirement:
+        role = db.query(models.Role).filter(models.Role.title == role_title).first()
+        requirement = role.jd_text if role else None
+
+    match = match_candidate_to_requirement(fields, requirement, role_title) if requirement else None
+
+    matched_skills = ", ".join(match.get("matched_skills") or []) if match else ""
+    strengths = matched_skills or ", ".join(fields.get("skills") or [])
+    weaknesses = ", ".join(match.get("missing_skills") or []) if match else None
+
+    variables = {
+        "gender": gender,
+        "resume_summary": fields.get("summary"),
+        "job_requirements": requirement,
+        "candidate_strengths": strengths or None,
+        "candidate_weaknesses": weaknesses,
+        "screening_disposition": match.get("recommendation") if match else None,
+    }
+
+    resolved_name = (candidate_name or fields.get("name") or "there").strip() or "there"
+    result = _dial(to, resolved_name, role_title, variables, db)
+    return {
+        **result,
+        "resume_extraction": {
+            "name": fields.get("name"),
+            "email": fields.get("email"),
+            "phone": fields.get("phone"),
+            "experience": fields.get("experience"),
+            "skills": fields.get("skills"),
+            "ats_score": fields.get("ats_score"),
+            "match": match,
+        },
+    }
 
 
 @router.get("/calls")
@@ -155,193 +267,120 @@ def get_call(call_id: str, db: Session = Depends(get_db)):
     return _serialize(record)
 
 
-def _gather_twiml(record: models.CallRecord, say_text: str, misses: int = 0) -> str:
-    """Builds the TwiML for one turn: speak `say_text`, then listen for the
-    candidate's spoken reply and post it to /gather. If nothing is heard,
-    Twilio still posts to `action` with an empty SpeechResult, which /gather
-    treats as "didn't catch that" rather than silently hanging up.
-
-    `misses` carries the consecutive-empty/low-confidence-result count through
-    to the next /gather webhook via the action URL, since call state isn't
-    otherwise threaded between requests beyond the DB-backed CallRecord."""
-    base = settings.PUBLIC_BASE_URL.rstrip("/")
-    vr = VoiceResponse()
-    # Domain vocabulary Twilio's speech recognizer should be biased toward —
-    # only include values that are actually known for this call.
-    hint_terms = [t for t in (record.role_title, record.candidate_name, "AgenticFlow") if t]
-    gather = Gather(
-        input="speech",
-        action=f"{base}/api/v1/telephonic/gather?call_record_id={record.id}&misses={misses}",
-        method="POST",
-        speech_timeout="auto",
-        timeout=GATHER_TIMEOUT_SEC,
-        # "phone_call" is Twilio's speech model tuned for 8kHz telephony audio
-        # (vs. the generic default), which materially improves ASR accuracy here.
-        speech_model="phone_call",
-        language="en-US",
-        hints=", ".join(hint_terms) if hint_terms else None,
-    )
-    gather.say(say_text)
-    vr.append(gather)
-    # Reached only if Gather's own action request itself never fires (rare) —
-    # keeps the call from hanging silently instead of ending cleanly.
-    vr.say("We'll follow up by email. Goodbye for now.")
-    vr.hangup()
-    return str(vr)
+_SARVAM_STATUS_MAP = {
+    "initiated": "initiated",
+    "queued": "queued",
+    "ringing": "ringing",
+    "in_progress": "in-progress",
+    "in-progress": "in-progress",
+    "answered": "in-progress",
+    "completed": "completed",
+    "success": "completed",
+    "ended": "completed",
+    "no_answer": "no-answer",
+    "no-answer": "no-answer",
+    "not_answered": "no-answer",
+    "unanswered": "no-answer",
+    "busy": "busy",
+    "failed": "failed",
+    "error": "failed",
+    "canceled": "canceled",
+    "cancelled": "canceled",
+}
+_SARVAM_TERMINAL_STATUSES = ("completed", "no-answer", "busy", "failed", "canceled")
 
 
-@router.post("/voice")
-async def voice_webhook(call_record_id: str, db: Session = Depends(get_db)):
-    """Twilio hits this the moment the candidate picks up."""
-    record = db.query(models.CallRecord).filter(models.CallRecord.id == call_record_id).first()
-    if not record:
-        vr = VoiceResponse()
-        vr.say("Sorry, something went wrong on our end. Goodbye.")
-        vr.hangup()
-        return Response(content=str(vr), media_type="application/xml")
-
-    record.status = "in-progress"
-    turn = generate_call_turn([], record.candidate_name, record.role_title, MAX_TURNS)
-    turn["question"] = check_output(turn["question"]).text
-    record.transcript = [{"role": "agent", "text": turn["question"]}]
-    db.commit()
-
-    # Orchestration layer: opens this call's working-memory session (Redis) so
-    # the live question/transcript/sentiment are tracked from the first line,
-    # and registers the candidate<->role relationship in graph memory.
-    orchestrator.start_session("telephonic", record.to_number, record.role_title, session_id=record.id)
-    orchestrator.record_turn(record.id, question=turn["question"])
-
-    return Response(content=_gather_twiml(record, turn["question"]), media_type="application/xml")
+def _normalize_sarvam_status(raw: Optional[str]) -> Optional[str]:
+    if not raw:
+        return None
+    return _SARVAM_STATUS_MAP.get(str(raw).strip().lower(), str(raw).strip().lower())
 
 
-@router.post("/gather")
-async def gather_webhook(
-    call_record_id: str,
-    SpeechResult: Optional[str] = Form(None),
-    Confidence: Optional[str] = Form(None),
-    misses: int = 0,
-    db: Session = Depends(get_db),
-):
-    """Twilio hits this after each Gather with what the candidate said."""
-    record = db.query(models.CallRecord).filter(models.CallRecord.id == call_record_id).first()
-    if not record:
-        vr = VoiceResponse()
-        vr.say("Sorry, something went wrong on our end. Goodbye.")
-        vr.hangup()
-        return Response(content=str(vr), media_type="application/xml")
+def _normalize_sarvam_transcript(raw: Any) -> List[dict]:
+    """Sarvam's outbound webhook doesn't have a documented transcript shape
+    available here, so this normalizes defensively across the field names
+    conversational-voice webhooks commonly use rather than assuming one exact
+    shape. If the real payload uses different keys, this is the place to
+    adjust once an actual webhook has been observed."""
+    if not isinstance(raw, list):
+        return []
+    turns = []
+    for turn in raw:
+        if not isinstance(turn, dict):
+            continue
+        speaker = str(turn.get("role") or turn.get("speaker") or turn.get("from") or "").strip().lower()
+        role = "agent" if speaker in ("agent", "bot", "assistant", "ai") else "candidate"
+        text = str(turn.get("text") or turn.get("message") or turn.get("content") or "").strip()
+        if text:
+            turns.append({"role": role, "text": text})
+    return turns
 
-    candidate_text = (SpeechResult or "").strip()
-    if candidate_text:
-        input_check = check_input(candidate_text)
-        # Twilio's speech-to-text is low-risk as an injection vector, but
-        # sanitize/cap it before it reaches the turn-generation prompt for
-        # the same reason every other free-text entry point does — a
-        # flagged transcript is treated like an unclear answer (re-ask)
-        # rather than silently passed through.
-        candidate_text = input_check.text if input_check.allowed else ""
+
+@router.post("/sarvam/webhook")
+async def sarvam_webhook(call_record_id: str, request: Request, db: Session = Depends(get_db)):
+    """Sarvam's outbound-call result callback (webhook_config.url passed in
+    place_outbound_call above, metadata.lead_id carries call_record_id as a
+    backup). Scores the transcript once the call ends and closes the
+    orchestrator session — Sarvam delivers the whole call in one shot at the
+    end rather than turn-by-turn, so there's nothing analogous to per-turn
+    webhooks for this provider."""
     try:
-        confidence = float(Confidence) if Confidence not in (None, "") else None
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+
+    record = db.query(models.CallRecord).filter(models.CallRecord.id == call_record_id).first()
+    if not record:
+        lead_id = (body.get("metadata") or {}).get("lead_id")
+        if lead_id:
+            record = db.query(models.CallRecord).filter(models.CallRecord.id == lead_id).first()
+    if not record:
+        return Response(status_code=204)
+
+    raw_status = body.get("status") or body.get("call_status") or body.get("event")
+    status = _normalize_sarvam_status(raw_status) or record.status
+    record.status = status
+
+    duration = body.get("duration_sec") or body.get("call_duration") or body.get("duration")
+    try:
+        if duration is not None:
+            record.duration_sec = int(duration)
     except (TypeError, ValueError):
-        confidence = None
+        pass
 
-    transcript = record.transcript or []
-    low_confidence = bool(candidate_text) and confidence is not None and confidence < LOW_CONFIDENCE_THRESHOLD
+    transcript = _normalize_sarvam_transcript(body.get("transcript") or body.get("messages"))
+    if transcript:
+        record.transcript = transcript
 
-    if not candidate_text or low_confidence:
-        next_misses = misses + 1
-        if next_misses >= MAX_CONSECUTIVE_MISSES:
-            # Repeated empty/unclear results in a row — stop looping on the
-            # same prompt and end the call gracefully instead.
-            vr = VoiceResponse()
-            vr.say("We're having a little trouble hearing you clearly. We'll follow up by email instead. Goodbye for now.")
-            vr.hangup()
-            record.status = "completed"
-            db.commit()
-            return Response(content=str(vr), media_type="application/xml")
+    error_message = body.get("error") or body.get("error_message")
+    if error_message:
+        record.error_message = str(error_message)
 
-        reask_text = (
-            "Sorry, could you repeat that a bit more clearly?"
-            if low_confidence
-            else "Sorry, I didn't catch that — could you say that again?"
-        )
-        return Response(
-            content=_gather_twiml(record, reask_text, misses=next_misses),
-            media_type="application/xml",
-        )
-
-    transcript.append({"role": "candidate", "text": candidate_text, "confidence": confidence})
-
-    turn = generate_call_turn(transcript, record.candidate_name, record.role_title, MAX_TURNS)
-    turn["question"] = check_output(turn["question"]).text
-    transcript.append({"role": "agent", "text": turn["question"]})
-    record.transcript = transcript
     db.commit()
 
-    # Orchestration layer: feed the candidate's answer (with the sentiment the
-    # LLM just read off it) and the agent's next question into working memory.
-    orchestrator.record_turn(record.id, answer=candidate_text, sentiment=turn.get("candidate_sentiment"))
-    orchestrator.record_turn(record.id, question=turn["question"])
+    terminal = status in _SARVAM_TERMINAL_STATUSES
+    if terminal and record.communication_score is None:
+        current_transcript = record.transcript or []
+        if any(t.get("role") == "candidate" for t in current_transcript):
+            evaluation = generate_call_evaluation(current_transcript, record.role_title)
+            record.communication_score = evaluation.get("communication_score")
+            record.relevance_score = evaluation.get("relevance_score")
+            record.confidence_score = evaluation.get("confidence_score")
+            record.evaluation_summary = evaluation.get("summary")
+            db.commit()
 
-    if turn.get("is_final"):
-        vr = VoiceResponse()
-        vr.say(turn["question"])
-        vr.hangup()
-        record.status = "completed"
-        db.commit()
-        return Response(content=str(vr), media_type="application/xml")
+    if terminal:
+        orchestrator.end_session(
+            record.id,
+            scores={
+                "communication_score": record.communication_score,
+                "relevance_score": record.relevance_score,
+                "confidence_score": record.confidence_score,
+            },
+            summary=record.evaluation_summary,
+            transcript_override=record.transcript or [],
+        )
 
-    return Response(content=_gather_twiml(record, turn["question"]), media_type="application/xml")
-
-
-@router.post("/status")
-async def status_webhook(
-    call_record_id: str,
-    CallStatus: Optional[str] = Form(None),
-    CallDuration: Optional[str] = Form(None),
-    db: Session = Depends(get_db),
-):
-    """Twilio's call-lifecycle callback (queued/ringing/answered/completed/...)."""
-    record = db.query(models.CallRecord).filter(models.CallRecord.id == call_record_id).first()
-    if record and CallStatus:
-        # A completed webhook from /gather may already have set this more
-        # precisely (e.g. after the final line) — don't downgrade it back to
-        # Twilio's generic "completed" if we already know it finished cleanly.
-        if not (record.status == "completed" and CallStatus == "completed"):
-            record.status = CallStatus
-        if CallDuration:
-            try:
-                record.duration_sec = int(CallDuration)
-            except ValueError:
-                pass
-
-        # Score the call once Twilio confirms it's actually over — by this point
-        # the transcript in the DB is final. Guarded on communication_score being
-        # unset so a duplicate "completed" callback doesn't re-score for free.
-        if CallStatus == "completed" and record.communication_score is None:
-            transcript = record.transcript or []
-            if any(t.get("role") == "candidate" for t in transcript):
-                evaluation = generate_call_evaluation(transcript, record.role_title)
-                record.communication_score = evaluation.get("communication_score")
-                record.relevance_score = evaluation.get("relevance_score")
-                record.confidence_score = evaluation.get("confidence_score")
-                record.evaluation_summary = evaluation.get("summary")
-
-        db.commit()
-
-        # Orchestration layer: any terminal Twilio status ends this call's
-        # working-memory session — folding it into episodic memory (Postgres)
-        # and semantic memory (Pinecone), then clearing Redis — not just
-        # "completed", so a no-answer/busy/failed call doesn't leak a
-        # working-memory key that would otherwise just sit until its TTL.
-        if CallStatus in ("completed", "no-answer", "busy", "failed", "canceled"):
-            orchestrator.end_session(
-                record.id,
-                scores={
-                    "communication_score": record.communication_score,
-                    "relevance_score": record.relevance_score,
-                    "confidence_score": record.confidence_score,
-                },
-                summary=record.evaluation_summary,
-            )
     return Response(status_code=204)

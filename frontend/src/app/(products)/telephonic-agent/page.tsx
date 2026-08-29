@@ -133,7 +133,7 @@ export default function TelephonicAgentPage() {
       <footer className="border-t border-zinc-200 bg-white py-10">
         <div className="max-w-6xl mx-auto px-6 text-center text-[12px] text-zinc-500 font-mono">
           Fin AI · Telephonic Agent — the &ldquo;Place a Real Call&rdquo; panel above places a real
-          Twilio phone call. Everything below it is an illustrative product demo.
+          phone call via Twilio or Sarvam AI. Everything below it is an illustrative product demo.
         </div>
       </footer>
     </div>
@@ -283,14 +283,25 @@ function LiveCallDemoCard() {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   REAL CALL PANEL — actually places a Twilio phone call via the backend
-   (/api/v1/telephonic/call), polls the call record for live status +
-   transcript. Everything else on this page is illustrative; this isn't.
+   REAL CALL PANEL — actually places a Sarvam AI phone call via the backend
+   (/api/v1/telephonic/call, or /call-with-resume when a resume is attached),
+   polls the call record for live status + transcript. Everything else on
+   this page is illustrative; this isn't.
    ═══════════════════════════════════════════════════════════ */
 
 interface CallTranscriptTurn {
   role: "agent" | "candidate";
   text: string;
+}
+
+interface ResumeExtraction {
+  name: string | null;
+  email: string | null;
+  phone: string | null;
+  experience: string | null;
+  skills: string[];
+  ats_score: number | null;
+  match: { match_score: number; matched_skills: string[]; missing_skills: string[]; recommendation: string } | null;
 }
 
 interface CallRecordState {
@@ -304,6 +315,7 @@ interface CallRecordState {
   duration_sec: number | null;
   error_message: string | null;
   created_at: string | null;
+  resume_extraction?: ResumeExtraction;
 }
 
 const ACTIVE_CALL_STATUSES = new Set(["queued", "initiated", "ringing", "in-progress", "answered"]);
@@ -312,6 +324,8 @@ function RealCallSection() {
   const [toNumber, setToNumber] = useState("");
   const [candidateName, setCandidateName] = useState("");
   const [roleTitle, setRoleTitle] = useState("Backend Engineer");
+  const [jobRequirement, setJobRequirement] = useState("");
+  const [resumeFile, setResumeFile] = useState<File | null>(null);
   const [call, setCall] = useState<CallRecordState | null>(null);
   const [placing, setPlacing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -351,15 +365,26 @@ function RealCallSection() {
     }
     setPlacing(true);
     try {
-      const res = await fetch(`${API_URL}/api/v1/telephonic/call`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          to: toNumber.trim(),
-          candidate_name: candidateName.trim() || "there",
-          role_title: roleTitle.trim() || "the open role",
-        }),
-      });
+      let res: Response;
+      if (resumeFile) {
+        const form = new FormData();
+        form.append("file", resumeFile);
+        form.append("to", toNumber.trim());
+        if (candidateName.trim()) form.append("candidate_name", candidateName.trim());
+        form.append("role_title", roleTitle.trim() || "the open role");
+        if (jobRequirement.trim()) form.append("job_requirement", jobRequirement.trim());
+        res = await fetch(`${API_URL}/api/v1/telephonic/call-with-resume`, { method: "POST", body: form });
+      } else {
+        res = await fetch(`${API_URL}/api/v1/telephonic/call`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            to: toNumber.trim(),
+            candidate_name: candidateName.trim() || "there",
+            role_title: roleTitle.trim() || "the open role",
+          }),
+        });
+      }
       const data = await res.json();
       if (!res.ok) throw new Error(data?.detail || `Call failed (${res.status})`);
       setCall(data);
@@ -384,8 +409,9 @@ function RealCallSection() {
             Place a real call right now
           </h2>
           <p className="text-zinc-600 text-[14px] mt-2 leading-relaxed">
-            Enter a real phone number and {AGENT_NAME} will actually call it via Twilio, ask real
-            questions, and adapt to what&rsquo;s said — live, right now.
+            Enter a real phone number and {AGENT_NAME} will actually call it via Sarvam AI, ask
+            real questions, and adapt to what&rsquo;s said — live, right now. Attach a resume to
+            brief the call on the candidate&rsquo;s actual background instead of a blank slate.
           </p>
         </div>
 
@@ -419,6 +445,24 @@ function RealCallSection() {
                 disabled={isActive}
                 className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-blue-400 bg-white disabled:bg-zinc-50 disabled:text-zinc-400"
               />
+            </label>
+            <label className="block sm:col-span-2">
+              <span className="text-[11px] font-semibold text-zinc-500 mb-1 block">Calling provider</span>
+              <div className="flex rounded-lg border border-zinc-200 p-1 bg-zinc-50 w-fit">
+                {(["twilio", "sarvam"] as const).map((p) => (
+                  <button
+                    key={p}
+                    type="button"
+                    onClick={() => setProvider(p)}
+                    disabled={isActive}
+                    className={`px-3.5 py-1.5 rounded-md text-[12px] font-semibold capitalize transition-colors disabled:cursor-not-allowed ${
+                      provider === p ? "bg-white text-blue-700 shadow-sm border border-zinc-200" : "text-zinc-500 hover:text-zinc-700"
+                    }`}
+                  >
+                    {p === "twilio" ? "Twilio" : "Sarvam AI"}
+                  </button>
+                ))}
+              </div>
             </label>
           </div>
 

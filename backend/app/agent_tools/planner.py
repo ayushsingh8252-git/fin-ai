@@ -8,7 +8,7 @@ Deliberately NOT a fully open-ended agent loop (no unbounded re-planning,
 no tool calling itself in a cycle) — a flat plan-then-execute pass keeps this
 auditable and bounds the blast radius of a bad plan, which matters
 concretely here: several tools in the catalog cost real money (place_screening_call
-via Twilio) or send real messages (send_whatsapp_message, send_email), and
+via Sarvam) or send real messages (send_whatsapp_message, send_email), and
 this platform has no auth layer yet (see platform audit) — an unbounded
 planner would be materially riskier than this bounded one.
 

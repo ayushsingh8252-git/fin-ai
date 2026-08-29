@@ -1,5 +1,5 @@
 """Meta WhatsApp Cloud API client — the one place that actually talks to
-graph.facebook.com. Mirrors api/telephonic.py's `_twilio_client()` convention:
+graph.facebook.com. Mirrors services/sarvam_service.py's convention:
 missing config raises a clear, typed error rather than the call silently
 no-oping or fabricating a response.
 

@@ -29,13 +29,21 @@ services:
         sync: false # SQLite has no persistent disk on the free plan — point this at a hosted Postgres URL (e.g. Neon/Supabase) so data survives redeploys.
       - key: GOOGLE_CLIENT_ID
         sync: false
-      - key: TWILIO_ACCOUNT_SID
+      - key: SARVAM_API_KEY
         sync: false
-      - key: TWILIO_AUTH_TOKEN
+      - key: SARVAM_ORG_ID
         sync: false
-      - key: TWILIO_PHONE_NUMBER
+      - key: SARVAM_WORKSPACE_ID
+        sync: false
+      - key: SARVAM_APP_ID
+        sync: false
+      - key: SARVAM_APP_VERSION
+        sync: false
+      - key: SARVAM_CONNECTION_ID
+        sync: false
+      - key: SARVAM_AGENT_PHONE_NUMBER
         sync: false
       - key: PUBLIC_BASE_URL
-        sync: false # Set to this service's own Render URL (e.g. https://ai-policy-backend.onrender.com) once deployed — Twilio calls back into this for TwiML/webhooks.
+        sync: false # Set to this service's own Render URL (e.g. https://ai-policy-backend.onrender.com) once deployed — Sarvam calls back into this with the outbound-call result.
       - key: CORS_ORIGINS
         value: "https://ai-policy-rule-engine.vercel.app" # Set to your production Vercel domain (custom domain, or the project's default *.vercel.app URL). Every *.vercel.app preview deployment is additionally allowed automatically via regex in app/main.py.

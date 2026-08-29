@@ -23,7 +23,6 @@ pydub
 faster-whisper
 Pillow
 pytesseract
-twilio
 langchain-core
 langchain-groq
 langchain-google-genai

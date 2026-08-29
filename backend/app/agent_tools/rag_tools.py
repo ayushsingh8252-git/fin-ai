@@ -20,7 +20,7 @@ class RAGConnector(BaseMCPConnector):
         # process_query itself fails soft per-provider (Groq -> Gemini -> web
         # search fallback chain in services/llm_service.py / adaptive_rag.py)
         # rather than hard-requiring one specific key, so there's no single
-        # env var whose absence makes this tool unusable the way Twilio/
+        # env var whose absence makes this tool unusable the way Sarvam/
         # WhatsApp/Google are all-or-nothing. Always "configured" from the
         # tool layer's point of view; a real call still fails with a clear
         # error if literally no LLM key is present anywhere.

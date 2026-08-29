@@ -83,7 +83,7 @@ class CallRecord(Base):
     __tablename__ = "call_records"
 
     id = Column(String, primary_key=True, index=True)
-    call_sid = Column(String, unique=True, index=True, nullable=True)
+    call_sid = Column(String, unique=True, index=True, nullable=True)  # Sarvam's outbound/attempt id
     to_number = Column(String)
     candidate_name = Column(String)
     role_title = Column(String)

@@ -18,6 +18,7 @@ from fastapi import HTTPException
 from ..api.telephonic import PlaceCallRequest, get_call, place_call
 from ..database import SessionLocal
 from ..mcp.base import BaseMCPConnector, MCPToolError
+from ..services import sarvam_service
 
 
 class TelephonicConnector(BaseMCPConnector):
@@ -29,24 +30,17 @@ class TelephonicConnector(BaseMCPConnector):
     def missing_config(self) -> List[str]:
         from ..config import settings
 
-        missing = []
-        if not settings.TWILIO_ACCOUNT_SID:
-            missing.append("TWILIO_ACCOUNT_SID")
-        if not settings.TWILIO_AUTH_TOKEN:
-            missing.append("TWILIO_AUTH_TOKEN")
-        if not settings.TWILIO_PHONE_NUMBER:
-            missing.append("TWILIO_PHONE_NUMBER")
-        if not settings.PUBLIC_BASE_URL:
-            missing.append("PUBLIC_BASE_URL")
-        return missing
+        missing = [] if settings.PUBLIC_BASE_URL else ["PUBLIC_BASE_URL"]
+        return missing + sarvam_service.missing_config()
 
     def register_tools(self) -> None:
         self._add_tool(
             name="place_screening_call",
             description=(
-                "Place a real outbound phone call via Twilio to a candidate for an AI-voice "
-                "screening conversation. Costs money per call — only call this when the user has "
-                "clearly asked to call/reach a specific candidate."
+                "Place a real outbound phone call to a candidate for an AI-voice screening "
+                "conversation via Sarvam AI (a Sarvam console agent drives the whole call). Costs "
+                "money per call — only call this when the user has clearly asked to call/reach a "
+                "specific candidate."
             ),
             input_schema={
                 "type": "object",
@@ -54,6 +48,14 @@ class TelephonicConnector(BaseMCPConnector):
                     "to": {"type": "string", "description": "The candidate's phone number in E.164 format, e.g. +15551234567."},
                     "candidate_name": {"type": "string", "default": "there"},
                     "role_title": {"type": "string", "default": "the open role"},
+                    "gender": {"type": "string", "description": "Passed through as the agent_variables.gender template value."},
+                    "resume_summary": {"type": "string"},
+                    "job_requirements": {"type": "string", "description": "Defaults to the role's stored JD or the candidate's last screening JD when omitted."},
+                    "candidate_strengths": {"type": "string", "description": "Defaults to the candidate's last ScreeningResult strengths when omitted."},
+                    "candidate_weaknesses": {"type": "string", "description": "Defaults to the candidate's last ScreeningResult gaps when omitted."},
+                    "interview_summary": {"type": "string", "description": "Defaults to the candidate's last ScreeningResult summary when omitted."},
+                    "notable_answers": {"type": "string"},
+                    "screening_disposition": {"type": "string", "description": "Defaults to the candidate's last ScreeningResult verdict when omitted."},
                 },
                 "required": ["to"],
             },
@@ -79,6 +81,14 @@ class TelephonicConnector(BaseMCPConnector):
             to=to,
             candidate_name=params.get("candidate_name", "there"),
             role_title=params.get("role_title", "the open role"),
+            gender=params.get("gender"),
+            resume_summary=params.get("resume_summary"),
+            job_requirements=params.get("job_requirements"),
+            candidate_strengths=params.get("candidate_strengths"),
+            candidate_weaknesses=params.get("candidate_weaknesses"),
+            interview_summary=params.get("interview_summary"),
+            notable_answers=params.get("notable_answers"),
+            screening_disposition=params.get("screening_disposition"),
         )
         db = SessionLocal()
         try:

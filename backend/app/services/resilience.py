@@ -1,6 +1,6 @@
 """
 Lightweight, dependency-free resilience primitives shared across every
-external call in the platform (LLM providers, Pinecone, Tavily, Twilio, SMTP).
+external call in the platform (LLM providers, Pinecone, Tavily, Sarvam, SMTP).
 
 Mirrors the retry-cooldown idiom already used by services/cache.py's
 get_redis_client() — a failed dependency is treated as "down for a while,"
@@ -117,7 +117,7 @@ def retry_with_backoff(
     backoff + jitter. Re-raises the last exception if every attempt fails.
     `non_retryable` is checked first and always re-raised immediately without
     consuming an attempt — for errors where retrying can't help (e.g. an API
-    rejection like Twilio's TwilioRestException, as opposed to a transient
+    rejection like Sarvam's SarvamCallError, as opposed to a transient
     connection failure). `on_retry(attempt, error)` is an optional callback
     for logging.
     """

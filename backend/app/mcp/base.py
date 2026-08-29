@@ -5,7 +5,7 @@ Jira, GitHub, Salesforce, SAP, SharePoint, and Google Workspace (Gmail,
 Drive, Calendar, Docs, Sheets).
 
 Same "empty config default + a clear error when unconfigured" convention as
-Twilio (api/telephonic.py's _twilio_client()) — a connector without real
+Sarvam (services/sarvam_service.py) — a connector without real
 credentials configured is not a fake integration, it's the real integration
 honestly reporting that it isn't wired up yet, rather than fabricating a
 response. Real HTTP calls only ever happen once `missing_config()` is empty.

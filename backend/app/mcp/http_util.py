@@ -1,6 +1,6 @@
 """Shared HTTP call helper for MCP connectors — every connector routes its
 real API calls through here so they all get the same circuit-breaker +
-retry behavior already used for Groq/Gemini/Pinecone/Tavily/Twilio/SMTP
+retry behavior already used for Groq/Gemini/Pinecone/Tavily/Sarvam/SMTP
 (see services/resilience.py), instead of each connector reinventing it.
 
 Only network/server failures are retried — a 4xx (bad auth, bad request) is

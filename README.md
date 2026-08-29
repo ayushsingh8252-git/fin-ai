@@ -32,7 +32,7 @@ docker compose up redis postgres policy-backend policy-frontend --build
 - Frontend → [http://localhost:3000](http://localhost:3000)
 - Backend → [http://localhost:8000/health](http://localhost:8000/health) · orchestrator tier status → `/api/v1/orchestrator/health`
 
-Every other credential in `.env.example` — Pinecone, Twilio, SMTP, Google OAuth — is optional and **fails open**: unset it and that specific capability (vector search, outbound calls, invite emails) degrades gracefully instead of crashing the app, logged rather than silent. Same convention the memory tiers use, see [Memory Architecture](#memory-architecture).
+Every other credential in `.env.example` — Pinecone, Sarvam, SMTP, Google OAuth — is optional and **fails open**: unset it and that specific capability (vector search, outbound calls, invite emails) degrades gracefully instead of crashing the app, logged rather than silent. Same convention the memory tiers use, see [Memory Architecture](#memory-architecture).
 
 ## Core Features
 

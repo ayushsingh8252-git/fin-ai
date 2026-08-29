@@ -1,6 +1,6 @@
 """Agent tool layer (app/agent_tools/) — verifies the tool contract itself
 (catalog shape, config-check dispatch, error normalization, DB-backed
-composite behavior) without depending on live external credentials (Twilio,
+composite behavior) without depending on live external credentials (Sarvam,
 Meta, a real Groq/Gemini key). Where a tool's underlying pipeline needs an
 LLM (fraud/screening/hiring's real-score lookups aren't LLM calls, but
 run_fraud_check/run_screening_analysis are), tests exercise the validation

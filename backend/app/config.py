@@ -43,16 +43,30 @@ class Settings(BaseSettings):
     # something instead of sitting there unused.
     CORS_ORIGINS: str = ""
 
-    # Telephonic Agent — real outbound calling via Twilio.
-    TWILIO_ACCOUNT_SID: str = ""
-    TWILIO_AUTH_TOKEN: str = ""
-    TWILIO_PHONE_NUMBER: str = ""
-    # Public HTTPS origin (no trailing slash) Twilio can reach to fetch TwiML
-    # and post call-status/speech-gather webhooks — e.g. an ngrok URL in dev,
-    # or this backend's deployed URL in production. Outbound calling is
-    # disabled (with a clear error) while this is unset, since Twilio cannot
-    # call back into localhost.
+    # Public HTTPS origin (no trailing slash) Sarvam can reach to post the
+    # outbound-call result webhook — e.g. an ngrok URL in dev, or this
+    # backend's deployed URL in production. Outbound calling is disabled
+    # (with a clear error) while this is unset, since Sarvam cannot call
+    # back into localhost.
     PUBLIC_BASE_URL: str = ""
+
+    # Telephonic Agent — real outbound calling via Sarvam AI (samvaad). Sarvam
+    # owns the whole call: a conversational "app" configured in the Sarvam
+    # console runs its own STT/TTS/dialog state machine once triggered, and
+    # posts the result back to the /telephonic/sarvam/webhook route once the
+    # call ends. Same "empty = not configured, fail with a clear error, never
+    # fake a response" convention used across every other integration here.
+    SARVAM_API_KEY: str = ""
+    SARVAM_ORG_ID: str = ""
+    SARVAM_WORKSPACE_ID: str = ""
+    SARVAM_APP_ID: str = ""
+    SARVAM_APP_VERSION: int = 1
+    SARVAM_CONNECTION_ID: str = ""
+    SARVAM_AGENT_PHONE_NUMBER: str = ""
+    # Optional — only sent as app_overrides.initial_state_name when set; leave
+    # blank to let the Sarvam app start at its own configured entry state.
+    SARVAM_INITIAL_STATE_NAME: str = ""
+    SARVAM_BASE_URL: str = "https://apps.sarvam.ai"
 
     # SMTP — used only by the Screening Agent invite flow (app/services/email_service.py).
     SMTP_HOST: str = ""
