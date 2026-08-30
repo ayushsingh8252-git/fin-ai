@@ -1,0 +1,74 @@
+{
+  "benchmark_timestamp": "2026-08-29T22:45:58.948193+00:00",
+  "num_enrolled_speakers": 50,
+  "num_probe_trials": 520,
+  "num_genuine_trials": 2000,
+  "num_impostor_trials": 5000,
+  "verification_1to1": {
+    "eer_percent": 0.1,
+    "eer_threshold": 0.2195,
+    "roc_auc": 1.0,
+    "tar_at_0.1_far": 99.95,
+    "threshold_at_0.1_far": 0.2151,
+    "tar_at_1.0_far": 100.0,
+    "threshold_at_1.0_far": 0.1582,
+    "genuine_distribution": {
+      "count": 2000,
+      "mean": 0.3912,
+      "std": 0.0569,
+      "min": 0.193,
+      "max": 0.5634,
+      "p01": 0.2537,
+      "p05": 0.2961,
+      "p10": 0.3158,
+      "p50": 0.3916,
+      "p90": 0.4623,
+      "p95": 0.4813,
+      "p99": 0.5225
+    },
+    "impostor_distribution": {
+      "count": 5000,
+      "mean": -0.0017,
+      "std": 0.0716,
+      "min": -0.3283,
+      "max": 0.2481,
+      "p01": -0.1717,
+      "p05": -0.1168,
+      "p10": -0.0926,
+      "p50": -0.0013,
+      "p90": 0.09,
+      "p95": 0.1154,
+      "p99": 0.1582
+    }
+  },
+  "identification_1toN": {
+    "known_probes_count": 400,
+    "unknown_probes_count": 120,
+    "top1_accuracy": 100.0,
+    "top5_accuracy": 100.0,
+    "unknown_rejection_rate": 97.5,
+    "false_identification_rate": 2.5,
+    "avg_margin": 0.2861,
+    "margin_p10": 0.0187,
+    "margin_p50": 0.3462
+  },
+  "robustness_slices": {
+    "clean": {
+      "eer_percent": 0.1,
+      "tar_at_0.1_far": 99.95
+    },
+    "noisy_10db": {
+      "eer_percent": 0.26,
+      "tar_at_0.1_far": 98.85
+    },
+    "reverb_rt60_0.4s": {
+      "eer_percent": 0.19,
+      "tar_at_0.1_far": 99.45
+    }
+  },
+  "anti_spoofing_countermeasures": {
+    "replay_detector_accuracy": 98.4,
+    "synthetic_detector_accuracy": 97.8,
+    "overall_spoof_detection_rate": 98.1
+  }
+}

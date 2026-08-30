@@ -6,11 +6,13 @@ Voice Identification Service
 This module implements the core logic for the Voice Identification Tool, 
 providing capabilities for speaker enrollment, verification (1:1), and identification (1:N). 
 
-It features:
+Features:
 - Voice Activity Detection (VAD) via Silero VAD
-- Embedding extraction via SpeechBrain (ECAPA-TDNN)
+- Embedding extraction via PyTorch, ONNX FP32, or ONNX INT8 (ECAPA-TDNN 192-dim)
 - Audio quality checks 
-- Anti-spoofing techniques (Replay detection, AI voice detection)
+- Anti-spoofing techniques (Modular Replay detection, AI synthetic voice detection)
+- Real threshold calibration & score normalization
+- Central security decision engine (OPEN, DENY, RETRY, UNKNOWN, UNCERTAIN)
 - Challenge-response verification
 - Vector search with Pinecone and local fallback
 """
@@ -23,11 +25,17 @@ import io
 import wave
 import math
 import os
+import time
 import numpy as np
 from typing import Dict, Any, List, Optional, Tuple
 
 from ..config import settings
 from ..services.resilience import call_with_resilience, CircuitOpenError
+from .voice_encoder import get_speaker_encoder
+from .voice_security import get_spoof_pipeline, SpoofLabel, SpoofResult
+from .voice_decision import authenticate, DecisionType
+from .voice_calibration.calibrator import get_voice_calibrator
+from .voice_observability import log_voice_event
 
 logger = logging.getLogger("voice_identification")
 
@@ -36,18 +44,19 @@ _speaker_model = None
 _speaker_lock = threading.Lock()
 
 def get_speaker_model():
-    """Singleton loader for SpeechBrain ECAPA-TDNN.
-    Same pattern as services/detection.py's get_embedding_model()."""
+    """Singleton loader for SpeechBrain ECAPA-TDNN."""
     global _speaker_model
     if _speaker_model is None:
         with _speaker_lock:
-            if _speaker_model is None:  # double-check after acquiring lock
+            if _speaker_model is None:
+                import speechbrain.utils.fetching as fetching
                 from speechbrain.inference.speaker import EncoderClassifier
                 logger.info("Loading ECAPA-TDNN speaker encoder...")
                 _speaker_model = EncoderClassifier.from_hparams(
                     source="speechbrain/spkrec-ecapa-voxceleb",
                     savedir=".cache/speechbrain/spkrec-ecapa-voxceleb",
                     run_opts={"device": "cpu"},
+                    local_strategy=fetching.LocalStrategy.COPY,
                 )
                 logger.info("ECAPA-TDNN loaded successfully.")
     return _speaker_model
@@ -56,40 +65,48 @@ _vad_model = None
 _vad_lock = threading.Lock()
 
 def get_vad_model():
-    """Singleton loader for Silero VAD."""
+    """Singleton loader for Silero VAD with resilient local fallback."""
     global _vad_model
     if _vad_model is None:
         with _vad_lock:
             if _vad_model is None:
                 import torch
-                _vad_model, _utils = torch.hub.load(
-                    repo_or_dir='snakers4/silero-vad',
-                    model='silero_vad',
-                    force_reload=False,
-                    onnx=False,
-                )
-                logger.info("Silero VAD loaded successfully.")
+                try:
+                    _vad_model, _utils = torch.hub.load(
+                        repo_or_dir='snakers4/silero-vad',
+                        model='silero_vad',
+                        force_reload=False,
+                        onnx=False,
+                        trust_repo=True,
+                    )
+                    logger.info("Silero VAD loaded successfully.")
+                except Exception as e:
+                    logger.warning("Silero VAD network load failed (%s). Using resilient local VAD fallback.", e)
+                    class ResilientLocalVAD:
+                        def __call__(self, chunk, sample_rate):
+                            rms = float(torch.sqrt(torch.mean(chunk ** 2)))
+                            prob = 1.0 if rms > 0.006 else 0.0
+                            return torch.tensor([prob])
+                        def reset_states(self):
+                            pass
+                    _vad_model = ResilientLocalVAD()
     return _vad_model
 
 
 def run_vad(waveform, sample_rate: int) -> Tuple[Any, float]:
     """Run Voice Activity Detection on waveform.
-    Returns (speech_only_waveform, speech_duration_seconds).
-    Uses Silero VAD to detect speech segments and concatenate them."""
+    Returns (speech_only_waveform, speech_duration_seconds)."""
     import torch
     vad = get_vad_model()
 
-    # Silero VAD expects 16kHz mono
     if sample_rate != 16000:
         import torchaudio
         waveform = torchaudio.functional.resample(waveform, sample_rate, 16000)
         sample_rate = 16000
 
-    # Ensure 1D
     if waveform.dim() > 1:
         waveform = waveform.mean(dim=0)
 
-    # Process in 512-sample windows (32ms at 16kHz)
     window_size = 512
     speech_probs = []
     for i in range(0, len(waveform), window_size):
@@ -99,7 +116,6 @@ def run_vad(waveform, sample_rate: int) -> Tuple[Any, float]:
         prob = vad(chunk, sample_rate).item()
         speech_probs.append((i, prob))
 
-    # Collect speech segments (prob > 0.5)
     speech_segments = []
     for start_idx, prob in speech_probs:
         if prob > 0.5:
@@ -111,39 +127,33 @@ def run_vad(waveform, sample_rate: int) -> Tuple[Any, float]:
 
     speech_waveform = torch.cat(speech_segments)
     speech_duration = len(speech_waveform) / sample_rate
-    
-    # Reset VAD state for next call
     vad.reset_states()
     
     return speech_waveform, speech_duration
 
 def check_audio_quality(waveform, sample_rate: int) -> Dict[str, Any]:
-    """Check if audio is usable for speaker recognition.
-    Returns {"is_usable": bool, "issues": [...], "rms_energy": float, ...}"""
+    """Check if audio is usable for speaker recognition."""
     import torch
     issues = []
 
     if waveform.dim() > 1:
         waveform = waveform.mean(dim=0)
 
-    # 1. Check if audio is too short
     duration = len(waveform) / sample_rate
     if duration < 0.3:
         issues.append(f"Audio too short: {duration:.1f}s (need >= 0.3s)")
 
-    # 2. RMS energy check — is the audio too quiet?
-    rms = torch.sqrt(torch.mean(waveform ** 2)).item()
+    rms = torch.sqrt(torch.mean(waveform ** 2)).item() if len(waveform) > 0 else 0.0
     if rms < 0.005:
         issues.append(f"Audio too quiet: RMS={rms:.4f} (need >= 0.005)")
 
-    # 3. Clipping detection — percentage of samples at max amplitude
     clip_threshold = 0.99
-    clipped = (torch.abs(waveform) > clip_threshold).float().mean().item()
+    clipped = (torch.abs(waveform) > clip_threshold).float().mean().item() if len(waveform) > 0 else 0.0
     if clipped > 0.05:
         issues.append(f"Audio clipping detected: {clipped*100:.1f}% of samples clipped")
 
-    # 4. Dynamic range
-    peak = torch.max(torch.abs(waveform)).item()
+    peak = torch.max(torch.abs(waveform)).item() if len(waveform) > 0 else 0.0
+    crest_factor = 0.0
     if peak > 0 and rms > 0:
         crest_factor = peak / rms
         if crest_factor < 1.15:
@@ -158,28 +168,22 @@ def check_audio_quality(waveform, sample_rate: int) -> Dict[str, Any]:
     }
 
 def extract_voice_embedding(audio_path: str) -> Dict[str, Any]:
-    """Full pipeline: load audio → convert → VAD → quality check → ECAPA → embedding.
-    Returns {"embedding": [...], "speech_duration": float, "quality": {...}} on success,
-    or {"error": str, "quality": {...}} on failure."""
+    """Full pipeline: load audio → convert → VAD → quality check → ECAPA → embedding."""
     import torch
     import torchaudio
 
-    # Step 1: Convert to WAV if needed (reuse existing audio_service)
     from .audio_service import convert_to_wav
     wav_path = convert_to_wav(audio_path)
 
-    # Step 2: Load audio
     try:
         waveform, sample_rate = torchaudio.load(wav_path)
     except Exception as e:
         return {"error": f"Failed to load audio: {e}"}
 
-    # Ensure mono
     if waveform.shape[0] > 1:
         waveform = waveform.mean(dim=0, keepdim=True)
     waveform_1d = waveform.squeeze(0)
 
-    # Step 3: VAD — extract speech-only regions
     speech_waveform, speech_duration = run_vad(waveform_1d, sample_rate)
 
     if speech_duration < settings.VOICE_ID_MIN_SPEECH_DURATION:
@@ -188,21 +192,13 @@ def extract_voice_embedding(audio_path: str) -> Dict[str, Any]:
             "speech_duration": speech_duration,
         }
 
-    # Step 4: Quality check on speech portion
-    quality = check_audio_quality(speech_waveform, 16000)  # VAD outputs 16kHz
+    quality = check_audio_quality(speech_waveform, 16000)
     if not quality["is_usable"]:
         return {"error": f"Audio quality too low: {'; '.join(quality['issues'])}", "quality": quality}
 
-    # Step 5: Extract ECAPA-TDNN embedding
     try:
-        model = get_speaker_model()
-        # SpeechBrain expects [batch, time] tensor
-        if speech_waveform.dim() == 1:
-            speech_waveform = speech_waveform.unsqueeze(0)
-        with _speaker_lock:
-            embedding = model.encode_batch(speech_waveform)
-        # embedding shape: [1, 1, 192] → flatten to [192]
-        emb_list = embedding.squeeze().detach().cpu().numpy().tolist()
+        encoder = get_speaker_encoder()
+        emb_list = encoder.embed(speech_waveform, sample_rate=16000)
     except Exception as e:
         return {"error": f"Speaker encoder failed: {e}"}
 
@@ -216,8 +212,7 @@ _voice_index = None
 _voice_index_lock = threading.Lock()
 
 def get_voice_pinecone_index():
-    """Singleton for the voice-embeddings Pinecone index (192-dim, cosine).
-    Separate from the policy-rules index used by RAG."""
+    """Singleton for the voice-embeddings Pinecone index (192-dim, cosine)."""
     global _voice_index
     if _voice_index is None:
         with _voice_index_lock:
@@ -229,152 +224,35 @@ def get_voice_pinecone_index():
     return _voice_index
 
 def detect_replay(waveform, sample_rate: int) -> Dict[str, Any]:
-    """Detect if audio was replayed through a speaker (e.g. someone playing
-    a recording of the target speaker's voice through their laptop).
-    
-    Replayed audio has:
-    - Narrower effective bandwidth (speaker frequency response rolls off)
-    - Less dynamic range (speaker compression + room acoustics)
-    - Higher spectral flatness in high frequencies (speaker noise floor)
-    """
-    import torch
+    """Detect if audio was replayed through a speaker."""
     if not settings.VOICE_ID_REPLAY_DETECTION_ENABLED:
         return {"is_replay": False, "confidence": 0.0, "skipped": True}
 
-    if waveform.dim() > 1:
-        waveform = waveform.mean(dim=0)
-
-    waveform_np = waveform.numpy()
-
-    # 1. Spectral bandwidth analysis via FFT
-    fft = np.fft.rfft(waveform_np)
-    magnitude = np.abs(fft)
-    freqs = np.fft.rfftfreq(len(waveform_np), 1.0 / sample_rate)
-
-    # Energy above 7kHz vs total — replayed audio loses high-freq content
-    total_energy = np.sum(magnitude ** 2)
-    if total_energy < 1e-10:
-        return {"is_replay": False, "confidence": 0.0, "note": "silent audio"}
-    
-    high_freq_mask = freqs > 7000
-    high_freq_energy = np.sum(magnitude[high_freq_mask] ** 2)
-    high_freq_ratio = high_freq_energy / total_energy
-
-    # 2. Dynamic range (dB)
-    rms = np.sqrt(np.mean(waveform_np ** 2))
-    peak = np.max(np.abs(waveform_np))
-    dynamic_range_db = 20 * np.log10(peak / max(rms, 1e-10))
-
-    # 3. Spectral flatness in high-freq band
-    high_mag = magnitude[high_freq_mask]
-    if len(high_mag) > 0 and np.mean(high_mag) > 0:
-        geometric_mean = np.exp(np.mean(np.log(high_mag + 1e-10)))
-        arithmetic_mean = np.mean(high_mag)
-        spectral_flatness = geometric_mean / max(arithmetic_mean, 1e-10)
-    else:
-        spectral_flatness = 0.0
-
-    # Heuristic scoring: replay signals
-    replay_score = 0.0
-    if high_freq_ratio < 0.0001:  # severely band-limited (e.g. low quality telephone speaker)
-        replay_score += 0.3
-    elif high_freq_ratio < 0.001:
-        replay_score += 0.15
-    if dynamic_range_db < 3.0:  # extreme dynamic compression
-        replay_score += 0.35
-    elif dynamic_range_db < 5.0:
-        replay_score += 0.15
-    if spectral_flatness > 0.75:  # flat noise floor in high frequencies
-        replay_score += 0.35
-    elif spectral_flatness > 0.60:
-        replay_score += 0.15
-
+    from .voice_security.replay_detector import ReplayDetector
+    detector = ReplayDetector()
+    res = detector.predict(waveform, sample_rate)
     return {
-        "is_replay": replay_score >= 0.6,
-        "confidence": round(replay_score, 2),
-        "high_freq_ratio": round(high_freq_ratio, 4),
-        "dynamic_range_db": round(dynamic_range_db, 2),
-        "spectral_flatness": round(spectral_flatness, 4),
+        "is_replay": res.details.get("is_replay", res.label == SpoofLabel.REPLAY),
+        "confidence": res.confidence,
+        "high_freq_ratio": res.details.get("high_freq_ratio", 0.0),
+        "dynamic_range_db": res.details.get("dynamic_range_db", 0.0),
+        "spectral_flatness": res.details.get("spectral_flatness", 0.0),
     }
 
 def detect_ai_voice(waveform, sample_rate: int) -> Dict[str, Any]:
-    """Detect if audio is AI-generated / voice-cloned / synthetic speech.
-    
-    Synthetic speech exhibits:
-    - Unnaturally smooth MFCC trajectories (low frame-to-frame variance)
-    - Very stable pitch (low jitter)
-    - Consistent amplitude envelope (low shimmer)
-    """
-    import torch
+    """Detect if audio is AI-generated / voice-cloned / synthetic speech."""
     if not settings.VOICE_ID_AI_VOICE_DETECTION_ENABLED:
         return {"is_synthetic": False, "confidence": 0.0, "skipped": True}
 
-    if waveform.dim() > 1:
-        waveform = waveform.mean(dim=0)
-    waveform_np = waveform.numpy()
-
-    # 1. MFCC variance analysis
-    # Compute simple MFCC-like features using FFT frames
-    frame_length = int(0.025 * sample_rate)  # 25ms frames
-    hop_length = int(0.010 * sample_rate)    # 10ms hop
-    
-    frame_energies = []
-    spectral_centroids = []
-    for start in range(0, len(waveform_np) - frame_length, hop_length):
-        frame = waveform_np[start:start + frame_length]
-        windowed = frame * np.hanning(len(frame))
-        fft_mag = np.abs(np.fft.rfft(windowed))
-        
-        energy = np.sum(fft_mag ** 2)
-        frame_energies.append(energy)
-        
-        freqs = np.fft.rfftfreq(len(windowed), 1.0 / sample_rate)
-        if np.sum(fft_mag) > 0:
-            centroid = np.sum(freqs * fft_mag) / np.sum(fft_mag)
-            spectral_centroids.append(centroid)
-
-    if len(frame_energies) < 10:
-        return {"is_synthetic": False, "confidence": 0.0, "note": "too few frames"}
-
-    # 2. Frame-to-frame variance of spectral centroid (proxy for MFCC smoothness)
-    centroid_diffs = np.diff(spectral_centroids)
-    centroid_variance = np.var(centroid_diffs)
-    
-    # 3. Energy variance (proxy for shimmer/amplitude jitter)
-    energy_array = np.array(frame_energies)
-    energy_array = energy_array / max(np.max(energy_array), 1e-10)
-    energy_diffs = np.diff(energy_array)
-    energy_variance = np.var(energy_diffs)
-
-    # 4. Zero-crossing rate variance (proxy for pitch stability)
-    zcr_per_frame = []
-    for start in range(0, len(waveform_np) - frame_length, hop_length):
-        frame = waveform_np[start:start + frame_length]
-        zcr = np.sum(np.abs(np.diff(np.sign(frame)))) / (2 * len(frame))
-        zcr_per_frame.append(zcr)
-    zcr_variance = np.var(np.diff(zcr_per_frame)) if len(zcr_per_frame) > 1 else 0.0
-
-    # Heuristic scoring: AI-generated speech is TOO smooth
-    synthetic_score = 0.0
-    if centroid_variance < 500:
-        synthetic_score += 0.4
-    elif centroid_variance < 2000:
-        synthetic_score += 0.2
-    if energy_variance < 0.0001:
-        synthetic_score += 0.3
-    elif energy_variance < 0.001:
-        synthetic_score += 0.15
-    if zcr_variance < 0.00001:
-        synthetic_score += 0.3
-    elif zcr_variance < 0.0001:
-        synthetic_score += 0.15
-
+    from .voice_security.synthetic_detector import SyntheticDetector
+    detector = SyntheticDetector()
+    res = detector.predict(waveform, sample_rate)
     return {
-        "is_synthetic": synthetic_score >= 0.6,
-        "confidence": round(synthetic_score, 2),
-        "centroid_variance": round(float(centroid_variance), 2),
-        "energy_variance": round(float(energy_variance), 6),
-        "zcr_variance": round(float(zcr_variance), 8),
+        "is_synthetic": res.details.get("is_synthetic", res.label == SpoofLabel.SYNTHETIC),
+        "confidence": res.confidence,
+        "centroid_variance": res.details.get("centroid_variance", 0.0),
+        "energy_variance": res.details.get("energy_variance", 0.0),
+        "zcr_variance": res.details.get("zcr_variance", 0.0),
     }
 
 _CHALLENGE_COLORS = ["red", "blue", "green", "yellow", "purple", "orange", "black", "white", "pink", "brown"]
@@ -382,14 +260,11 @@ _CHALLENGE_NUMBERS = ["one", "two", "three", "four", "five", "six", "seven", "ei
 _CHALLENGE_OBJECTS = ["window", "apple", "table", "house", "river", "mountain", "garden", "bridge", "castle", "forest"]
 
 def generate_challenge_phrase() -> str:
-    """Generate a random 3-word challenge phrase.
-    Each request gets a unique phrase so old recordings can't be reused."""
+    """Generate a random 3-word challenge phrase."""
     return f"{random.choice(_CHALLENGE_COLORS)} {random.choice(_CHALLENGE_NUMBERS)} {random.choice(_CHALLENGE_OBJECTS)}"
 
-
 def verify_challenge_response(audio_path: str, expected_phrase: str) -> Dict[str, Any]:
-    """Transcribe audio and check if the spoken words match the expected phrase.
-    Uses the existing Faster-Whisper pipeline from audio_service.py."""
+    """Transcribe audio and check if spoken words match expected phrase."""
     from .audio_service import transcribe_audio
     
     try:
@@ -400,12 +275,11 @@ def verify_challenge_response(audio_path: str, expected_phrase: str) -> Dict[str
 
     expected_lower = expected_phrase.lower().strip()
     
-    # Fuzzy match — allow minor transcription differences
     from rapidfuzz import fuzz
     similarity = fuzz.token_sort_ratio(spoken_text, expected_lower)
     
     return {
-        "match": similarity >= 70,  # 70% token sort ratio threshold
+        "match": similarity >= 70,
         "similarity": round(similarity, 1),
         "spoken": spoken_text,
         "expected": expected_lower,
@@ -418,12 +292,9 @@ def enroll_speaker(
     db,
     email: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Enroll a voice sample for a speaker. Multiple samples (3-10) build a
-    robust voiceprint. The centroid embedding is upserted to Pinecone once
-    enough samples have been collected."""
+    """Enroll a voice sample for a speaker."""
     from ..models import VoicePrint, VoiceEnrollment
 
-    # Step 1: Extract embedding from audio
     result = extract_voice_embedding(audio_path)
     if "error" in result:
         return {"status": "error", "message": result["error"], "detail": result}
@@ -432,7 +303,6 @@ def enroll_speaker(
     speech_duration = result["speech_duration"]
     quality = result.get("quality", {})
 
-    # Step 2: Get or create VoicePrint record
     voice_print = db.query(VoicePrint).filter(VoicePrint.id == speaker_id).first()
     if voice_print is None:
         voice_print = VoicePrint(
@@ -450,7 +320,6 @@ def enroll_speaker(
             "message": f"Maximum enrollment samples reached ({settings.VOICE_ID_MAX_ENROLLMENT_SAMPLES}).",
         }
 
-    # Step 3: Store individual enrollment sample
     enrollment_id = str(uuid.uuid4())
     enrollment = VoiceEnrollment(
         id=enrollment_id,
@@ -461,27 +330,22 @@ def enroll_speaker(
     )
     db.add(enrollment)
 
-    # Step 4: Update enrollment count and recompute centroid
     voice_print.enrollment_count = (voice_print.enrollment_count or 0) + 1
     
-    # Fetch all embeddings for this speaker to compute centroid
     all_enrollments = (
         db.query(VoiceEnrollment)
         .filter(VoiceEnrollment.speaker_id == speaker_id)
         .all()
     )
-    # Include the new one (not yet committed)
     all_embeds = [e.embedding for e in all_enrollments] + [embedding]
     centroid = np.mean(all_embeds, axis=0).tolist()
     voice_print.embedding = centroid
 
-    # Step 5: Activate if enough samples
     if voice_print.enrollment_count >= settings.VOICE_ID_MIN_ENROLLMENT_SAMPLES:
         voice_print.status = "active"
 
     db.commit()
 
-    # Step 6: Upsert centroid to Pinecone (best-effort)
     try:
         index = get_voice_pinecone_index()
         call_with_resilience(
@@ -522,27 +386,24 @@ def identify_speaker(
     db,
     challenge_phrase: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Full identification pipeline:
-    1. Extract embedding
-    2. Pinecone 1:N search
-    3. Re-rank top candidates
-    4. Threshold + margin check
-    5. Anti-spoofing (replay + AI voice)
-    6. Challenge phrase verification (optional)
-    7. Final decision
-    """
+    """Full 1:N speaker identification pipeline with calibrated thresholding,
+    anti-spoofing, and central decision engine."""
+    t0 = time.perf_counter()
+    req_id = str(uuid.uuid4())
     import torch
     import torchaudio
     from ..models import VoicePrint
 
-    # ── Step 1: Extract embedding ──
+    # 1. Embedding extraction
     result = extract_voice_embedding(audio_path)
     if "error" in result:
         return {"decision": "error", "message": result["error"], "detail": result}
 
     query_embedding = result["embedding"]
+    speech_dur = result["speech_duration"]
+    quality = result.get("quality", {})
 
-    # ── Step 2: Pinecone 1:N search ──
+    # 2. 1:N Retrieval (Pinecone with local fallback)
     try:
         index = get_voice_pinecone_index()
         search_result = call_with_resilience(
@@ -552,21 +413,19 @@ def identify_speaker(
         )
         matches = search_result.get("matches", [])
     except (CircuitOpenError, Exception) as e:
-        # Fallback: local SQLite cosine search
         logger.warning("Pinecone voice search failed, falling back to local: %s", e)
         matches = _local_voice_search(query_embedding, db, top_k=20)
 
     if not matches:
         return {"decision": "unknown", "message": "No enrolled speakers found.", "candidates": []}
 
-    # ── Step 3: Re-rank with precise cosine similarity ──
+    # 3. Re-rank with exact cosine similarity
     candidates = []
     for match in matches:
         metadata = match.get("metadata", {}) if isinstance(match, dict) else getattr(match, "metadata", {})
         score = match.get("score", 0) if isinstance(match, dict) else getattr(match, "score", 0)
         speaker_id = metadata.get("speaker_id", "")
         
-        # Optionally recompute score from stored centroid for precision
         vp = db.query(VoicePrint).filter(VoicePrint.id == speaker_id).first()
         if vp and vp.embedding:
             score = float(_cosine_similarity(query_embedding, vp.embedding))
@@ -578,44 +437,12 @@ def identify_speaker(
             "status": metadata.get("status", "unknown"),
         })
 
-    # Sort by score descending
     candidates.sort(key=lambda c: c["score"], reverse=True)
-
-    # ── Step 4: Threshold + margin check ──
     top = candidates[0]
     runner_up_score = candidates[1]["score"] if len(candidates) > 1 else 0.0
     margin = top["score"] - runner_up_score
 
-    if top["score"] < settings.VOICE_ID_SIMILARITY_THRESHOLD:
-        return {
-            "decision": "unknown",
-            "message": f"No match above threshold ({settings.VOICE_ID_SIMILARITY_THRESHOLD}).",
-            "top_score": top["score"],
-            "candidates": candidates[:5],
-        }
-
-    if margin < settings.VOICE_ID_MARGIN_THRESHOLD:
-        return {
-            "decision": "uncertain",
-            "message": f"Ambiguous match: margin={margin:.2f} < {settings.VOICE_ID_MARGIN_THRESHOLD}. Retry with clearer audio.",
-            "top_score": top["score"],
-            "runner_up_score": runner_up_score,
-            "margin": round(margin, 4),
-            "candidates": candidates[:5],
-        }
-
-    # Only proceed with active voiceprints
-    if top.get("status") != "active":
-        return {
-            "decision": "unknown",
-            "message": f"Best match '{top['speaker_name']}' is not fully enrolled (status={top['status']}).",
-            "candidates": candidates[:5],
-        }
-
-    # ── Step 5: Anti-spoofing checks ──
-    spoofing_results = {}
-    
-    # Load audio for anti-spoofing analysis
+    # 4. Anti-spoofing
     from .audio_service import convert_to_wav
     wav_path = convert_to_wav(audio_path)
     waveform, sr = torchaudio.load(wav_path)
@@ -624,52 +451,95 @@ def identify_speaker(
     else:
         waveform = waveform.squeeze(0)
 
-    replay_result = detect_replay(waveform, sr)
-    spoofing_results["replay"] = replay_result
-    if replay_result.get("is_replay"):
-        return {
-            "decision": "denied",
-            "reason": "replay_detected",
-            "message": f"Replay attack detected (confidence={replay_result['confidence']}).",
-            "spoofing": spoofing_results,
-            "candidate": top,
-        }
+    spoof_pipe = get_spoof_pipeline(
+        replay_enabled=settings.VOICE_ID_REPLAY_DETECTION_ENABLED,
+        synthetic_enabled=settings.VOICE_ID_AI_VOICE_DETECTION_ENABLED,
+    )
+    spoofing_results = spoof_pipe.analyze(waveform, sr)
 
-    ai_result = detect_ai_voice(waveform, sr)
-    spoofing_results["ai_voice"] = ai_result
-    if ai_result.get("is_synthetic"):
-        return {
-            "decision": "denied",
-            "reason": "synthetic_voice_detected",
-            "message": f"AI-generated voice detected (confidence={ai_result['confidence']}).",
-            "spoofing": spoofing_results,
-            "candidate": top,
-        }
-
-    # ── Step 6: Challenge phrase verification (if provided) ──
+    # 5. Challenge phrase
     challenge_result = None
     if challenge_phrase and settings.VOICE_ID_CHALLENGE_ENABLED:
         challenge_result = verify_challenge_response(audio_path, challenge_phrase)
-        if not challenge_result.get("match"):
-            return {
-                "decision": "denied",
-                "reason": "challenge_failed",
-                "message": f"Challenge phrase mismatch. Expected '{challenge_phrase}', heard '{challenge_result.get('spoken', '')}'.",
-                "challenge": challenge_result,
-                "candidate": top,
-            }
 
-    # ── Step 7: MATCH ──
-    return {
-        "decision": "match",
-        "speaker_id": top["speaker_id"],
-        "speaker_name": top["speaker_name"],
-        "confidence": top["score"],
-        "margin": round(margin, 4),
-        "spoofing": spoofing_results,
-        "challenge": challenge_result,
-        "candidates": candidates[:5],
-    }
+    # 6. Calibration thresholds
+    calibrator = get_voice_calibrator()
+    cal_thresh = getattr(calibrator.active_calibration, "verification_threshold", settings.VOICE_ID_SIMILARITY_THRESHOLD)
+    cal_margin = getattr(calibrator.active_calibration, "margin_threshold", settings.VOICE_ID_MARGIN_THRESHOLD)
+
+    # 7. Central Decision Engine
+    decision_obj = authenticate(
+        speaker_score=top["score"],
+        score_margin=margin,
+        quality_usable=quality.get("is_usable", True),
+        spoof_result=spoofing_results,
+        challenge_result=challenge_result,
+        calibrated_threshold=cal_thresh,
+        calibrated_margin=cal_margin,
+        speaker_id=top["speaker_id"],
+        speaker_name=top["speaker_name"],
+        is_1_to_1=False,
+    )
+
+    t1 = time.perf_counter()
+    latency_ms = (t1 - t0) * 1000.0
+
+    # 8. Observability audit logging
+    log_voice_event(
+        request_id=req_id,
+        model_version=settings.VOICE_MODEL_VERSION,
+        inference_backend=settings.VOICE_INFERENCE_BACKEND,
+        audio_duration_ms=len(waveform) / sr * 1000.0,
+        speech_duration_ms=speech_dur * 1000.0,
+        quality_score=quality.get("rms_energy", 0.0),
+        speaker_score=top["score"],
+        score_margin=margin,
+        spoof_score=spoofing_results.get("overall_score", 0.0),
+        decision=decision_obj.decision.value,
+        latency_ms=latency_ms,
+        speaker_id=top["speaker_id"],
+    )
+
+    if decision_obj.decision == DecisionType.OPEN:
+        return {
+            "decision": "match",
+            "speaker_id": top["speaker_id"],
+            "speaker_name": top["speaker_name"],
+            "confidence": top["score"],
+            "margin": round(margin, 4),
+            "spoofing": spoofing_results,
+            "challenge": challenge_result,
+            "candidates": candidates[:5],
+            "decision_detail": decision_obj.to_dict(),
+        }
+    elif decision_obj.decision == DecisionType.UNCERTAIN:
+        return {
+            "decision": "uncertain",
+            "message": decision_obj.message,
+            "top_score": top["score"],
+            "runner_up_score": runner_up_score,
+            "margin": round(margin, 4),
+            "candidates": candidates[:5],
+            "decision_detail": decision_obj.to_dict(),
+        }
+    elif decision_obj.decision == DecisionType.UNKNOWN:
+        return {
+            "decision": "unknown",
+            "message": decision_obj.message,
+            "top_score": top["score"],
+            "candidates": candidates[:5],
+            "decision_detail": decision_obj.to_dict(),
+        }
+    else:  # DENY / RETRY
+        return {
+            "decision": "denied",
+            "reason": decision_obj.reason,
+            "message": decision_obj.message,
+            "spoofing": spoofing_results,
+            "challenge": challenge_result,
+            "candidate": top,
+            "decision_detail": decision_obj.to_dict(),
+        }
 
 def verify_speaker(
     speaker_id: str,
@@ -678,6 +548,8 @@ def verify_speaker(
     challenge_phrase: Optional[str] = None,
 ) -> Dict[str, Any]:
     """1:1 verification — compare audio against a specific speaker's voiceprint."""
+    t0 = time.perf_counter()
+    req_id = str(uuid.uuid4())
     import torch
     import torchaudio
     from ..models import VoicePrint
@@ -695,8 +567,9 @@ def verify_speaker(
         return {"decision": "error", "message": result["error"]}
 
     score = float(_cosine_similarity(result["embedding"], vp.embedding))
+    speech_dur = result["speech_duration"]
+    quality = result.get("quality", {})
 
-    # Anti-spoofing
     from .audio_service import convert_to_wav
     wav_path = convert_to_wav(audio_path)
     waveform, sr = torchaudio.load(wav_path)
@@ -705,25 +578,51 @@ def verify_speaker(
     else:
         waveform = waveform.squeeze(0)
 
-    spoofing = {}
-    replay_result = detect_replay(waveform, sr)
-    spoofing["replay"] = replay_result
-    if replay_result.get("is_replay"):
-        return {"decision": "denied", "reason": "replay_detected", "message": "Replay attack detected.", "spoofing": spoofing}
+    spoof_pipe = get_spoof_pipeline(
+        replay_enabled=settings.VOICE_ID_REPLAY_DETECTION_ENABLED,
+        synthetic_enabled=settings.VOICE_ID_AI_VOICE_DETECTION_ENABLED,
+    )
+    spoofing = spoof_pipe.analyze(waveform, sr)
 
-    ai_result = detect_ai_voice(waveform, sr)
-    spoofing["ai_voice"] = ai_result
-    if ai_result.get("is_synthetic"):
-        return {"decision": "denied", "reason": "synthetic_voice_detected", "message": "Synthetic voice detected.", "spoofing": spoofing}
-
-    # Challenge
     challenge_result = None
     if challenge_phrase and settings.VOICE_ID_CHALLENGE_ENABLED:
         challenge_result = verify_challenge_response(audio_path, challenge_phrase)
-        if not challenge_result.get("match"):
-            return {"decision": "denied", "reason": "challenge_failed", "challenge": challenge_result}
 
-    if score >= settings.VOICE_ID_SIMILARITY_THRESHOLD:
+    calibrator = get_voice_calibrator()
+    cal_thresh = getattr(calibrator.active_calibration, "verification_threshold", settings.VOICE_ID_SIMILARITY_THRESHOLD)
+
+    decision_obj = authenticate(
+        speaker_score=score,
+        score_margin=0.20,
+        quality_usable=quality.get("is_usable", True),
+        spoof_result=spoofing,
+        challenge_result=challenge_result,
+        calibrated_threshold=cal_thresh,
+        calibrated_margin=0.0,
+        speaker_id=speaker_id,
+        speaker_name=vp.speaker_name,
+        is_1_to_1=True,
+    )
+
+    t1 = time.perf_counter()
+    latency_ms = (t1 - t0) * 1000.0
+
+    log_voice_event(
+        request_id=req_id,
+        model_version=settings.VOICE_MODEL_VERSION,
+        inference_backend=settings.VOICE_INFERENCE_BACKEND,
+        audio_duration_ms=len(waveform) / sr * 1000.0,
+        speech_duration_ms=speech_dur * 1000.0,
+        quality_score=quality.get("rms_energy", 0.0),
+        speaker_score=score,
+        score_margin=0.0,
+        spoof_score=spoofing.get("overall_score", 0.0),
+        decision=decision_obj.decision.value,
+        latency_ms=latency_ms,
+        speaker_id=speaker_id,
+    )
+
+    if decision_obj.decision == DecisionType.OPEN:
         return {
             "decision": "match",
             "speaker_id": speaker_id,
@@ -731,15 +630,26 @@ def verify_speaker(
             "confidence": round(score, 4),
             "spoofing": spoofing,
             "challenge": challenge_result,
+            "decision_detail": decision_obj.to_dict(),
+        }
+    elif decision_obj.decision == DecisionType.DENY and decision_obj.reason in ("replay_detected", "synthetic_detected", "challenge_failed"):
+        return {
+            "decision": "denied",
+            "reason": decision_obj.reason,
+            "message": decision_obj.message,
+            "spoofing": spoofing,
+            "challenge": challenge_result,
+            "decision_detail": decision_obj.to_dict(),
         }
     else:
         return {
             "decision": "no_match",
             "speaker_id": speaker_id,
             "confidence": round(score, 4),
-            "threshold": settings.VOICE_ID_SIMILARITY_THRESHOLD,
-            "message": f"Voice does not match '{vp.speaker_name}' (score={score:.2f} < {settings.VOICE_ID_SIMILARITY_THRESHOLD}).",
+            "threshold": cal_thresh,
+            "message": f"Voice does not match '{vp.speaker_name}' (score={score:.2f} < {cal_thresh:.2f}).",
             "spoofing": spoofing,
+            "decision_detail": decision_obj.to_dict(),
         }
 
 def _cosine_similarity(a: list, b: list) -> float:
@@ -750,7 +660,6 @@ def _cosine_similarity(a: list, b: list) -> float:
     if denom < 1e-10:
         return 0.0
     return float(np.dot(a_np, b_np) / denom)
-
 
 def _local_voice_search(query_embedding: list, db, top_k: int = 20) -> list:
     """Fallback local cosine search when Pinecone is unavailable."""

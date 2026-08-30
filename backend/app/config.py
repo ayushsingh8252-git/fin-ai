@@ -227,6 +227,13 @@ class Settings(BaseSettings):
     VOICE_ID_AI_VOICE_DETECTION_ENABLED: bool = True
     VOICE_ID_CHALLENGE_ENABLED: bool = True
 
+    # Backend inference engine (pytorch, onnx, onnx_int8)
+    VOICE_INFERENCE_BACKEND: str = "pytorch"
+    VOICE_LOCAL_INFERENCE: bool = False
+    VOICE_MIN_SPEECH_SECONDS: float = 1.5
+    VOICE_CALIBRATION_FILE: str = "models/voice_calibration.json"
+    VOICE_MODEL_VERSION: str = "ecapa-voxceleb-v1"
+
     model_config = SettingsConfigDict(
         env_file=("../.env", ".env"),
         env_file_encoding="utf-8",

@@ -256,7 +256,7 @@ class TestAPIEndpointRegistration:
 
     def test_voice_routes_exist(self):
         from app.main import app
-        paths = [r.path for r in app.routes]
+        paths = list(app.openapi().get("paths", {}).keys())
         assert "/api/v1/voice/enroll" in paths
         assert "/api/v1/voice/identify" in paths
         assert "/api/v1/voice/verify" in paths
