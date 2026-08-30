@@ -7,8 +7,13 @@ import { useAuth } from "@/contexts/AuthContext";
  * count and, once signed in, who's signed in. Sign-in itself only ever
  * happens through the popup (ProductGate) — this bar carries no sign-in
  * control of its own. */
+import { usePathname } from "next/navigation";
+
 export default function AuthHeaderBar() {
+  const pathname = usePathname();
   const { status, user, uniqueUserCount, signOut } = useAuth();
+
+  if (pathname?.startsWith("/command-center")) return null;
 
   return (
     <div className="w-full bg-zinc-900 text-zinc-100 text-[12px]">

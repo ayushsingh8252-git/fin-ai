@@ -10,10 +10,13 @@ import GoogleSignInButton from "./GoogleSignInButton";
  * pops in) rather than a plain page, and is the single place sign-in lives —
  * the site header carries no sign-in control of its own.
  * Gating is currently switched off via AUTH_GATE_ENABLED (see AuthContext). */
+import { usePathname } from "next/navigation";
+
 export default function ProductGate({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
   const { status, uniqueUserCount, errorMessage, notConfigured } = useAuth();
 
-  if (!AUTH_GATE_ENABLED || status === "signed-in") return <>{children}</>;
+  if (!AUTH_GATE_ENABLED || status === "signed-in" || pathname?.startsWith("/command-center")) return <>{children}</>;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-zinc-950 via-zinc-900 to-blue-950 flex items-center justify-center px-6 py-20">

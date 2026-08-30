@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { askAssistant } from "@/components/ai-assistant/AIAssistantWidget";
 import { reopenCookieConsent } from "@/components/CookieConsent";
 import { BrandMark } from "@/components/BrandMark";
+import { VoiceCommandButton } from "@/components/VoiceCommandButton";
 import {
   Database, UserPlus, Brain, Bot, BarChart3, Shield,
   ArrowRight, Menu, X, Zap, Users, Globe, CheckCircle2,
@@ -257,19 +258,14 @@ export default function LandingPage() {
 
               <div className="flex flex-wrap items-center gap-4">
                 <Link
-                  href="/rag"
-                  className="inline-flex items-center gap-2.5 px-6 py-3 rounded-xl text-[14px] font-semibold bg-blue-600 text-white hover:bg-blue-700 shadow-md shadow-blue-600/20 transition-all"
+                  href="/command-center"
+                  className="inline-flex items-center gap-2.5 px-6 py-3.5 rounded-xl text-[14px] font-semibold bg-zinc-950 text-white hover:bg-zinc-800 shadow-xl shadow-zinc-950/20 transition-all border border-zinc-800 hover:border-zinc-700"
                 >
-                  Launch RAG Workspace <ArrowRight className="w-4 h-4" />
+                  <Bot className="w-4 h-4 text-emerald-400" />
+                  Launch Agent Command Center <ArrowRight className="w-4 h-4" />
                 </Link>
 
-                <button
-                  onClick={() => setArchModalOpen(true)}
-                  className="inline-flex items-center gap-2 px-5 py-3 rounded-xl text-[14px] font-semibold border border-zinc-200 text-zinc-700 bg-white hover:bg-zinc-50 hover:border-zinc-300 transition-all"
-                >
-                  <Cpu className="w-4 h-4 text-blue-600" />
-                  View Architecture
-                </button>
+                <VoiceCommandButton />
               </div>
 
               <FloatingHeroDoodles />
@@ -925,11 +921,11 @@ function BurningArchitectureModal({ isOpen, onClose }: { isOpen: boolean; onClos
                 <span>{KERNEL_SUB_AGENTS.length} agents orchestrating {nodes.length} execution nodes</span>
               </div>
               <Link
-                href="/rag"
+                href="/command-center"
                 onClick={onClose}
-                className="w-full sm:w-auto text-center px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs transition-all shadow-md shadow-blue-600/20"
+                className="w-full sm:w-auto text-center px-5 py-2.5 rounded-xl bg-zinc-950 hover:bg-zinc-800 text-white font-bold text-xs transition-all shadow-md shadow-zinc-950/20 border border-zinc-800"
               >
-                Launch RAG Workspace →
+                Launch Command Center →
               </Link>
             </div>
           </motion.div>

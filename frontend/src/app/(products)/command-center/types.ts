@@ -90,6 +90,7 @@ export interface MissionState {
   approvalDialog: ApprovalDialogState | null;
   leftActiveTab: "trace" | "inspector" | "artifacts";
   viewMode: WorkspaceViewMode;
+  planningLogs: string[];
 }
 
 /** Tool from the unified catalog */

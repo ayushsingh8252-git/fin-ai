@@ -60,6 +60,13 @@ export default function LeftPanel({
     "Hi! Your profile has been shortlisted for the Senior AI Systems Engineer role. We would like to coordinate a technical interview. Please let us know your availability."
   );
 
+  React.useEffect(() => {
+    if (state.approvalDialog) {
+      if (state.approvalDialog.recipient) setEditPhone(state.approvalDialog.recipient);
+      if (state.approvalDialog.messageContent) setEditMessage(state.approvalDialog.messageContent);
+    }
+  }, [state.approvalDialog]);
+
   const activeTab = state.leftActiveTab;
   const completedSteps = state.executionSteps.filter((s) => s.status === "completed").length;
   const totalSteps = state.executionSteps.length;
@@ -213,6 +220,49 @@ export default function LeftPanel({
         {/* ── TAB 1: TRACE & STREAM ── */}
         {activeTab === "trace" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            {/* Live Planning Thoughts Stream */}
+            {state.planningLogs && state.planningLogs.length > 0 && (
+              <div className="cc-card" style={{ padding: "14px 16px", background: "#0a0a0d" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    {state.phase === "planning" ? (
+                      <Loader2 size={13} className="animate-spin text-zinc-400" />
+                    ) : (
+                      <CheckCircle2 size={13} className="text-emerald-400" />
+                    )}
+                    <span style={{ fontSize: 11, fontWeight: 600, color: "#a1a1aa", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                      {state.phase === "planning" ? "Autonomous Reasoning Engine" : "Planning Phase Completed"}
+                    </span>
+                  </div>
+                  <span style={{ fontSize: 10, color: "#71717a", fontFamily: "var(--font-geist-mono), monospace" }}>
+                    LIVE THOUGHTS
+                  </span>
+                </div>
+
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  {state.planningLogs.map((log, i) => (
+                    <motion.div
+                      key={i}
+                      initial={{ opacity: 0, x: -6 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      style={{
+                        display: "flex",
+                        alignItems: "flex-start",
+                        gap: 8,
+                        fontSize: 11,
+                        color: i === state.planningLogs.length - 1 && state.phase === "planning" ? "#f4f4f5" : "#71717a",
+                        fontFamily: "var(--font-geist-mono), monospace",
+                        lineHeight: 1.5,
+                      }}
+                    >
+                      <span style={{ color: "#52525b" }}>❯</span>
+                      <span>{log}</span>
+                    </motion.div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Agent Intent Brief */}
             <div className="cc-card" style={{ padding: "14px 16px" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
@@ -308,9 +358,21 @@ export default function LeftPanel({
                         })
                       }
                       className="cc-btn-primary"
-                      style={{ flex: 1, justifyContent: "center", padding: "8px 12px" }}
+                      style={{ flex: 1, justifyContent: "center", padding: "10px 14px", fontSize: 12 }}
                     >
-                      <Send size={13} /> Approve & Dispatch
+                      {state.approvalDialog.type === "call" ? (
+                        <>
+                          <PhoneCall size={13} /> Authorize & Place Screening Call
+                        </>
+                      ) : state.approvalDialog.type === "email" ? (
+                        <>
+                          <Mail size={13} /> Authorize & Send Email Dispatch
+                        </>
+                      ) : (
+                        <>
+                          <MessageSquare size={13} /> Authorize & Dispatch WhatsApp
+                        </>
+                      )}
                     </button>
                   </div>
                 </motion.div>
