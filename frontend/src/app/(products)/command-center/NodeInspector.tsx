@@ -286,19 +286,19 @@ function ScoreVisualization({ result }: { result: Record<string, unknown> }) {
           </div>
         </div>
         <div>
-          {result.recommendation && (
-            <div className={`cc-badge ${result.recommendation === "PROCEED" ? "success" : "warning"}`} style={{ marginBottom: 6 }}>
+          {result.recommendation ? (
+            <div className={`cc-badge ${String(result.recommendation) === "PROCEED" ? "success" : "warning"}`} style={{ marginBottom: 6 }}>
               {String(result.recommendation)}
             </div>
-          )}
-          {result.verdict && (
-            <div className={`cc-badge ${result.verdict === "likely_genuine" ? "success" : "warning"}`} style={{ marginBottom: 6 }}>
+          ) : null}
+          {result.verdict ? (
+            <div className={`cc-badge ${String(result.verdict) === "likely_genuine" ? "success" : "warning"}`} style={{ marginBottom: 6 }}>
               {String(result.verdict).replace(/_/g, " ")}
             </div>
-          )}
-          {result.match_grade && (
+          ) : null}
+          {result.match_grade ? (
             <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)" }}>{String(result.match_grade)}</div>
-          )}
+          ) : null}
         </div>
       </div>
 
