@@ -213,8 +213,7 @@ class Settings(BaseSettings):
     # the 768-dim policy-rules index used by the RAG engine).  Must be created
     # manually in the Pinecone console with dimension=192, metric=cosine.
     PINECONE_VOICE_INDEX_NAME: str = "voice-embeddings"
-    # Minimum cosine similarity to accept a speaker match.
-    VOICE_ID_SIMILARITY_THRESHOLD: float = 0.70
+    VOICE_ID_SIMILARITY_THRESHOLD: float = 0.72
     # Minimum gap between the #1 and #2 candidate scores — protects against
     # ambiguous matches where two speakers sound almost equally similar.
     VOICE_ID_MARGIN_THRESHOLD: float = 0.15

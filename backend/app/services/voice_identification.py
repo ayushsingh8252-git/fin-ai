@@ -460,9 +460,12 @@ def identify_speaker(
     if challenge_phrase and settings.VOICE_ID_CHALLENGE_ENABLED:
         challenge_result = verify_challenge_response(audio_path, challenge_phrase)
 
-    # 6. Calibration thresholds
+    # 6. Calibration thresholds (strictly enforced floor at VOICE_ID_SIMILARITY_THRESHOLD)
     calibrator = get_voice_calibrator()
-    cal_thresh = getattr(calibrator.active_calibration, "verification_threshold", settings.VOICE_ID_SIMILARITY_THRESHOLD)
+    cal_thresh = max(
+        settings.VOICE_ID_SIMILARITY_THRESHOLD,
+        getattr(calibrator.active_calibration, "verification_threshold", settings.VOICE_ID_SIMILARITY_THRESHOLD)
+    )
     cal_margin = getattr(calibrator.active_calibration, "margin_threshold", settings.VOICE_ID_MARGIN_THRESHOLD)
 
     # 7. Central Decision Engine
@@ -586,7 +589,10 @@ def verify_speaker(
         challenge_result = verify_challenge_response(audio_path, challenge_phrase)
 
     calibrator = get_voice_calibrator()
-    cal_thresh = getattr(calibrator.active_calibration, "verification_threshold", settings.VOICE_ID_SIMILARITY_THRESHOLD)
+    cal_thresh = max(
+        settings.VOICE_ID_SIMILARITY_THRESHOLD,
+        getattr(calibrator.active_calibration, "verification_threshold", settings.VOICE_ID_SIMILARITY_THRESHOLD)
+    )
 
     decision_obj = authenticate(
         speaker_score=score,

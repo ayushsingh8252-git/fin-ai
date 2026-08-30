@@ -93,7 +93,7 @@ export function VoiceGateModal({ isOpen, onAuthenticated }: Props) {
       ...prev,
       "Extracting acoustic features from speech stream...",
       "Generating 192-dimensional ECAPA-TDNN speaker embedding...",
-      "Performing neural biometric comparison against enrolled database...",
+      "Comparing live biometric vector against enrolled profile for Ayush Singh...",
     ]);
 
     try {
@@ -101,7 +101,6 @@ export function VoiceGateModal({ isOpen, onAuthenticated }: Props) {
       formData.append("file", audioBlob, "voice_input.webm");
       formData.append("speaker_id", "ayush_singh");
 
-      // Try verify endpoint first
       const res = await fetch(`${API_URL}/api/v1/voice/verify`, {
         method: "POST",
         body: formData,
@@ -109,21 +108,33 @@ export function VoiceGateModal({ isOpen, onAuthenticated }: Props) {
 
       if (res.ok) {
         const data = await res.json();
-        const score = data.confidence || data.score || data.similarity || (data.decision_detail?.score) || 0.86;
-        const verified =
-          data.decision === "match" ||
-          data.verified === true ||
-          data.decision_detail?.decision === "OPEN" ||
-          (data.status === "ok" && data.decision !== "denied");
+        const score = typeof data.confidence === "number"
+          ? data.confidence
+          : typeof data.score === "number"
+          ? data.score
+          : typeof data.decision_detail?.score === "number"
+          ? data.decision_detail.score
+          : 0.0;
 
-        if (verified && data.decision !== "denied" && data.decision !== "error") {
+        const isExplicitMatch =
+          (data.decision === "match" || data.decision_detail?.decision === "OPEN") &&
+          data.decision !== "denied" &&
+          data.decision !== "no_match" &&
+          data.decision !== "mismatch" &&
+          data.decision !== "error";
+
+        const isScoreSufficient = score >= 0.72;
+        const verified = isExplicitMatch && isScoreSufficient;
+
+        if (verified) {
           const speakerName = data.speaker_name || "Ayush Singh";
+          const spoofStatus = data.spoofing?.overall_label || "live";
           setLogs((prev) => [
             ...prev,
-            `Cosine similarity match: ${(score * 100).toFixed(1)}% (Threshold: > 70.0%)`,
-            `Anti-spoofing check: PASS (${data.spoofing?.overall_label || "live"})`,
+            `Cosine similarity match: ${(score * 100).toFixed(1)}% (Threshold: >= 72.0%)`,
+            `Anti-spoofing check: PASS (${spoofStatus})`,
             `Speaker authenticated: ${speakerName}`,
-            "Access Granted. Unlocking Command Center...",
+            "Security Policy: ACCESS GRANTED. Unlocking Command Center...",
           ]);
           setStatus("success");
           setTimeout(() => {
@@ -132,11 +143,16 @@ export function VoiceGateModal({ isOpen, onAuthenticated }: Props) {
           return;
         } else {
           const failureMsg =
-            data.message || data.reason || data.decision_detail?.message || "Voice does not match enrolled profile.";
+            data.message ||
+            data.decision_detail?.message ||
+            data.reason ||
+            `Voice does not match enrolled profile (similarity: ${(score * 100).toFixed(1)}% < 72.0% required).`;
+
           setLogs((prev) => [
             ...prev,
-            `Similarity score: ${(score * 100).toFixed(1)}%`,
-            `Verification rejected: ${failureMsg}`,
+            `Acoustic similarity: ${(score * 100).toFixed(1)}% (Required: >= 72.0%)`,
+            `Security Decision: ACCESS DENIED`,
+            `Reason: ${failureMsg}`,
           ]);
           setErrorMessage(failureMsg);
           setStatus("error");
@@ -144,33 +160,26 @@ export function VoiceGateModal({ isOpen, onAuthenticated }: Props) {
         }
       } else {
         const errData = await res.json().catch(() => ({ detail: "Verification service error" }));
-        const detailMsg = errData.detail || errData.message || "Voice verification failed.";
+        const detailMsg = errData.detail || errData.message || "Voice verification service error.";
         
-        if (detailMsg.includes("not found") || detailMsg.includes("not fully enrolled")) {
-          setLogs((prev) => [
-            ...prev,
-            `Backend notice: ${detailMsg}`,
-          ]);
-          setErrorMessage("Speaker voiceprint not found. Please verify backend enrollment.");
-          setStatus("error");
-          return;
-        }
-
-        setLogs((prev) => [...prev, `Error: ${detailMsg}`]);
+        setLogs((prev) => [
+          ...prev,
+          `Backend error response (${res.status}): ${detailMsg}`,
+          "Security Policy: ACCESS DENIED",
+        ]);
         setErrorMessage(detailMsg);
         setStatus("error");
       }
-    } catch (e) {
-      // Local fallback if network disconnected
+    } catch (err: any) {
+      const errMsg = err?.message || "Network connection error.";
       setLogs((prev) => [
         ...prev,
-        "Acoustic vector matched: Ayush Singh (Confidence: 86.1%)",
-        "Identity verified. Unlocking Command Center...",
+        "Authentication Service Error: Unable to reach verification backend.",
+        `Detail: ${errMsg}`,
+        "Security Protocol: ACCESS DENIED",
       ]);
-      setStatus("success");
-      setTimeout(() => {
-        onAuthenticated("Ayush Singh");
-      }, 900);
+      setErrorMessage("Voice verification failed: Backend service unreachable. Access Denied.");
+      setStatus("error");
     }
   };
 
