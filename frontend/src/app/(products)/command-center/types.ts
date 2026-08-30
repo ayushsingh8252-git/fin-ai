@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════════════════════
-   Agent Command Center – Types
+   Agent Command Center – Types (Clean Monochrome / Agentic Architecture)
    ═══════════════════════════════════════════════════════════════════════ */
 
 export type MissionPhase =
@@ -7,15 +7,19 @@ export type MissionPhase =
   | "planning"
   | "planned"
   | "executing"
+  | "waiting_approval"
   | "completed"
   | "failed";
 
 export type StepStatus =
   | "pending"
   | "running"
+  | "waiting_approval"
   | "completed"
   | "failed"
   | "skipped";
+
+export type WorkspaceViewMode = "graph" | "desktop" | "terminal" | "artifacts";
 
 /** A single step as returned by POST /api/v1/agent/plan */
 export interface PlanStep {
@@ -27,7 +31,7 @@ export interface PlanStep {
 
 /** Runtime execution state for a step */
 export interface ExecutionStep {
-  index: number;            // 1-indexed
+  index: number; // 1-indexed
   connector: string;
   tool: string;
   params: Record<string, unknown>;
@@ -39,6 +43,29 @@ export interface ExecutionStep {
   startedAt?: number;
   completedAt?: number;
   durationMs?: number;
+  thought?: string;
+}
+
+/** Uploaded document / resume metadata */
+export interface AttachedDocument {
+  name: string;
+  size: number;
+  type: string;
+  file?: File;
+  previewUrl?: string;
+  rawText?: string;
+  isSample?: boolean;
+}
+
+/** Human-in-the-loop approval request */
+export interface ApprovalDialogState {
+  stepIndex: number;
+  type: "whatsapp" | "call" | "email" | "qualification";
+  title: string;
+  description: string;
+  recipient: string;
+  messageContent?: string;
+  additionalParams?: Record<string, unknown>;
 }
 
 /** Full plan returned by the backend */
@@ -51,13 +78,18 @@ export interface Plan {
 export interface MissionState {
   phase: MissionPhase;
   prompt: string;
+  jobDescription: string;
+  attachedDoc: AttachedDocument | null;
   plan: Plan | null;
   executionSteps: ExecutionStep[];
   selectedNodeId: string | null;
-  activeStepIndex: number | null;  // 1-indexed
+  activeStepIndex: number | null; // 1-indexed
   completedAt?: number;
   startedAt?: number;
   totalDurationMs?: number;
+  approvalDialog: ApprovalDialogState | null;
+  leftActiveTab: "trace" | "inspector" | "artifacts";
+  viewMode: WorkspaceViewMode;
 }
 
 /** Tool from the unified catalog */
@@ -77,6 +109,7 @@ export interface CatalogTool {
 
 /** Node data for React Flow */
 export interface AgentNodeData {
+  [key: string]: unknown;
   stepIndex: number;
   connector: string;
   connectorDisplayName: string;
@@ -93,26 +126,27 @@ export interface AgentNodeData {
 
 /** Edge data for React Flow */
 export interface FlowEdgeData {
+  [key: string]: unknown;
   label?: string;
   isActive?: boolean;
   isCompleted?: boolean;
 }
 
-/** Demo plan for fallback */
+/** Demo plan based on real candidate evaluation */
 export const DEMO_PLAN: Plan = {
   steps: [
     {
       connector: "hiring",
       tool: "get_candidate_profile",
-      params: { file_path: "uploads/resume.pdf", filename: "resume.pdf" },
+      params: { file_path: "uploads/hiring/ayush_singh_resume.pdf", filename: "ayush-singh-resume.pdf" },
     },
     {
       connector: "hiring",
       tool: "match_candidate_requirement",
       params: {
         candidate: "$step1.candidate",
-        requirement: "Senior Full Stack Engineer with 5+ years React/Node.js experience",
-        role_title: "Senior Full Stack Engineer",
+        requirement: "Staff / Senior Full Stack AI Engineer with Next.js, Python, FastAPI, and Agentic AI Architecture experience.",
+        role_title: "Senior AI Systems Engineer",
       },
     },
     {
@@ -126,7 +160,7 @@ export const DEMO_PLAN: Plan = {
       params: {
         candidate_name: "$step1.candidate.name",
         candidate_email: "$step1.candidate.email",
-        role_title: "Senior Full Stack Engineer",
+        role_title: "Senior AI Systems Engineer",
       },
     },
     {
@@ -134,78 +168,91 @@ export const DEMO_PLAN: Plan = {
       tool: "send_whatsapp_message",
       params: {
         recipient: "$step1.candidate.phone",
-        message: "Hi! Congratulations — you've been shortlisted for the Senior Full Stack Engineer role. We'd love to schedule a follow-up interview. Please reply with your availability.",
+        message: "Hi Ayush! Your profile has been shortlisted for the Senior AI Systems Engineer role (Score: 89/100). We would like to coordinate a technical discussion. Please let us know your availability.",
       },
     },
   ],
 };
 
-/** Demo execution results for fallback */
+/** Demo execution results */
 export const DEMO_RESULTS: Record<number, Record<string, unknown>> = {
   1: {
     candidate: {
       name: "Ayush Singh",
-      email: "ayush@example.com",
-      phone: "+919876543210",
+      email: "ayush.singh@agenticflow.ai",
+      phone: "+91 98765 43210",
       experience: "5+ years",
-      skills: ["React", "Node.js", "TypeScript", "Python", "AWS", "Docker", "PostgreSQL"],
-      summary: "Senior software engineer with extensive experience in full-stack development, specializing in React and Node.js ecosystems. Strong background in cloud architecture and DevOps practices.",
+      skills: [
+        "Python",
+        "FastAPI",
+        "React",
+        "Next.js",
+        "TypeScript",
+        "LLM Orchestration",
+        "PyTorch",
+        "Docker",
+        "PostgreSQL",
+        "Vector Databases",
+      ],
+      summary:
+        "Full-stack AI systems engineer specializing in multi-agent orchestration, high-throughput retrieval engines, and real-time streaming architectures. Strong background in scalable backend engineering and intuitive frontend interfaces.",
       ats_score: 92,
     },
-    scan_id: "demo-scan-001",
+    scan_id: "scan_candidate_09a4f",
+    status: "parsed",
   },
   2: {
-    match_score: 87,
+    match_score: 89,
     match_grade: "Strong Match",
     strengths: [
-      "Extensive React/Node.js experience (5+ years)",
-      "Strong TypeScript skills",
-      "Cloud architecture expertise (AWS)",
-      "Full-stack capability with modern frameworks",
+      "Extensive experience in multi-agent orchestration and FastAPI backends",
+      "Production Next.js 16 and TypeScript expertise",
+      "Direct experience building rule engines, RAG pipelines, and voice agents",
+      "Solid understanding of vector embeddings and cloud architecture",
     ],
     gaps: [
-      "No explicit mention of GraphQL experience",
-      "Limited mobile development background",
+      "Prioritize verifying production distributed tracing depth",
     ],
     recommendation: "PROCEED",
-    summary: "Candidate demonstrates strong alignment with the Senior Full Stack Engineer role requirements. Technical depth in React and Node.js exceeds expectations, with additional strengths in cloud architecture.",
+    summary:
+      "Candidate profile shows 89% alignment with the Senior AI Systems Engineer JD. Demonstrates deep domain expertise in agentic workflows, API design, and modern UI engineering.",
   },
   3: {
-    risk_score: 12,
+    risk_score: 8,
     verdict: "likely_genuine",
-    explanation: "Document analysis shows consistent formatting, valid metadata timestamps, and no signs of tampering. Text alignment and font usage are consistent throughout. No red flags detected in identity verification checks.",
+    explanation:
+      "Document metadata, text alignment, and PDF font metrics are consistent with standard compilation. Identity consistency check passed with 0 anomaly flags.",
     key_concerns: [],
     steps: [
-      { name: "Metadata Analysis", status: "passed", score: 95 },
-      { name: "OCR Verification", status: "passed", score: 88 },
-      { name: "Font Analysis", status: "passed", score: 91 },
-      { name: "ELA Detection", status: "passed", score: 97 },
-      { name: "Identity Check", status: "passed", score: 90 },
+      { name: "Document Structure Analysis", status: "passed", score: 98 },
+      { name: "Font & Alignment Forensics", status: "passed", score: 94 },
+      { name: "Metadata Timestamp Triangulation", status: "passed", score: 96 },
+      { name: "Chronology & Employment Verification", status: "passed", score: 92 },
     ],
   },
   4: {
-    scorecard_id: "sc-demo-001",
+    scorecard_id: "sc_901928_eval",
     candidate_name: "Ayush Singh",
-    overall_score: 87,
-    skills_score: 92,
-    experience_score: 88,
-    education_score: 81,
-    cultural_fit_score: 85,
+    overall_score: 89,
+    skills_score: 94,
+    experience_score: 90,
+    education_score: 84,
+    cultural_fit_score: 88,
     recommendation: "PROCEED",
     strengths: [
-      "Exceptional technical skills alignment",
-      "Strong problem-solving demonstrated in past projects",
-      "Active open-source contributor",
+      "Technical alignment exceeds benchmark criteria",
+      "Demonstrated ability to deploy complete agent products",
+      "Strong architectural decision-making",
     ],
     weaknesses: [
-      "Could benefit from more leadership experience",
-      "Limited exposure to GraphQL",
+      "Schedule follow-up on specific enterprise auth frameworks",
     ],
   },
   5: {
-    message_id: "wamid.demo001",
-    status: "sent",
-    recipient: "+919876543210",
-    timestamp: new Date().toISOString(),
+    message_id: "wamid.HBgLMTkwMzg2ODk1FQIAEhgg...",
+    status: "delivered",
+    recipient: "+91 98765 43210",
+    delivery_timestamp: new Date().toISOString(),
+    channel: "WhatsApp Business Cloud API",
   },
 };

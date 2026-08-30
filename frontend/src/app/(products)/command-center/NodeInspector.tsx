@@ -316,7 +316,7 @@ function ScoreVisualization({ result }: { result: Record<string, unknown> }) {
       ))}
 
       {/* Strengths / weaknesses */}
-      {result.strengths && Array.isArray(result.strengths) && (
+      {Array.isArray(result.strengths) ? (
         <div style={{ marginTop: 10 }}>
           <div style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", marginBottom: 4 }}>Strengths</div>
           {(result.strengths as string[]).slice(0, 4).map((s, i) => (
@@ -325,7 +325,7 @@ function ScoreVisualization({ result }: { result: Record<string, unknown> }) {
             </div>
           ))}
         </div>
-      )}
+      ) : null}
     </div>
   );
 }

@@ -1,123 +1,152 @@
 /* ═══════════════════════════════════════════════════════════════════════
-   Icon & Category Resolver
-   Maps connector/tool names → Lucide icon names + accent colors.
-   Keyword-based — no need to manually register 1000+ tools.
+   Icon & Category Resolver (Clean Monochrome / SVG Architecture)
+   Maps connector/tool names to pure Lucide SVG icons and subtle monochrome tokens.
    ═══════════════════════════════════════════════════════════════════════ */
 import {
-  MessageSquare, Mail, Calendar, Search, Shield, Phone, Brain, Globe,
-  Database, Briefcase, UserCheck, FileText, Video, GitBranch, Bug,
-  Cloud, Send, ClipboardCheck, ShieldCheck, Fingerprint, Mic, BarChart3,
-  Zap, Settings, type LucideIcon,
+  MessageSquare,
+  Mail,
+  Calendar,
+  ShieldCheck,
+  PhoneCall,
+  Search,
+  FileText,
+  UserCheck,
+  CheckCircle2,
+  Terminal,
+  Cpu,
+  Layers,
+  Database,
+  Globe,
+  GitBranch,
+  Cloud,
+  Send,
+  type LucideIcon,
 } from "lucide-react";
 
 export interface ConnectorMeta {
   icon: LucideIcon;
-  color: string;         // Tailwind text color class
-  bgColor: string;       // Tailwind bg color class  
-  glowColor: string;     // CSS color for node glow
-  borderColor: string;   // CSS border color
-  label: string;         // Friendly display name
-  category: string;      // Category label
+  color: string; // Tailwind text color class
+  bgColor: string; // Tailwind bg class
+  glowColor: string; // CSS color for active highlight
+  borderColor: string; // CSS border color
+  label: string; // Friendly display label
+  category: string; // Category label
 }
 
-/** Priority-ordered keyword → meta mapping. First match wins. */
+/** Keyword -> metadata mapping */
 const KEYWORD_MAP: Array<{ keywords: string[]; meta: Omit<ConnectorMeta, "label" | "category"> }> = [
   {
     keywords: ["whatsapp"],
-    meta: { icon: MessageSquare, color: "text-emerald-400", bgColor: "bg-emerald-500/10", glowColor: "rgba(52,211,153,0.35)", borderColor: "rgba(52,211,153,0.25)" },
+    meta: {
+      icon: MessageSquare,
+      color: "text-emerald-400",
+      bgColor: "bg-emerald-500/10",
+      glowColor: "rgba(16, 185, 129, 0.25)",
+      borderColor: "rgba(16, 185, 129, 0.2)",
+    },
   },
   {
     keywords: ["gmail", "email", "mail"],
-    meta: { icon: Mail, color: "text-red-400", bgColor: "bg-red-500/10", glowColor: "rgba(248,113,113,0.35)", borderColor: "rgba(248,113,113,0.25)" },
+    meta: {
+      icon: Mail,
+      color: "text-zinc-200",
+      bgColor: "bg-zinc-800",
+      glowColor: "rgba(255, 255, 255, 0.15)",
+      borderColor: "rgba(255, 255, 255, 0.12)",
+    },
   },
   {
     keywords: ["calendar", "meet", "schedule"],
-    meta: { icon: Calendar, color: "text-blue-400", bgColor: "bg-blue-500/10", glowColor: "rgba(96,165,250,0.35)", borderColor: "rgba(96,165,250,0.25)" },
+    meta: {
+      icon: Calendar,
+      color: "text-zinc-200",
+      bgColor: "bg-zinc-800",
+      glowColor: "rgba(255, 255, 255, 0.15)",
+      borderColor: "rgba(255, 255, 255, 0.12)",
+    },
   },
   {
     keywords: ["fraud", "integrity", "forensic"],
-    meta: { icon: Shield, color: "text-amber-400", bgColor: "bg-amber-500/10", glowColor: "rgba(251,191,36,0.35)", borderColor: "rgba(251,191,36,0.25)" },
+    meta: {
+      icon: ShieldCheck,
+      color: "text-amber-400",
+      bgColor: "bg-amber-500/10",
+      glowColor: "rgba(245, 158, 11, 0.25)",
+      borderColor: "rgba(245, 158, 11, 0.2)",
+    },
   },
   {
     keywords: ["telephonic", "phone", "call", "voice"],
-    meta: { icon: Phone, color: "text-violet-400", bgColor: "bg-violet-500/10", glowColor: "rgba(167,139,250,0.35)", borderColor: "rgba(167,139,250,0.25)" },
+    meta: {
+      icon: PhoneCall,
+      color: "text-zinc-200",
+      bgColor: "bg-zinc-800",
+      glowColor: "rgba(255, 255, 255, 0.15)",
+      borderColor: "rgba(255, 255, 255, 0.12)",
+    },
   },
   {
     keywords: ["screening", "screen", "interview"],
-    meta: { icon: ClipboardCheck, color: "text-cyan-400", bgColor: "bg-cyan-500/10", glowColor: "rgba(34,211,238,0.35)", borderColor: "rgba(34,211,238,0.25)" },
+    meta: {
+      icon: UserCheck,
+      color: "text-zinc-200",
+      bgColor: "bg-zinc-800",
+      glowColor: "rgba(255, 255, 255, 0.15)",
+      borderColor: "rgba(255, 255, 255, 0.12)",
+    },
   },
   {
-    keywords: ["hiring", "candidate", "ats", "recruit", "scorecard", "assignment"],
-    meta: { icon: Briefcase, color: "text-blue-400", bgColor: "bg-blue-500/10", glowColor: "rgba(96,165,250,0.35)", borderColor: "rgba(96,165,250,0.25)" },
-  },
-  {
-    keywords: ["verification", "verify", "identity"],
-    meta: { icon: ShieldCheck, color: "text-teal-400", bgColor: "bg-teal-500/10", glowColor: "rgba(45,212,191,0.35)", borderColor: "rgba(45,212,191,0.25)" },
-  },
-  {
-    keywords: ["voice_id", "speaker", "fingerprint"],
-    meta: { icon: Fingerprint, color: "text-pink-400", bgColor: "bg-pink-500/10", glowColor: "rgba(244,114,182,0.35)", borderColor: "rgba(244,114,182,0.25)" },
+    keywords: ["hiring", "candidate", "ats", "recruit", "scorecard", "assignment", "profile"],
+    meta: {
+      icon: FileText,
+      color: "text-zinc-100",
+      bgColor: "bg-zinc-800/80",
+      glowColor: "rgba(255, 255, 255, 0.2)",
+      borderColor: "rgba(255, 255, 255, 0.15)",
+    },
   },
   {
     keywords: ["rag", "document", "knowledge", "query"],
-    meta: { icon: Database, color: "text-indigo-400", bgColor: "bg-indigo-500/10", glowColor: "rgba(129,140,248,0.35)", borderColor: "rgba(129,140,248,0.25)" },
+    meta: {
+      icon: Database,
+      color: "text-zinc-200",
+      bgColor: "bg-zinc-800",
+      glowColor: "rgba(255, 255, 255, 0.15)",
+      borderColor: "rgba(255, 255, 255, 0.12)",
+    },
   },
   {
-    keywords: ["slack"],
-    meta: { icon: MessageSquare, color: "text-purple-400", bgColor: "bg-purple-500/10", glowColor: "rgba(192,132,252,0.35)", borderColor: "rgba(192,132,252,0.25)" },
+    keywords: ["github", "repo", "git"],
+    meta: {
+      icon: GitBranch,
+      color: "text-zinc-200",
+      bgColor: "bg-zinc-800",
+      glowColor: "rgba(255, 255, 255, 0.15)",
+      borderColor: "rgba(255, 255, 255, 0.12)",
+    },
   },
   {
-    keywords: ["teams", "microsoft"],
-    meta: { icon: Video, color: "text-blue-400", bgColor: "bg-blue-500/10", glowColor: "rgba(96,165,250,0.35)", borderColor: "rgba(96,165,250,0.25)" },
-  },
-  {
-    keywords: ["jira", "issue"],
-    meta: { icon: Bug, color: "text-blue-400", bgColor: "bg-blue-500/10", glowColor: "rgba(96,165,250,0.35)", borderColor: "rgba(96,165,250,0.25)" },
-  },
-  {
-    keywords: ["github", "repo"],
-    meta: { icon: GitBranch, color: "text-gray-300", bgColor: "bg-gray-500/10", glowColor: "rgba(209,213,219,0.35)", borderColor: "rgba(209,213,219,0.25)" },
-  },
-  {
-    keywords: ["salesforce", "crm"],
-    meta: { icon: Cloud, color: "text-sky-400", bgColor: "bg-sky-500/10", glowColor: "rgba(56,189,248,0.35)", borderColor: "rgba(56,189,248,0.25)" },
-  },
-  {
-    keywords: ["sap", "erp"],
-    meta: { icon: BarChart3, color: "text-yellow-400", bgColor: "bg-yellow-500/10", glowColor: "rgba(250,204,21,0.35)", borderColor: "rgba(250,204,21,0.25)" },
-  },
-  {
-    keywords: ["sharepoint", "drive", "file", "upload"],
-    meta: { icon: FileText, color: "text-teal-400", bgColor: "bg-teal-500/10", glowColor: "rgba(45,212,191,0.35)", borderColor: "rgba(45,212,191,0.25)" },
-  },
-  {
-    keywords: ["sheets", "spreadsheet"],
-    meta: { icon: FileText, color: "text-green-400", bgColor: "bg-green-500/10", glowColor: "rgba(74,222,128,0.35)", borderColor: "rgba(74,222,128,0.25)" },
-  },
-  {
-    keywords: ["docs", "document", "write"],
-    meta: { icon: FileText, color: "text-blue-300", bgColor: "bg-blue-500/10", glowColor: "rgba(147,197,253,0.35)", borderColor: "rgba(147,197,253,0.25)" },
-  },
-  {
-    keywords: ["google"],
-    meta: { icon: Globe, color: "text-blue-400", bgColor: "bg-blue-500/10", glowColor: "rgba(96,165,250,0.35)", borderColor: "rgba(96,165,250,0.25)" },
-  },
-  {
-    keywords: ["web", "search", "browse"],
-    meta: { icon: Globe, color: "text-emerald-400", bgColor: "bg-emerald-500/10", glowColor: "rgba(52,211,153,0.35)", borderColor: "rgba(52,211,153,0.25)" },
+    keywords: ["web", "search", "browse", "google"],
+    meta: {
+      icon: Globe,
+      color: "text-zinc-200",
+      bgColor: "bg-zinc-800",
+      glowColor: "rgba(255, 255, 255, 0.15)",
+      borderColor: "rgba(255, 255, 255, 0.12)",
+    },
   },
 ];
 
 const DEFAULT_META: Omit<ConnectorMeta, "label" | "category"> = {
-  icon: Zap,
-  color: "text-zinc-400",
-  bgColor: "bg-zinc-500/10",
-  glowColor: "rgba(161,161,170,0.35)",
-  borderColor: "rgba(161,161,170,0.25)",
+  icon: Cpu,
+  color: "text-zinc-300",
+  bgColor: "bg-zinc-800/60",
+  glowColor: "rgba(255, 255, 255, 0.12)",
+  borderColor: "rgba(255, 255, 255, 0.1)",
 };
 
 /**
- * Resolve connector metadata from connector name, tool name, or display name.
+ * Resolve connector metadata cleanly.
  */
 export function resolveConnectorMeta(
   connectorName: string,
@@ -143,36 +172,29 @@ export function resolveConnectorMeta(
   };
 }
 
-/** Turn connector_name → "Connector Name" */
 function formatConnectorName(name: string): string {
   return name
     .replace(/_/g, " ")
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-/** Categorize a connector into a higher-level group */
 function categorizeConnector(name: string): string {
   const n = name.toLowerCase();
-  if (["hiring", "screening", "telephonic", "fraud", "verification", "voice_id"].some((k) => n.includes(k)))
+  if (["hiring", "screening", "telephonic", "fraud", "verification"].some((k) => n.includes(k)))
     return "Agent";
-  if (["rag", "knowledge"].some((k) => n.includes(k))) return "Intelligence";
-  if (["gmail", "calendar", "sheets", "docs", "drive", "google"].some((k) => n.includes(k))) return "Google";
-  if (["slack", "teams", "jira", "github", "salesforce", "sap", "sharepoint"].some((k) => n.includes(k)))
-    return "Enterprise";
-  if (["whatsapp"].includes(n)) return "Communication";
+  if (["rag", "knowledge"].some((k) => n.includes(k))) return "Engine";
+  if (["gmail", "calendar", "sheets", "docs", "drive", "google"].some((k) => n.includes(k))) return "Integration";
+  if (["whatsapp"].includes(n)) return "Outreach";
   return "Tool";
 }
 
-/** Derive a short data-flow label from step params (for edge labels) */
 export function deriveEdgeLabel(
   sourceStep: { connector: string; tool: string },
   targetStep: { connector: string; tool: string; params: Record<string, unknown> }
 ): string | undefined {
-  // Check if any param in the target references the source
   const refs: string[] = [];
   const walk = (val: unknown) => {
     if (typeof val === "string" && val.startsWith("$step")) {
-      // Extract the field name from $stepN.field.subfield
       const parts = val.split(".");
       if (parts.length > 1) {
         refs.push(parts.slice(1).join("."));
@@ -188,7 +210,6 @@ export function deriveEdgeLabel(
   return refs.slice(0, 2).join(", ");
 }
 
-/** Format a tool name for display */
 export function formatToolName(tool: string): string {
   return tool
     .replace(/_/g, " ")
