@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ShieldCheck, Mic, Loader2, AlertTriangle, Volume2, MessageSquare,
-  Send, LogOut, ScreenShare, Download,
+  Send, LogOut, ScreenShare, Download, CheckCircle2,
 } from "lucide-react";
 import { useProctoring, type FaceBox, type ProctoringState } from "@/hooks/useProctoring";
 import type {
@@ -673,6 +673,20 @@ export default function InterviewRoom({
     setPhase("setup");
   }, [stopProctoring, stopVadLoop, stopScreenRecording]);
 
+  const handleEndInterviewAndEvaluate = useCallback(async () => {
+    stopProctoring();
+    stopVadLoop();
+    stopScreenRecording();
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+      mediaRecorderRef.current.onstop = null;
+      mediaRecorderRef.current.stop();
+    }
+    micStreamRef.current?.getTracks().forEach((t) => t.stop());
+    audioElRef.current?.pause();
+
+    await runEvaluation(transcript);
+  }, [stopProctoring, stopVadLoop, stopScreenRecording, runEvaluation, transcript]);
+
   const handleResumeChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0] || null;
     if (!file) {
@@ -870,6 +884,45 @@ export default function InterviewRoom({
     );
   }
 
+  if (phase === "complete" && evaluation) {
+    return (
+      <div className="mx-auto w-full max-w-4xl py-10 px-4 space-y-6">
+        <div className="flex items-center justify-between border-b border-zinc-200 pb-5">
+          <div>
+            <div className="flex items-center gap-2 text-xs font-mono font-bold text-emerald-700 uppercase">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+              <span>Interview Complete · Candidate Assessment Report</span>
+            </div>
+            <h1 className="text-2xl font-extrabold text-zinc-900 mt-1">
+              Evaluation for {candidateName || "Ayush Singh"}
+            </h1>
+            <p className="text-xs text-zinc-500 mt-0.5">
+              Role: {roleTitle || DEFAULT_ROLE} · Generated at {new Date().toLocaleTimeString()}
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            {screenRecordingBlob && (
+              <button
+                onClick={saveScreenRecording}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-zinc-200 bg-white px-3.5 py-2 text-xs font-semibold text-zinc-700 shadow-sm hover:bg-zinc-50"
+              >
+                <Download className="w-3.5 h-3.5 text-blue-600" /> Download Recording
+              </button>
+            )}
+            <button
+              onClick={() => setPhase("setup")}
+              className="rounded-xl bg-blue-600 px-4 py-2 text-xs font-semibold text-white shadow-sm hover:bg-blue-700"
+            >
+              Start New Screen
+            </button>
+          </div>
+        </div>
+
+        <InterviewReport evaluation={evaluation} />
+      </div>
+    );
+  }
+
   return (
     <div className="fixed inset-0 z-[100] bg-zinc-950 flex flex-col">
       <div className="flex items-center justify-between px-4 sm:px-6 py-3 border-b border-white/10 text-white">
@@ -884,13 +937,19 @@ export default function InterviewRoom({
             </div>
           </div>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           <span className="text-xs font-mono text-zinc-400 hidden sm:inline">{formatClock(elapsedMs)}</span>
           <button
-            onClick={stopEverything}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-red-400/30 bg-red-500/10 px-4 py-2 text-sm font-semibold text-red-300 transition hover:bg-red-500/20"
+            onClick={handleEndInterviewAndEvaluate}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-400/30 bg-emerald-500/10 px-3.5 py-1.5 text-xs font-semibold text-emerald-300 transition hover:bg-emerald-500/20"
           >
-            <LogOut className="w-3.5 h-3.5" /> End Session
+            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> End & Get Report
+          </button>
+          <button
+            onClick={stopEverything}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-zinc-400 transition hover:bg-white/10 hover:text-white"
+          >
+            <LogOut className="w-3.5 h-3.5" /> Exit
           </button>
         </div>
       </div>

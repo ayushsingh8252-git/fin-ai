@@ -172,11 +172,10 @@ def extract_voice_embedding(audio_path: str) -> Dict[str, Any]:
     import torch
     import torchaudio
 
-    from .audio_service import convert_to_wav
-    wav_path = convert_to_wav(audio_path)
+    from .audio_service import load_audio_waveform
 
     try:
-        waveform, sample_rate = torchaudio.load(wav_path)
+        waveform, sample_rate = load_audio_waveform(audio_path)
     except Exception as e:
         return {"error": f"Failed to load audio: {e}"}
 
@@ -443,9 +442,8 @@ def identify_speaker(
     margin = top["score"] - runner_up_score
 
     # 4. Anti-spoofing
-    from .audio_service import convert_to_wav
-    wav_path = convert_to_wav(audio_path)
-    waveform, sr = torchaudio.load(wav_path)
+    from .audio_service import load_audio_waveform
+    waveform, sr = load_audio_waveform(audio_path)
     if waveform.shape[0] > 1:
         waveform = waveform.mean(dim=0)
     else:
@@ -570,9 +568,8 @@ def verify_speaker(
     speech_dur = result["speech_duration"]
     quality = result.get("quality", {})
 
-    from .audio_service import convert_to_wav
-    wav_path = convert_to_wav(audio_path)
-    waveform, sr = torchaudio.load(wav_path)
+    from .audio_service import load_audio_waveform
+    waveform, sr = load_audio_waveform(audio_path)
     if waveform.shape[0] > 1:
         waveform = waveform.mean(dim=0)
     else:

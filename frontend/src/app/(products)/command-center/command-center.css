@@ -380,3 +380,59 @@
 .cc-flow .react-flow__attribution {
   display: none !important;
 }
+
+/* ── Live Planning Neural Visualizer Keyframes ── */
+@keyframes cc-scanline {
+  0% {
+    transform: translateY(-100%);
+    opacity: 0.1;
+  }
+  50% {
+    opacity: 0.7;
+  }
+  100% {
+    transform: translateY(100vh);
+    opacity: 0.1;
+  }
+}
+
+@keyframes cc-radar-sweep {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes cc-dash-flow {
+  from {
+    stroke-dashoffset: 24;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes cc-hologram-pulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 0.7;
+  }
+  50% {
+    transform: scale(1.08);
+    opacity: 1;
+  }
+}
+
+.cc-scanline-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, transparent, rgba(56, 189, 248, 0.8), rgba(255, 255, 255, 0.9), rgba(56, 189, 248, 0.8), transparent);
+  box-shadow: 0 0 20px rgba(56, 189, 248, 0.8);
+  animation: cc-scanline 3.2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  pointer-events: none;
+  z-index: 5;
+}

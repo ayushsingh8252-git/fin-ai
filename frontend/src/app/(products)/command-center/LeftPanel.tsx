@@ -25,6 +25,7 @@ import {
   ArrowRight,
   User,
   Zap,
+  Play,
 } from "lucide-react";
 import { resolveConnectorMeta, formatToolName } from "./iconResolver";
 import type {
@@ -43,6 +44,10 @@ interface Props {
   catalogTools: CatalogTool[];
   onReset: () => void;
   onTabChange: (tab: "trace" | "inspector" | "artifacts") => void;
+  executionMode?: "auto" | "manual";
+  onToggleExecutionMode?: () => void;
+  onExecuteStep?: (stepIndex: number) => void;
+  onExecuteNextStep?: () => void;
 }
 
 export default function LeftPanel({
@@ -53,6 +58,10 @@ export default function LeftPanel({
   catalogTools,
   onReset,
   onTabChange,
+  executionMode = "auto",
+  onToggleExecutionMode,
+  onExecuteStep,
+  onExecuteNextStep,
 }: Props) {
   const [followUpText, setFollowUpText] = useState("");
   const [editPhone, setEditPhone] = useState("+91 98765 43210");
@@ -377,10 +386,51 @@ export default function LeftPanel({
                   fontFamily: "var(--font-geist-mono), monospace",
                 }}
               >
-                <span>EXECUTION TRACE</span>
-                <span>
-                  {completedSteps}/{totalSteps} COMPLETED
-                </span>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span>EXECUTION TRACE</span>
+                  <button
+                    onClick={onToggleExecutionMode}
+                    style={{
+                      padding: "2px 6px",
+                      borderRadius: 4,
+                      background: executionMode === "manual" ? "rgba(56, 189, 248, 0.15)" : "rgba(255, 255, 255, 0.05)",
+                      border: `1px solid ${executionMode === "manual" ? "rgba(56, 189, 248, 0.3)" : "rgba(255, 255, 255, 0.1)"}`,
+                      color: executionMode === "manual" ? "#38bdf8" : "#a1a1aa",
+                      fontSize: 9,
+                      fontFamily: "var(--font-geist-mono), monospace",
+                      cursor: "pointer",
+                    }}
+                    title="Click to toggle Auto / Manual execution mode"
+                  >
+                    {executionMode === "manual" ? "MANUAL" : "AUTO"}
+                  </button>
+                </div>
+
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  {executionMode === "manual" && state.executionSteps.some((s) => s.status === "pending") && (
+                    <button
+                      onClick={onExecuteNextStep}
+                      style={{
+                        padding: "2px 8px",
+                        borderRadius: 4,
+                        background: "#2563eb",
+                        color: "#ffffff",
+                        fontSize: 10,
+                        fontWeight: 600,
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 4,
+                        border: "none",
+                        cursor: "pointer",
+                      }}
+                    >
+                      <Play size={8} fill="currentColor" /> Run Next
+                    </button>
+                  )}
+                  <span>
+                    {completedSteps}/{totalSteps} COMPLETED
+                  </span>
+                </div>
               </div>
 
               {state.executionSteps.map((step) => {
@@ -412,17 +462,44 @@ export default function LeftPanel({
                             {formatToolName(step.tool)}
                           </span>
 
-                          <span
-                            style={{
-                              fontSize: 10,
-                              fontFamily: "var(--font-geist-mono), monospace",
-                              color: "#71717a",
-                            }}
-                          >
-                            {step.durationMs != null
-                              ? `${(step.durationMs / 1000).toFixed(1)}s`
-                              : step.status}
-                          </span>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                            {step.status === "pending" && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onExecuteStep?.(step.index);
+                                }}
+                                style={{
+                                  padding: "2px 6px",
+                                  borderRadius: 4,
+                                  background: "rgba(37, 99, 235, 0.2)",
+                                  border: "1px solid rgba(59, 130, 246, 0.4)",
+                                  color: "#93c5fd",
+                                  fontSize: 9,
+                                  fontFamily: "var(--font-geist-mono), monospace",
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: 3,
+                                  cursor: "pointer",
+                                }}
+                                title="Execute this node"
+                              >
+                                <Play size={8} fill="currentColor" /> Run
+                              </button>
+                            )}
+
+                            <span
+                              style={{
+                                fontSize: 10,
+                                fontFamily: "var(--font-geist-mono), monospace",
+                                color: "#71717a",
+                              }}
+                            >
+                              {step.durationMs != null
+                                ? `${(step.durationMs / 1000).toFixed(1)}s`
+                                : step.status}
+                            </span>
+                          </div>
                         </div>
 
                         <div
@@ -719,8 +796,10 @@ function renderStepResultSnippet(result: Record<string, unknown>): React.ReactNo
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <span style={{ color: "#34d399", fontWeight: 600 }}>✓ WhatsApp Delivered</span>
-          <span style={{ color: "#71717a", fontSize: 10 }}>{String(result.recipient || "+91 98765 43210")}</span>
+          <span style={{ color: "#34d399", fontWeight: 600, display: "flex", alignItems: "center", gap: 4 }}>
+            <CheckCircle2 size={12} className="text-emerald-400" /> WhatsApp Delivered
+          </span>
+          <span style={{ color: "#71717a", fontSize: 10 }}>{String(result.recipient || "+91 7209602122")}</span>
         </div>
         <div
           style={{
@@ -743,7 +822,9 @@ function renderStepResultSnippet(result: Record<string, unknown>): React.ReactNo
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <span style={{ color: "#38bdf8", fontWeight: 600 }}>✓ Screening Call Completed ({String(result.duration_seconds || 134)}s)</span>
+          <span style={{ color: "#38bdf8", fontWeight: 600, display: "flex", alignItems: "center", gap: 4 }}>
+            <CheckCircle2 size={12} className="text-sky-400" /> Screening Call Completed ({String(result.duration_seconds || 134)}s)
+          </span>
           <span style={{ color: "#34d399", fontSize: 10 }}>Score: {String(result.technical_score || 91)}%</span>
         </div>
         <div style={{ color: "#a1a1aa", fontSize: 11, lineHeight: 1.4 }}>
@@ -758,11 +839,13 @@ function renderStepResultSnippet(result: Record<string, unknown>): React.ReactNo
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <span style={{ color: "#34d399", fontWeight: 600 }}>✓ Background Verified</span>
+          <span style={{ color: "#34d399", fontWeight: 600, display: "flex", alignItems: "center", gap: 4 }}>
+            <CheckCircle2 size={12} className="text-emerald-400" /> Background Verified
+          </span>
           <span style={{ color: "#71717a", fontSize: 10 }}>Signal: {String(leg?.score || 92)}/100</span>
         </div>
         <div style={{ color: "#a1a1aa", fontSize: 10 }}>
-          Company: {String(result.company || "AgenticFlow AI")} • Official Domain Verified • 0 Scam Flags
+          Parul University CS Graduate • OpneEyes AI Backend • 0 Anomaly Flags
         </div>
       </div>
     );

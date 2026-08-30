@@ -143,13 +143,11 @@ export default function LandingPage() {
   return (
     <div className="min-h-screen bg-white text-zinc-900 overflow-x-hidden bg-white-grid relative selection:bg-blue-500/20">
       {/* ─── NAVIGATION ─── */}
-      <nav className="fixed top-0 left-0 right-0 z-40">
-        <div className="absolute inset-0 bg-white/80 backdrop-blur-md border-b border-zinc-200/80" />
-        <div className="relative max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
-          <Link href="/" className="flex items-center gap-2.5 group">
-            <BrandMark variant="dark" />
-            <span className="font-bold text-[16px] tracking-tight text-zinc-900">
-              Fin AI
+      <nav className="fixed top-0 left-0 right-0 z-40 bg-white/90 backdrop-blur-md border-b border-zinc-200/80">
+        <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
+          <Link href="/" className="flex items-center group">
+            <span className="font-extrabold text-[20px] tracking-tight text-zinc-900 font-sans">
+              fin ai
             </span>
           </Link>
 
@@ -165,29 +163,14 @@ export default function LandingPage() {
             ))}
           </div>
 
-          <div className="hidden lg:flex items-center gap-2.5">
-            <a
-              href="https://www.linkedin.com/in/ayush-singh-aiml/"
-              target="_blank"
-              rel="noreferrer"
-              title="Ayush Singh - LinkedIn"
-              className="p-2 text-zinc-600 hover:text-blue-600 transition-colors rounded-lg hover:bg-zinc-100"
-            >
-              <LinkedinIcon className="w-4 h-4" />
-            </a>
-
+          <div className="hidden lg:flex items-center gap-3">
             <Link
-              href="/rag"
-              className="text-[13px] font-mono text-blue-600 hover:text-blue-700 transition-colors px-3 py-1.5 rounded-lg bg-blue-50 border border-blue-200 font-semibold"
+              href="/command-center"
+              className="text-[13px] font-semibold bg-blue-600 text-white px-4 py-2 rounded-xl hover:bg-blue-700 transition-colors shadow-sm inline-flex items-center gap-1.5"
             >
-              Open /rag Workspace
+              <Bot className="w-3.5 h-3.5" />
+              <span>Command Center</span>
             </Link>
-            <button
-              onClick={() => setArchModalOpen(true)}
-              className="text-[13px] font-medium bg-zinc-900 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition-colors shadow-sm"
-            >
-              View Architecture
-            </button>
           </div>
 
           <button onClick={() => setMobileMenu(!mobileMenu)} className="lg:hidden p-2 text-zinc-700">
@@ -213,19 +196,14 @@ export default function LandingPage() {
                   {l.label}
                 </a>
               ))}
-              <div className="flex items-center gap-3 pt-2 pb-3 border-t border-zinc-100 mt-2">
-                <a
-                  href="https://www.linkedin.com/in/ayush-singh-aiml/"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="flex items-center gap-1.5 text-xs text-blue-600 font-medium"
+              <div className="pt-2 border-t border-zinc-100 mt-2">
+                <Link
+                  href="/command-center"
+                  className="block text-sm font-bold bg-blue-600 text-white px-4 py-2.5 rounded-xl text-center"
                 >
-                  <LinkedinIcon className="w-4 h-4" /> LinkedIn
-                </a>
+                  Launch Command Center
+                </Link>
               </div>
-              <Link href="/rag" className="block text-sm font-bold bg-blue-600 text-white px-4 py-2.5 rounded-lg text-center">
-                Open /rag Workspace
-              </Link>
             </motion.div>
           )}
         </AnimatePresence>
@@ -259,13 +237,11 @@ export default function LandingPage() {
               <div className="flex items-center gap-4">
                 <Link
                   href="/command-center"
-                  className="group relative inline-flex items-center gap-3 px-7 py-4 rounded-2xl text-[15px] font-semibold bg-zinc-950 text-white hover:bg-zinc-900 shadow-2xl shadow-zinc-950/30 transition-all border border-zinc-800 hover:border-zinc-700 overflow-hidden"
+                  className="inline-flex items-center gap-2.5 px-6 py-3.5 rounded-xl text-[14px] font-semibold bg-blue-600 text-white hover:bg-blue-700 shadow-md shadow-blue-600/20 transition-all"
                 >
-                  <div className="absolute inset-0 bg-gradient-to-r from-emerald-500/10 via-transparent to-blue-500/10 opacity-0 group-hover:opacity-100 transition-opacity" />
-                  <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                  <Bot className="w-4 h-4 text-emerald-400 relative z-10" />
-                  <span className="relative z-10">Launch Command Center</span>
-                  <ArrowRight className="w-4 h-4 text-zinc-400 group-hover:translate-x-1 transition-transform relative z-10" />
+                  <Bot className="w-4 h-4" />
+                  <span>Launch Command Center</span>
+                  <ArrowRight className="w-4 h-4" />
                 </Link>
               </div>
 
@@ -284,9 +260,9 @@ export default function LandingPage() {
       <section id="capabilities" className="py-24 relative z-10 border-t border-zinc-200/80 bg-zinc-50/50">
         <div className="max-w-6xl mx-auto px-6">
           <SectionHeader
-            badge="Live Product Tour"
-            title="Every Card Below Is a Real, Working Agent"
-            subtitle="Not slides. Click in — RAG retrieval, fraud checks, voice screening, and interviews, running for real."
+            badge="Platform Capabilities"
+            title="Intelligent Agents for Modern Teams"
+            subtitle="Automated candidate outreach, voice screening, credential verification, and instant policy intelligence."
           />
 
           {/* ── Working today — tested end-to-end against the real backend.
@@ -297,7 +273,7 @@ export default function LandingPage() {
               equal width — every row has cards that genuinely match. ── */}
           <div className="grid md:grid-cols-2 gap-8 mt-16 items-stretch">
             <div className="md:col-span-2">
-              <RAGCardInteractive />
+              <AutomationCardInteractive />
             </div>
             <FraudDetectionCard />
             <TelephonicAgentCard />
@@ -305,7 +281,7 @@ export default function LandingPage() {
               <ScreeningAgentCard />
             </div>
             <div className="md:col-span-2">
-              <AutomationCardInteractive />
+              <RAGCardInteractive />
             </div>
           </div>
 
@@ -347,31 +323,6 @@ export default function LandingPage() {
         </div>
         <div className="max-w-[1360px] mx-auto px-6 mt-16">
           <AgentConstellation />
-        </div>
-      </section>
-
-      {/* ─── OUR MISSION ─── */}
-      <section className="py-24 border-t border-zinc-200/80 bg-white">
-        <div className="max-w-5xl mx-auto px-6">
-          <SectionHeader
-            badge="Our Mission"
-            title="Built to be fair, human-led, and secure by default"
-            subtitle="The principles behind every automated decision this platform makes."
-          />
-          <div className="mt-14 grid sm:grid-cols-2 gap-5">
-            {MISSION_PILLARS.map((m) => {
-              const Icon = m.icon;
-              return (
-                <div key={m.title} className="cpu-burn-card h-full">
-                  <div className="card-icon-badge mb-4">
-                    <Icon className="w-5 h-5" />
-                  </div>
-                  <h3 className="text-[16px] font-bold text-zinc-900 mb-2">{m.title}</h3>
-                  <p className="text-[13.5px] text-zinc-600 leading-relaxed">{m.body}</p>
-                </div>
-              );
-            })}
-          </div>
         </div>
       </section>
 
@@ -427,10 +378,9 @@ function SiteFooter() {
       <div className="max-w-6xl mx-auto px-6 py-16">
         <div className="grid lg:grid-cols-[280px_1fr] gap-12">
           <div>
-            <Link href="/" className="flex items-center gap-2.5 mb-4">
-              <BrandMark variant="light" />
-              <span className="font-bold text-[16px] tracking-tight text-white">
-                Fin AI
+            <Link href="/" className="flex items-center mb-4">
+              <span className="font-extrabold text-[20px] tracking-tight text-white font-sans">
+                fin ai
               </span>
             </Link>
             <p className="text-[13px] text-zinc-400 leading-relaxed max-w-xs mb-5">
@@ -1235,111 +1185,96 @@ function RAGCardInteractive() {
 }
 
 function OnboardingCardInteractive() {
-  const steps = ["Outlook Account", "Teams Channel", "GitHub Access", "Jira License", "Software Provision"];
-  const [active] = useState(2);
+  const steps = [
+    { name: "Single Sign-On & Email", done: true },
+    { name: "Workspace & Team Access", done: true },
+    { name: "Hardware & Welcome Guide", done: false },
+  ];
 
   return (
-    <div className="cpu-burn-card h-full">
-      <div className="flex items-center justify-between mb-5">
-        <div className="card-icon-badge">
-          <UserPlus className="w-5 h-5" />
+    <div className="cpu-burn-card h-full flex flex-col justify-between">
+      <div>
+        <div className="flex items-center justify-between mb-4">
+          <div className="card-icon-badge">
+            <UserPlus className="w-5 h-5" />
+          </div>
+          <div className="flex items-center gap-1.5">
+            <PreviewBadge />
+            <Link
+              href="/onboarding"
+              className="text-[10px] font-mono font-bold bg-blue-600 text-white px-2.5 py-1 rounded-lg hover:bg-blue-700 transition-all flex items-center gap-1"
+            >
+              <Play className="w-3 h-3 fill-white" />
+              <span>Run</span>
+            </Link>
+          </div>
         </div>
-        <div className="flex items-center gap-1.5">
-          <PreviewBadge />
-          <Link
-            href="/onboarding"
-            className="text-[10px] font-mono font-bold bg-blue-600 text-white px-2.5 py-1 rounded-lg hover:bg-blue-700 transition-all flex items-center gap-1"
-          >
-            <Play className="w-3 h-3 fill-white" />
-            <span>Run Agent</span>
-          </Link>
-        </div>
+
+        <h3 className="text-[15px] font-bold text-zinc-900 mb-1">One-Click Onboarding</h3>
+        <p className="text-[12px] text-zinc-600 leading-relaxed mb-4">
+          Provision accounts, permissions, and toolkits for new hires automatically.
+        </p>
       </div>
 
-      <h3 className="text-[16px] font-bold text-zinc-900 mb-1.5">One-click Employee Onboarding</h3>
-      <p className="text-[12px] text-zinc-600 leading-relaxed mb-5">
-        Automatically provision accounts, access permissions, and software in seconds.
-      </p>
-
-      <div className="space-y-2">
-        {steps.map((s, i) => {
-          const done = i < active;
-          const current = i === active;
-          return (
-            <div key={s} className="flex items-center justify-between px-3 py-2 rounded-lg bg-zinc-50 border border-zinc-200/80">
-              <span className={`text-[11.5px] ${done ? "text-zinc-700 font-medium" : current ? "text-blue-700 font-bold" : "text-zinc-400"}`}>
-                {s}
-              </span>
-              <span className={`text-[10px] font-mono ${done ? "text-emerald-600 font-bold" : current ? "text-blue-600 font-bold animate-pulse" : "text-zinc-400"}`}>
-                {done ? "✓ Done" : current ? "Processing..." : "Pending"}
-              </span>
-            </div>
-          );
-        })}
+      <div className="space-y-1.5">
+        {steps.map((s) => (
+          <div key={s.name} className="flex items-center justify-between px-3 py-2 rounded-lg bg-zinc-50 border border-zinc-200/80">
+            <span className="text-[11px] text-zinc-700 font-medium">{s.name}</span>
+            <span className="text-[10px] font-mono flex items-center gap-1">
+              {s.done ? (
+                <span className="text-emerald-600 font-bold flex items-center gap-1">
+                  <CheckCircle2 className="w-3 h-3 text-emerald-600" /> Ready
+                </span>
+              ) : (
+                <span className="text-blue-600 font-semibold animate-pulse">In progress</span>
+              )}
+            </span>
+          </div>
+        ))}
       </div>
     </div>
   );
 }
 
 function KnowledgeCardInteractive() {
-  const nodes = [
-    { label: "Senior Staff", desc: "Transcripts & Meeting Records" },
-    { label: "Docs", desc: "PDF & Policy Index" },
-    { label: "AI Agent", desc: "Active Knowledge Synthesizer" },
-    { label: "Graph", desc: "HNSW Semantic Knowledge Mesh" },
-    { label: "Hire", desc: "Instant Access for New Employees" },
+  const categories = [
+    { title: "Meeting Summaries", desc: "Automated call takeaways" },
+    { title: "Handbook & FAQs", desc: "Always up-to-date policies" },
+    { title: "Team Knowledge Graph", desc: "Semantic cross-team search" },
   ];
-  const [activeIdx, setActiveIdx] = useState(0);
-
-  useEffect(() => {
-    const iv = setInterval(() => {
-      setActiveIdx((prev) => (prev + 1) % nodes.length);
-    }, 2200);
-    return () => clearInterval(iv);
-  }, [nodes.length]);
-
-  const activeNode = nodes[activeIdx];
 
   return (
-    <div className="cpu-burn-card h-full">
-      <div className="flex items-center justify-between mb-5">
-        <div className="card-icon-badge">
-          <Brain className="w-5 h-5" />
+    <div className="cpu-burn-card h-full flex flex-col justify-between">
+      <div>
+        <div className="flex items-center justify-between mb-4">
+          <div className="card-icon-badge">
+            <Brain className="w-5 h-5" />
+          </div>
+          <div className="flex items-center gap-1.5">
+            <PreviewBadge />
+            <Link
+              href="/knowledge"
+              className="text-[10px] font-mono font-bold bg-blue-600 text-white px-2.5 py-1 rounded-lg hover:bg-blue-700 transition-all flex items-center gap-1"
+            >
+              <ArrowUpRight className="w-3 h-3" />
+              <span>Explore</span>
+            </Link>
+          </div>
         </div>
-        <div className="flex items-center gap-1.5">
-          <PreviewBadge />
-          <Link
-            href="/knowledge"
-            className="text-[10px] font-mono font-bold bg-blue-600 text-white px-2.5 py-1 rounded-lg hover:bg-blue-700 transition-all flex items-center gap-1"
-          >
-            <ArrowUpRight className="w-3 h-3" />
-            <span>Try Engine</span>
-          </Link>
-        </div>
-      </div>
-      <h3 className="text-[16px] font-bold text-zinc-900 mb-1.5">Knowledge Transfer Engine</h3>
-      <p className="text-[12px] text-zinc-600 leading-relaxed mb-4">
-        Capture senior employee knowledge, meeting notes, and codebases into an active graph.
-      </p>
 
-      <div className="flex flex-wrap gap-1.5 mb-4">
-        {nodes.map((n, idx) => (
-          <button
-            key={n.label}
-            onClick={() => setActiveIdx(idx)}
-            className={`text-[10.5px] px-2.5 py-1 rounded-md border transition-all ${
-              activeIdx === idx
-                ? "bg-blue-600 text-white border-blue-600 font-bold shadow-xs"
-                : "bg-zinc-100 text-zinc-700 border-zinc-200 hover:bg-zinc-200"
-            }`}
-          >
-            {n.label}
-          </button>
+        <h3 className="text-[15px] font-bold text-zinc-900 mb-1">Company Knowledge Hub</h3>
+        <p className="text-[12px] text-zinc-600 leading-relaxed mb-4">
+          Synthesize team notes, meeting transcripts, and wikis into instant answers.
+        </p>
+      </div>
+
+      <div className="space-y-1.5">
+        {categories.map((c) => (
+          <div key={c.title} className="flex items-center justify-between px-3 py-2 rounded-lg bg-zinc-50 border border-zinc-200/80">
+            <span className="text-[11px] font-bold text-zinc-800">{c.title}</span>
+            <span className="text-[10.5px] text-zinc-500">{c.desc}</span>
+          </div>
         ))}
-      </div>
-
-      <div className="p-3 bg-blue-50/70 border border-blue-200 rounded-xl text-[11.5px] text-blue-900">
-        <span className="font-bold">{activeNode.label}:</span> {activeNode.desc}
       </div>
     </div>
   );
@@ -1609,27 +1544,40 @@ const SECURITY_CATEGORY_LABELS = [
 ];
 
 function SecurityCardWhite() {
+  const securityItems = [
+    "Role-Based Access Control (RBAC)",
+    "Encrypted Document & Audio Vault",
+    "Audit Trails & Proctoring Logs",
+  ];
+
   return (
-    <div className="cpu-burn-card h-full">
-      <div className="flex items-center justify-between mb-5">
-        <div className="card-icon-badge">
-          <Shield className="w-5 h-5" />
+    <div className="cpu-burn-card h-full flex flex-col justify-between">
+      <div>
+        <div className="flex items-center justify-between mb-4">
+          <div className="card-icon-badge">
+            <Shield className="w-5 h-5" />
+          </div>
+          <div className="flex items-center gap-1.5">
+            <PreviewBadge />
+            <Link
+              href="/security"
+              className="text-[10px] font-mono font-bold bg-blue-600 text-white px-2.5 py-1 rounded-lg hover:bg-blue-700 transition-all flex items-center gap-1"
+            >
+              <FolderOpen className="w-3 h-3" />
+              <span>View</span>
+            </Link>
+          </div>
         </div>
-        <div className="flex items-center gap-1.5">
-          <PreviewBadge />
-          <Link
-            href="/security"
-            className="text-[10px] font-mono font-bold bg-blue-600 text-white px-2.5 py-1 rounded-lg hover:bg-blue-700 transition-all flex items-center gap-1"
-          >
-            <FolderOpen className="w-3 h-3" />
-            <span>View</span>
-          </Link>
-        </div>
+
+        <h3 className="text-[15px] font-bold text-zinc-900 mb-1">Enterprise Privacy & Security</h3>
+        <p className="text-[12px] text-zinc-600 leading-relaxed mb-4">
+          End-to-end encryption, strict compliance boundaries, and verified governance.
+        </p>
       </div>
-      <h3 className="text-[16px] font-bold text-zinc-900 mb-4">Enterprise Ready Security</h3>
-      <div className="divide-y divide-zinc-100">
-        {SECURITY_CATEGORY_LABELS.map((item) => (
-          <div key={item} className="flex items-center gap-2 text-[12.5px] text-zinc-700 py-2 first:pt-0 last:pb-0">
+
+      <div className="space-y-1.5">
+        {securityItems.map((item) => (
+          <div key={item} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-zinc-50 border border-zinc-200/80 text-[11px] font-medium text-zinc-700">
             <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
             <span>{item}</span>
           </div>
@@ -1639,43 +1587,46 @@ function SecurityCardWhite() {
   );
 }
 
-/* ── 3. NATIVE INTEGRATIONS CARD WITH BRAND ICONS ── */
+/* ── 3. NATIVE INTEGRATIONS CARD WITH ONLY ACTIVE PRODUCTION TOOLS ── */
 function IntegrationsCardInteractive() {
-  const integrations = [
-    { name: "Teams", icon: <MessageSquare className="w-3.5 h-3.5 text-indigo-600" /> },
-    { name: "Slack", icon: <Users className="w-3.5 h-3.5 text-purple-600" /> },
-    { name: "Jira", icon: <CheckSquare className="w-3.5 h-3.5 text-blue-600" /> },
-    { name: "GitHub", icon: <GithubIcon className="w-3.5 h-3.5 text-zinc-800" /> },
-    { name: "Salesforce", icon: <Cloud className="w-3.5 h-3.5 text-sky-500" /> },
-    { name: "SAP", icon: <Server className="w-3.5 h-3.5 text-blue-800" /> },
-    { name: "SharePoint", icon: <Share2 className="w-3.5 h-3.5 text-teal-600" /> },
-    { name: "MCP", icon: <Plug className="w-3.5 h-3.5 text-amber-600" /> },
+  const workingTools = [
+    { name: "WhatsApp Cloud API", desc: "Automated candidate outreach & messaging", icon: <MessageSquare className="w-4 h-4 text-emerald-600" /> },
+    { name: "Sarvam AI Voice", desc: "Conversational voice screening & telephony", icon: <Phone className="w-4 h-4 text-orange-500" /> },
+    { name: "Voice Biometrics", desc: "ECAPA-TDNN neural speaker authentication", icon: <ShieldCheck className="w-4 h-4 text-blue-600" /> },
+    { name: "Document Forensics", desc: "PDF structure & credential authenticity verification", icon: <FileCheck className="w-4 h-4 text-violet-600" /> },
+    { name: "Pinecone Vector DB", desc: "Hybrid semantic search & rule extraction engine", icon: <Database className="w-4 h-4 text-sky-600" /> },
+    { name: "Google Workspace", desc: "Automated invite delivery via Gmail & calendar sync", icon: <Mail className="w-4 h-4 text-red-500" /> },
   ];
 
   return (
     <div className="cpu-burn-card h-full flex flex-col justify-between">
       <div>
-        <div className="flex items-center justify-between mb-5">
+        <div className="flex items-center justify-between mb-4">
           <div className="card-icon-badge">
             <Globe className="w-5 h-5" />
           </div>
-          <PreviewBadge />
+          <WorkingBadge />
         </div>
-        <h3 className="text-[16px] font-bold text-zinc-900 mb-1.5">18+ Native Integrations</h3>
-        <p className="text-[12px] text-zinc-600 leading-relaxed mb-5">
-          Teams, Slack, Jira, GitHub, Salesforce, SAP, SharePoint, and custom MCP connectors.
+        <h3 className="text-[16px] font-bold text-zinc-900 mb-1">Production Integrated Tools</h3>
+        <p className="text-[13px] text-zinc-600 leading-relaxed mb-4">
+          The verified tools and communication channels actively running in this system:
         </p>
       </div>
 
-      <div className="flex flex-wrap gap-2">
-        {integrations.map((item) => (
-          <span
+      <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-2.5">
+        {workingTools.map((item) => (
+          <div
             key={item.name}
-            className="text-[11px] px-2.5 py-1.5 rounded-lg bg-zinc-50 text-zinc-800 border border-zinc-200 flex items-center gap-1.5 shadow-2xs hover:bg-blue-50 hover:border-blue-200 transition-colors"
+            className="p-3 rounded-xl bg-zinc-50 border border-zinc-200/80 flex items-start gap-2.5 hover:bg-blue-50/50 hover:border-blue-200 transition-colors"
           >
-            {item.icon}
-            <span className="font-semibold">{item.name}</span>
-          </span>
+            <div className="p-1.5 rounded-lg bg-white border border-zinc-200 shadow-2xs shrink-0">
+              {item.icon}
+            </div>
+            <div className="min-w-0">
+              <div className="text-[12px] font-bold text-zinc-900 leading-tight">{item.name}</div>
+              <div className="text-[10.5px] text-zinc-500 leading-tight mt-0.5">{item.desc}</div>
+            </div>
+          </div>
         ))}
       </div>
     </div>

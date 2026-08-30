@@ -2,7 +2,7 @@
 
 import { memo } from "react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
-import { Check, X, Loader2, AlertCircle, Clock } from "lucide-react";
+import { Check, X, Loader2, AlertCircle, Clock, Play } from "lucide-react";
 import { resolveConnectorMeta, formatToolName } from "./iconResolver";
 import type { AgentNodeData } from "./types";
 
@@ -127,14 +127,17 @@ function AgentNodeComponent({ data }: NodeProps) {
               <Loader2 size={15} className="animate-spin text-zinc-300" />
             )}
             {d.status === "pending" && (
-              <div
-                style={{
-                  width: 6,
-                  height: 6,
-                  borderRadius: "50%",
-                  background: "rgba(255, 255, 255, 0.2)",
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const fn = d.onExecuteStep as ((idx: number) => void) | undefined;
+                  if (fn) fn(d.stepIndex);
                 }}
-              />
+                className="px-2 py-0.5 rounded bg-blue-600/20 hover:bg-blue-600 border border-blue-500/40 text-blue-300 hover:text-white text-[10px] font-mono flex items-center gap-1 transition-all"
+                title="Execute this node"
+              >
+                <Play size={9} fill="currentColor" /> Run
+              </button>
             )}
           </div>
         </div>

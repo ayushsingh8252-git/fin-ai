@@ -54,26 +54,75 @@ def validate_audio_format(file_path: str) -> Dict[str, Any]:
 def convert_to_wav(file_path: str) -> str:
     """
     Converts input audio file to standard 16kHz mono WAV format if needed.
-    Falls back gracefully if pydub/ffmpeg is missing.
+    Uses soundfile with PyTorch resampling first, then falls back to pydub/scipy.
     """
     ext = os.path.splitext(file_path)[1].lower()
-    if ext == ".wav":
+    if ext == ".wav" and not os.path.exists(file_path + ".converted.wav"):
         return file_path
         
     wav_path = file_path + ".converted.wav"
     if os.path.exists(wav_path):
         return wav_path
 
+    # 1. Try soundfile (handles MP3, WAV, FLAC, OGG without external ffmpeg)
+    try:
+        import soundfile as sf
+        import torch
+        import torchaudio
+        data, sr = sf.read(file_path, dtype="float32")
+        if data.ndim > 1:
+            data = data.mean(axis=1)
+        tensor = torch.from_numpy(data).unsqueeze(0)
+        if sr != 16000:
+            tensor = torchaudio.functional.resample(tensor, sr, 16000)
+        mono_16k = tensor.squeeze(0).numpy()
+        sf.write(wav_path, mono_16k, 16000, subtype="PCM_16")
+        print(f"[Audio Pipeline] Converted '{file_path}' (sr={sr}) to 16kHz WAV at '{wav_path}' via soundfile")
+        return wav_path
+    except Exception as sf_err:
+        pass
+
+    # 2. Try pydub / ffmpeg fallback
     try:
         from pydub import AudioSegment
         audio = AudioSegment.from_file(file_path)
         audio = audio.set_frame_rate(16000).set_channels(1)
         audio.export(wav_path, format="wav")
-        print(f"[Audio Pipeline] Converted '{file_path}' to WAV at '{wav_path}'")
+        print(f"[Audio Pipeline] Converted '{file_path}' to WAV at '{wav_path}' via pydub")
         return wav_path
     except Exception as e:
-        print(f"[Audio Pipeline Warning] pydub/ffmpeg conversion warning: {e}. Using original file directly.")
+        print(f"[Audio Pipeline Warning] Audio conversion fallback: {e}. Using original file directly.")
         return file_path
+
+
+def load_audio_waveform(file_path: str):
+    """
+    Loads audio file directly into a 1D or 2D torch.FloatTensor (mono, 16kHz)
+    bypassing buggy torchaudio.load dependencies.
+    Returns: (waveform_tensor [1, samples], sample_rate: int)
+    """
+    import torch
+    import torchaudio
+    import soundfile as sf
+
+    try:
+        data, sr = sf.read(file_path, dtype="float32")
+        if data.ndim > 1:
+            data = data.mean(axis=1)
+        tensor = torch.from_numpy(data).unsqueeze(0)
+        if sr != 16000:
+            tensor = torchaudio.functional.resample(tensor, sr, 16000)
+        return tensor, 16000
+    except Exception as sf_err:
+        # Fallback: convert to wav and read
+        wav_path = convert_to_wav(file_path)
+        data, sr = sf.read(wav_path, dtype="float32")
+        if data.ndim > 1:
+            data = data.mean(axis=1)
+        tensor = torch.from_numpy(data).unsqueeze(0)
+        if sr != 16000:
+            tensor = torchaudio.functional.resample(tensor, sr, 16000)
+        return tensor, 16000
 
 def transcribe_audio(file_path: str) -> List[Dict[str, Any]]:
     """

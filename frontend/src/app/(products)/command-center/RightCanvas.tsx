@@ -38,6 +38,8 @@ import {
   FileText,
   Activity,
   Play,
+  ArrowRight,
+  Sparkles,
 } from "lucide-react";
 
 import AgentNodeComponent from "./AgentNode";
@@ -148,6 +150,10 @@ interface Props {
   phase: string;
   viewMode: WorkspaceViewMode;
   onViewModeChange: (mode: WorkspaceViewMode) => void;
+  executionMode?: "auto" | "manual";
+  onToggleExecutionMode?: () => void;
+  onExecuteStep?: (stepIndex: number) => void;
+  onExecuteNextStep?: () => void;
 }
 
 function RightCanvasInner({
@@ -161,6 +167,10 @@ function RightCanvasInner({
   phase,
   viewMode,
   onViewModeChange,
+  executionMode = "auto",
+  onToggleExecutionMode,
+  onExecuteStep,
+  onExecuteNextStep,
 }: Props) {
   const { fitView } = useReactFlow();
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -184,6 +194,7 @@ function RightCanvasInner({
         params: step.resolvedParams || step.params,
         isSelected: selectedNodeId === `step-${step.index}`,
         catalogTool,
+        onExecuteStep,
       };
       return {
         id: `step-${step.index}`,
@@ -192,7 +203,7 @@ function RightCanvasInner({
         data: nodeData,
       };
     });
-  }, [executionSteps, selectedNodeId, catalogTools]);
+  }, [executionSteps, selectedNodeId, catalogTools, onExecuteStep]);
 
   // Build edges
   const rawEdges: Edge[] = useMemo(() => {
@@ -335,28 +346,62 @@ function RightCanvasInner({
 
         {/* Right Status Controls */}
         <div style={{ display: "flex", alignItems: "center", gap: 8, pointerEvents: "auto" }}>
-          <div
+          {/* Manual Run Step Button */}
+          {executionMode === "manual" && executionSteps.some((s) => s.status === "pending") && (
+            <button
+              onClick={onExecuteNextStep}
+              className="cc-btn-primary"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "6px 12px",
+                fontSize: 11,
+                fontWeight: 600,
+                background: "#2563eb",
+                color: "#ffffff",
+                borderRadius: 8,
+                boxShadow: "0 0 14px rgba(37, 99, 235, 0.4)",
+              }}
+            >
+              <Play size={12} fill="currentColor" />
+              <span>
+                Run Step {executionSteps.find((s) => s.status === "pending")?.index}:{" "}
+                {executionSteps.find((s) => s.status === "pending")?.tool}
+              </span>
+            </button>
+          )}
+
+          <button
+            onClick={onToggleExecutionMode}
             className="cc-floating-bar"
             style={{
               padding: "4px 12px",
               fontSize: 11,
               fontFamily: "var(--font-geist-mono), monospace",
-              color: "#a1a1aa",
+              color: executionMode === "manual" ? "#38bdf8" : "#a1a1aa",
               display: "flex",
               alignItems: "center",
               gap: 8,
+              cursor: "pointer",
             }}
+            title="Click to toggle between Autonomous and Step-by-Step execution"
           >
             <span
               style={{
                 width: 6,
                 height: 6,
                 borderRadius: "50%",
-                background: phase === "executing" ? "#f4f4f5" : "#10b981",
+                background:
+                  phase === "executing"
+                    ? "#f4f4f5"
+                    : executionMode === "manual"
+                    ? "#38bdf8"
+                    : "#10b981",
               }}
             />
-            <span>AGENT: AUTONOMOUS</span>
-          </div>
+            <span>MODE: {executionMode === "manual" ? "MANUAL STEP" : "AUTONOMOUS"}</span>
+          </button>
 
           <button
             onClick={() => setIsFullscreen(!isFullscreen)}
@@ -371,6 +416,9 @@ function RightCanvasInner({
 
       {/* ── MAIN CONTENT AREA ── */}
       <div style={{ flex: 1, position: "relative", width: "100%", height: "100%" }}>
+        {/* Dynamic Moving Planning Neural Visualizer */}
+        {phase === "planning" && <PlanningNeuralVisualizer />}
+
         {/* VIEW 1: AGENT GRAPH */}
         {viewMode === "graph" && (
           <ReactFlow
@@ -435,11 +483,21 @@ function RightCanvasInner({
                 }}
               >
                 <div style={{ color: "#71717a" }}>$ agentic-flow execute --mission &quot;Hiring Pipeline&quot;</div>
-                <div style={{ color: "#10b981" }}>✓ PyMuPDF parsed 473KB resume PDF</div>
-                <div style={{ color: "#10b981" }}>✓ Extracted 10 key technical skills</div>
-                <div style={{ color: "#10b981" }}>✓ Calculated ATS alignment: 89/100</div>
-                <div style={{ color: "#10b981" }}>✓ Fraud checks passed (Risk: 8%)</div>
-                <div style={{ color: "#38bdf8" }}>➔ WhatsApp webhook dispatch ready</div>
+                <div style={{ color: "#10b981", display: "flex", alignItems: "center", gap: 4 }}>
+                  <CheckCircle2 size={11} className="text-emerald-400" /> PyMuPDF parsed 473KB resume PDF
+                </div>
+                <div style={{ color: "#10b981", display: "flex", alignItems: "center", gap: 4 }}>
+                  <CheckCircle2 size={11} className="text-emerald-400" /> Extracted 10 key technical skills
+                </div>
+                <div style={{ color: "#10b981", display: "flex", alignItems: "center", gap: 4 }}>
+                  <CheckCircle2 size={11} className="text-emerald-400" /> Calculated ATS alignment: 88/100
+                </div>
+                <div style={{ color: "#10b981", display: "flex", alignItems: "center", gap: 4 }}>
+                  <CheckCircle2 size={11} className="text-emerald-400" /> Forensics checks passed (Risk: 8%)
+                </div>
+                <div style={{ color: "#38bdf8", display: "flex", alignItems: "center", gap: 4 }}>
+                  <ArrowRight size={11} className="text-sky-400" /> Communication dispatch ready
+                </div>
               </div>
             </div>
 
@@ -566,6 +624,89 @@ function RightCanvasInner({
             </div>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+function PlanningNeuralVisualizer() {
+  const [pulseIndex, setPulseIndex] = useState(0);
+
+  useEffect(() => {
+    const iv = setInterval(() => setPulseIndex((p) => (p + 1) % 4), 650);
+    return () => clearInterval(iv);
+  }, []);
+
+  const nodes = [
+    { title: "Intent & Objective Decomposition", subtitle: "Parsing natural language & parameters", icon: Sparkles, color: "text-blue-400", border: "border-blue-500/40", bg: "bg-blue-950/30" },
+    { title: "Connector Registry Matcher", subtitle: "Filtering 21 connectors & 71 tools", icon: Sliders, color: "text-amber-400", border: "border-amber-500/40", bg: "bg-amber-950/30" },
+    { title: "DAG Topology & Binding Synthesizer", subtitle: "Binding $step inputs to outputs", icon: GitBranch, color: "text-sky-400", border: "border-sky-500/40", bg: "bg-sky-950/30" },
+    { title: "Human Policy Guardrails", subtitle: "Gating voice & WhatsApp dispatches", icon: ShieldCheck, color: "text-emerald-400", border: "border-emerald-500/40", bg: "bg-emerald-950/30" },
+  ];
+
+  return (
+    <div className="absolute inset-0 z-10 flex flex-col items-center justify-center p-6 overflow-hidden bg-zinc-950/90 backdrop-blur-xs">
+      {/* Moving scanline laser */}
+      <div className="cc-scanline-bar" />
+
+      {/* Holographic Radar Pulse Rings */}
+      <div className="absolute w-[520px] h-[520px] rounded-full border border-blue-500/15 animate-ping opacity-30 pointer-events-none" />
+      <div className="absolute w-[360px] h-[360px] rounded-full border border-sky-500/20 pointer-events-none animate-spin" style={{ animationDuration: "20s" }} />
+
+      {/* Top Header Badge */}
+      <div className="relative z-10 mb-8 flex flex-col items-center text-center">
+        <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-blue-500/10 border border-blue-500/30 text-blue-400 text-xs font-mono font-bold tracking-wider uppercase mb-3 shadow-lg shadow-blue-500/10">
+          <Activity className="w-3.5 h-3.5 animate-pulse text-blue-400" />
+          <span>Autonomous Planner · Synthesizing Execution DAG</span>
+        </div>
+        <p className="text-zinc-400 text-xs max-w-md">
+          Decomposing natural language objective, resolving connector schemas, and constructing multi-agent topology...
+        </p>
+      </div>
+
+      {/* Dynamic Grid of Assembling Blueprint Nodes */}
+      <div className="relative z-10 grid sm:grid-cols-2 gap-4 max-w-xl w-full">
+        {nodes.map((n, idx) => {
+          const Icon = n.icon;
+          const isPulsing = pulseIndex === idx;
+          return (
+            <div
+              key={n.title}
+              className={`p-4 rounded-xl border transition-all duration-300 ${n.bg} ${n.border} ${
+                isPulsing
+                  ? "scale-[1.03] shadow-lg shadow-blue-500/20 border-white/40 ring-1 ring-white/20"
+                  : "opacity-80"
+              }`}
+            >
+              <div className="flex items-center justify-between mb-2">
+                <div className="p-2 rounded-lg bg-white/5 border border-white/10">
+                  <Icon className={`w-4 h-4 ${n.color}`} />
+                </div>
+                <div className="flex items-center gap-1.5 font-mono text-[10px] text-zinc-500">
+                  <span className={`w-1.5 h-1.5 rounded-full ${isPulsing ? "bg-blue-400 animate-ping" : "bg-zinc-600"}`} />
+                  <span>PHASE {idx + 1}/4</span>
+                </div>
+              </div>
+              <div className="text-xs font-bold text-zinc-100">{n.title}</div>
+              <div className="text-[11px] text-zinc-400 mt-0.5">{n.subtitle}</div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Flowing Circuit Audio Bars */}
+      <div className="mt-8 flex items-center gap-1">
+        {[20, 45, 75, 30, 90, 50, 65, 35, 80, 55, 40, 70].map((h, i) => (
+          <div
+            key={i}
+            className="w-1 bg-blue-500/60 rounded-full animate-pulse"
+            style={{
+              height: `${h * 0.3}px`,
+              animationDuration: `${0.8 + (i % 4) * 0.2}s`,
+              animationDelay: `${i * 0.08}s`,
+            }}
+          />
+        ))}
       </div>
     </div>
   );

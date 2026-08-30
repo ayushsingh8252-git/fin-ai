@@ -217,9 +217,12 @@ export default function CommandCenter() {
     planningLogs: [],
   });
 
+  const [executionMode, setExecutionMode] = useState<"auto" | "manual">("auto");
   const [catalogTools, setCatalogTools] = useState<CatalogTool[]>([]);
   const abortRef = useRef<AbortController | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const resultsRef = useRef<Record<number, Record<string, unknown>>>({});
+  const parsedDataRef = useRef<Record<string, unknown> | null>(null);
 
   useEffect(() => {
     fetchCatalog();
@@ -367,12 +370,20 @@ export default function CommandCenter() {
           status: "pending" as const,
         }));
 
+        resultsRef.current = {};
+        parsedDataRef.current = parsedCandidateData;
+
         setState((prev) => ({
           ...prev,
           phase: "planned",
           plan,
           executionSteps: execSteps,
         }));
+
+        // If user is in manual step-by-step mode, wait for explicit step trigger
+        if (executionMode === "manual") {
+          return;
+        }
 
         await sleep(400);
         if (controller.signal.aborted) return;
@@ -631,14 +642,120 @@ export default function CommandCenter() {
           ...prev,
           phase: allDone ? "completed" : "executing",
           activeStepIndex: null,
-          completedAt: Date.now(),
-          totalDurationMs: Date.now() - (prev.startedAt || Date.now()),
+          completedAt: allDone ? Date.now() : prev.completedAt,
+          totalDurationMs: allDone ? Date.now() - (prev.startedAt || Date.now()) : prev.totalDurationMs,
           executionSteps: updatedSteps,
         };
       });
     },
     [state.executionSteps]
   );
+
+  const executeSingleStep = useCallback(
+    async (stepIndex: number) => {
+      const plan = state.plan;
+      if (!plan || stepIndex < 1 || stepIndex > plan.steps.length) return;
+
+      const planStep = plan.steps[stepIndex - 1];
+      const results = resultsRef.current;
+
+      setState((prev) => ({
+        ...prev,
+        phase: "executing",
+        activeStepIndex: stepIndex,
+        selectedNodeId: `step-${stepIndex}`,
+        executionSteps: prev.executionSteps.map((s) =>
+          s.index === stepIndex ? { ...s, status: "running" as const, startedAt: Date.now() } : s
+        ),
+      }));
+
+      const resolvedParams = resolvePlaceholders(planStep.params, results) as Record<string, unknown>;
+      const startTime = Date.now();
+
+      // Human Approval Gate Check
+      const isExternalOutreach =
+        planStep.connector === "whatsapp" ||
+        planStep.connector === "gmail" ||
+        planStep.tool.includes("call") ||
+        planStep.tool.includes("screening_call") ||
+        planStep.tool.includes("send_email");
+
+      if (isExternalOutreach) {
+        const isCall = planStep.connector === "telephonic" || planStep.tool.includes("call");
+        const isEmail = planStep.connector === "gmail" || planStep.tool.includes("email");
+
+        setState((prev) => ({
+          ...prev,
+          phase: "waiting_approval",
+          activeStepIndex: stepIndex,
+          selectedNodeId: `step-${stepIndex}`,
+          approvalDialog: {
+            stepIndex,
+            type: isCall ? "call" : isEmail ? "email" : "whatsapp",
+            title: isCall
+              ? "Authorize Voice Screening Call"
+              : isEmail
+              ? "Authorize Email Outreach"
+              : "Authorize WhatsApp Outreach Dispatch",
+            description: isCall
+              ? "Candidate Ayush Singh qualified (Score: 89/100). The AI telephonic agent is prepared to place an automated technical screening call to the candidate's phone."
+              : isEmail
+              ? "Candidate Ayush Singh qualified (Score: 89/100). Formal shortlisting email notification is queued. Confirm destination email address and body."
+              : "Candidate Ayush Singh qualified (Score: 89/100). Autonomous WhatsApp notification prepared. Confirm candidate phone number and message payload.",
+            recipient:
+              (resolvedParams.recipient as string) ||
+              (resolvedParams.to as string) ||
+              (isEmail ? "ayush.singh@agenticflow.ai" : "+91 98765 43210"),
+            messageContent:
+              (resolvedParams.message as string) ||
+              (resolvedParams.body as string) ||
+              "Hi Ayush! Your profile has been shortlisted for the Senior AI Systems Engineer role (Score: 89/100). We would love to coordinate a technical interview. Please reply with your availability.",
+          },
+          executionSteps: prev.executionSteps.map((s) =>
+            s.index === stepIndex ? { ...s, status: "waiting_approval" as const } : s
+          ),
+        }));
+        return;
+      }
+
+      await sleep(750);
+      const demoResult = generateFallbackResultForTool(planStep.tool, parsedDataRef.current);
+      const elapsed = Date.now() - startTime;
+      results[stepIndex] = demoResult;
+
+      setState((prev) => {
+        const updatedSteps = prev.executionSteps.map((s) =>
+          s.index === stepIndex
+            ? {
+                ...s,
+                status: "completed" as const,
+                result: demoResult,
+                resolvedParams,
+                completedAt: Date.now(),
+                durationMs: elapsed,
+              }
+            : s
+        );
+        const allDone = updatedSteps.every((s) => s.status === "completed");
+        return {
+          ...prev,
+          phase: allDone ? "completed" : "planned",
+          activeStepIndex: null,
+          executionSteps: updatedSteps,
+          completedAt: allDone ? Date.now() : prev.completedAt,
+          totalDurationMs: allDone ? Date.now() - (prev.startedAt || Date.now()) : prev.totalDurationMs,
+        };
+      });
+    },
+    [state.plan]
+  );
+
+  const executeNextStep = useCallback(() => {
+    const nextPending = state.executionSteps.find((s) => s.status === "pending");
+    if (nextPending) {
+      executeSingleStep(nextPending.index);
+    }
+  }, [state.executionSteps, executeSingleStep]);
 
   const handleFollowUp = useCallback((text: string) => {
     handleSubmit(text);
@@ -994,6 +1111,12 @@ export default function CommandCenter() {
               catalogTools={catalogTools}
               onReset={handleReset}
               onTabChange={(tab) => setState((prev) => ({ ...prev, leftActiveTab: tab }))}
+              executionMode={executionMode}
+              onToggleExecutionMode={() =>
+                setExecutionMode((m) => (m === "auto" ? "manual" : "auto"))
+              }
+              onExecuteStep={executeSingleStep}
+              onExecuteNextStep={executeNextStep}
             />
           </div>
 
@@ -1016,6 +1139,12 @@ export default function CommandCenter() {
               phase={state.phase}
               viewMode={state.viewMode}
               onViewModeChange={(mode) => setState((prev) => ({ ...prev, viewMode: mode }))}
+              executionMode={executionMode}
+              onToggleExecutionMode={() =>
+                setExecutionMode((m) => (m === "auto" ? "manual" : "auto"))
+              }
+              onExecuteStep={executeSingleStep}
+              onExecuteNextStep={executeNextStep}
             />
           </div>
         </div>
