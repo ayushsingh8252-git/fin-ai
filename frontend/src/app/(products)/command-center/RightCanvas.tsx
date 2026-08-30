@@ -630,83 +630,56 @@ function RightCanvasInner({
 }
 
 function PlanningNeuralVisualizer() {
-  const [pulseIndex, setPulseIndex] = useState(0);
+  const [createdCount, setCreatedCount] = useState(1);
 
   useEffect(() => {
-    const iv = setInterval(() => setPulseIndex((p) => (p + 1) % 4), 650);
+    const iv = setInterval(() => {
+      setCreatedCount((prev) => (prev >= 4 ? 1 : prev + 1));
+    }, 450);
     return () => clearInterval(iv);
   }, []);
 
-  const nodes = [
-    { title: "Intent & Objective Decomposition", subtitle: "Parsing natural language & parameters", icon: Sparkles, color: "text-blue-400", border: "border-blue-500/40", bg: "bg-blue-950/30" },
-    { title: "Connector Registry Matcher", subtitle: "Filtering 21 connectors & 71 tools", icon: Sliders, color: "text-amber-400", border: "border-amber-500/40", bg: "bg-amber-950/30" },
-    { title: "DAG Topology & Binding Synthesizer", subtitle: "Binding $step inputs to outputs", icon: GitBranch, color: "text-sky-400", border: "border-sky-500/40", bg: "bg-sky-950/30" },
-    { title: "Human Policy Guardrails", subtitle: "Gating voice & WhatsApp dispatches", icon: ShieldCheck, color: "text-emerald-400", border: "border-emerald-500/40", bg: "bg-emerald-950/30" },
+  const sampleNodes = [
+    { name: "Document Parser", type: "Input Source", icon: FileText, color: "text-blue-400", border: "border-blue-500/30" },
+    { name: "Policy Evaluation", type: "Logic Gate", icon: ShieldCheck, color: "text-purple-400", border: "border-purple-500/30" },
+    { name: "Decision Aggregator", type: "Analytics", icon: GitBranch, color: "text-sky-400", border: "border-sky-500/30" },
+    { name: "Outreach Dispatch", type: "Action Channel", icon: MessageSquare, color: "text-emerald-400", border: "border-emerald-500/30" },
   ];
 
   return (
-    <div className="absolute inset-0 z-10 flex flex-col items-center justify-center p-6 overflow-hidden bg-zinc-950/90 backdrop-blur-xs">
+    <div className="absolute inset-0 z-10 flex flex-col items-center justify-center p-6 overflow-hidden bg-zinc-950/85 backdrop-blur-xs">
       {/* Moving scanline laser */}
       <div className="cc-scanline-bar" />
 
-      {/* Holographic Radar Pulse Rings */}
-      <div className="absolute w-[520px] h-[520px] rounded-full border border-blue-500/15 animate-ping opacity-30 pointer-events-none" />
-      <div className="absolute w-[360px] h-[360px] rounded-full border border-sky-500/20 pointer-events-none animate-spin" style={{ animationDuration: "20s" }} />
+      {/* Subtle pulse ring */}
+      <div className="absolute w-[360px] h-[360px] rounded-full border border-blue-500/15 animate-ping opacity-25 pointer-events-none" />
 
-      {/* Top Header Badge */}
-      <div className="relative z-10 mb-8 flex flex-col items-center text-center">
-        <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-blue-500/10 border border-blue-500/30 text-blue-400 text-xs font-mono font-bold tracking-wider uppercase mb-3 shadow-lg shadow-blue-500/10">
-          <Activity className="w-3.5 h-3.5 animate-pulse text-blue-400" />
-          <span>Autonomous Planner · Synthesizing Execution DAG</span>
-        </div>
-        <p className="text-zinc-400 text-xs max-w-md">
-          Decomposing natural language objective, resolving connector schemas, and constructing multi-agent topology...
-        </p>
+      {/* Clean status badge */}
+      <div className="relative z-10 mb-6 flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-zinc-900/90 border border-zinc-800 text-zinc-300 text-xs font-mono shadow-md">
+        <Activity className="w-3.5 h-3.5 animate-pulse text-blue-400" />
+        <span>Creating execution nodes ({createdCount}/4)...</span>
       </div>
 
-      {/* Dynamic Grid of Assembling Blueprint Nodes */}
-      <div className="relative z-10 grid sm:grid-cols-2 gap-4 max-w-xl w-full">
-        {nodes.map((n, idx) => {
-          const Icon = n.icon;
-          const isPulsing = pulseIndex === idx;
+      {/* Dynamic assembling nodes */}
+      <div className="relative z-10 flex flex-wrap items-center justify-center gap-3 max-w-md w-full">
+        {sampleNodes.slice(0, createdCount).map((node, idx) => {
+          const Icon = node.icon;
           return (
             <div
-              key={n.title}
-              className={`p-4 rounded-xl border transition-all duration-300 ${n.bg} ${n.border} ${
-                isPulsing
-                  ? "scale-[1.03] shadow-lg shadow-blue-500/20 border-white/40 ring-1 ring-white/20"
-                  : "opacity-80"
-              }`}
+              key={node.name}
+              className={`flex items-center gap-3 px-3.5 py-2.5 rounded-lg bg-zinc-900/90 border ${node.border} shadow-lg shadow-black/40 transition-all duration-200`}
             >
-              <div className="flex items-center justify-between mb-2">
-                <div className="p-2 rounded-lg bg-white/5 border border-white/10">
-                  <Icon className={`w-4 h-4 ${n.color}`} />
-                </div>
-                <div className="flex items-center gap-1.5 font-mono text-[10px] text-zinc-500">
-                  <span className={`w-1.5 h-1.5 rounded-full ${isPulsing ? "bg-blue-400 animate-ping" : "bg-zinc-600"}`} />
-                  <span>PHASE {idx + 1}/4</span>
-                </div>
+              <div className="p-1.5 rounded-md bg-white/5">
+                <Icon className={`w-4 h-4 ${node.color}`} />
               </div>
-              <div className="text-xs font-bold text-zinc-100">{n.title}</div>
-              <div className="text-[11px] text-zinc-400 mt-0.5">{n.subtitle}</div>
+              <div>
+                <div className="text-xs font-medium text-zinc-200">{node.name}</div>
+                <div className="text-[10px] text-zinc-500 font-mono">{node.type}</div>
+              </div>
+              <div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-ping ml-1" />
             </div>
           );
         })}
-      </div>
-
-      {/* Flowing Circuit Audio Bars */}
-      <div className="mt-8 flex items-center gap-1">
-        {[20, 45, 75, 30, 90, 50, 65, 35, 80, 55, 40, 70].map((h, i) => (
-          <div
-            key={i}
-            className="w-1 bg-blue-500/60 rounded-full animate-pulse"
-            style={{
-              height: `${h * 0.3}px`,
-              animationDuration: `${0.8 + (i % 4) * 0.2}s`,
-              animationDelay: `${i * 0.08}s`,
-            }}
-          />
-        ))}
       </div>
     </div>
   );

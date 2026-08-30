@@ -1,6 +1,6 @@
 {
   "model_version": "speechbrain-ecapa-voxceleb",
-  "verification_threshold": 0.72,
+  "verification_threshold": 0.63,
   "margin_threshold": 0.15,
   "eer_percent": 0.25,
   "eer_threshold": 0.2141,

@@ -22,7 +22,19 @@ interface Props {
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
+const AUTHORIZATION_PHRASES = [
+  "Authorize Ayush Singh for Command Center access.",
+  "I am Ayush Singh, verifying biometric credentials.",
+  "Security policy confirmed, unlocking agent controls for Ayush Singh.",
+  "Ayush Singh requesting autonomous system orchestration.",
+  "Confirm voice identity and authorize Ayush Singh.",
+  "Biometric baseline verified for Ayush Singh.",
+  "Grant Command Center access to Ayush Singh.",
+  "Ayush Singh authorizing execution of autonomous agents.",
+];
+
 export function VoiceGateModal({ isOpen, onAuthenticated }: Props) {
+  const [currentPhrase, setCurrentPhrase] = useState(AUTHORIZATION_PHRASES[0]);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [status, setStatus] = useState<"idle" | "recording" | "processing" | "success" | "error">("idle");
@@ -32,6 +44,13 @@ export function VoiceGateModal({ isOpen, onAuthenticated }: Props) {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    if (isOpen) {
+      const randomIndex = Math.floor(Math.random() * AUTHORIZATION_PHRASES.length);
+      setCurrentPhrase(AUTHORIZATION_PHRASES[randomIndex]);
+    }
+  }, [isOpen]);
 
   useEffect(() => {
     if (isRecording) {
@@ -123,7 +142,7 @@ export function VoiceGateModal({ isOpen, onAuthenticated }: Props) {
           data.decision !== "mismatch" &&
           data.decision !== "error";
 
-        const isScoreSufficient = score >= 0.72;
+        const isScoreSufficient = score >= 0.63;
         const verified = isExplicitMatch && isScoreSufficient;
 
         if (verified) {
@@ -131,7 +150,7 @@ export function VoiceGateModal({ isOpen, onAuthenticated }: Props) {
           const spoofStatus = data.spoofing?.overall_label || "live";
           setLogs((prev) => [
             ...prev,
-            `Cosine similarity match: ${(score * 100).toFixed(1)}% (Threshold: >= 72.0%)`,
+            `Cosine similarity match: ${(score * 100).toFixed(1)}% (Threshold: >= 63.0%)`,
             `Anti-spoofing check: PASS (${spoofStatus})`,
             `Speaker authenticated: ${speakerName}`,
             "Security Policy: ACCESS GRANTED. Unlocking Command Center...",
@@ -146,11 +165,11 @@ export function VoiceGateModal({ isOpen, onAuthenticated }: Props) {
             data.message ||
             data.decision_detail?.message ||
             data.reason ||
-            `Voice does not match enrolled profile (similarity: ${(score * 100).toFixed(1)}% < 72.0% required).`;
+            `Voice does not match enrolled profile (similarity: ${(score * 100).toFixed(1)}% < 63.0% required).`;
 
           setLogs((prev) => [
             ...prev,
-            `Acoustic similarity: ${(score * 100).toFixed(1)}% (Required: >= 72.0%)`,
+            `Acoustic similarity: ${(score * 100).toFixed(1)}% (Required: >= 63.0%)`,
             `Security Decision: ACCESS DENIED`,
             `Reason: ${failureMsg}`,
           ]);
@@ -277,7 +296,7 @@ export function VoiceGateModal({ isOpen, onAuthenticated }: Props) {
               lineHeight: 1.4,
             }}
           >
-            &ldquo;Authorize Ayush Singh for Command Center access.&rdquo;
+            &ldquo;{currentPhrase}&rdquo;
           </div>
 
           {/* Record Button */}
