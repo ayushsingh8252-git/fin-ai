@@ -256,16 +256,17 @@ export default function LandingPage() {
                 Automate complex enterprise policy extraction, orchestrate autonomous multi-agent reasoning, index document vectors with hybrid RAG, and execute deterministic actions.
               </p>
 
-              <div className="flex flex-wrap items-center gap-4">
+              <div className="flex items-center gap-4">
                 <Link
                   href="/command-center"
-                  className="inline-flex items-center gap-2.5 px-6 py-3.5 rounded-xl text-[14px] font-semibold bg-zinc-950 text-white hover:bg-zinc-800 shadow-xl shadow-zinc-950/20 transition-all border border-zinc-800 hover:border-zinc-700"
+                  className="group relative inline-flex items-center gap-3 px-7 py-4 rounded-2xl text-[15px] font-semibold bg-zinc-950 text-white hover:bg-zinc-900 shadow-2xl shadow-zinc-950/30 transition-all border border-zinc-800 hover:border-zinc-700 overflow-hidden"
                 >
-                  <Bot className="w-4 h-4 text-emerald-400" />
-                  Launch Agent Command Center <ArrowRight className="w-4 h-4" />
+                  <div className="absolute inset-0 bg-gradient-to-r from-emerald-500/10 via-transparent to-blue-500/10 opacity-0 group-hover:opacity-100 transition-opacity" />
+                  <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                  <Bot className="w-4 h-4 text-emerald-400 relative z-10" />
+                  <span className="relative z-10">Launch Command Center</span>
+                  <ArrowRight className="w-4 h-4 text-zinc-400 group-hover:translate-x-1 transition-transform relative z-10" />
                 </Link>
-
-                <VoiceCommandButton />
               </div>
 
               <FloatingHeroDoodles />

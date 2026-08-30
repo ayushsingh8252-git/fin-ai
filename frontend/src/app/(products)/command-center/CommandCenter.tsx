@@ -28,6 +28,7 @@ import {
 
 import LeftPanel from "./LeftPanel";
 import RightCanvas from "./RightCanvas";
+import { VoiceGateModal } from "./VoiceGateModal";
 import type {
   MissionState,
   ExecutionStep,
@@ -199,6 +200,7 @@ export default function CommandCenter() {
   const [jobDescription, setJobDescription] = useState("");
   const [attachedDoc, setAttachedDoc] = useState<AttachedDocument | null>(null);
   const [showJdInput, setShowJdInput] = useState(false);
+  const [isVoiceAuthenticated, setIsVoiceAuthenticated] = useState(false);
 
   const [state, setState] = useState<MissionState>({
     phase: "idle",
@@ -663,9 +665,24 @@ export default function CommandCenter() {
   const isIdle = state.phase === "idle";
 
   return (
-    <div className="cc-root" style={{ width: "100%", height: "100vh", overflow: "hidden" }}>
-      {/* ── INITIAL STATE: MINIMALIST CENTERED AGENT LAUNCHER ── */}
-      {isIdle && (
+    <div className="cc-root" style={{ width: "100%", height: "100vh", overflow: "hidden", position: "relative" }}>
+      {/* ── VOICE BIOMETRIC SECURITY GATE OVERLAY ── */}
+      <VoiceGateModal
+        isOpen={!isVoiceAuthenticated}
+        onAuthenticated={() => setIsVoiceAuthenticated(true)}
+      />
+
+      <div
+        style={{
+          width: "100%",
+          height: "100%",
+          filter: isVoiceAuthenticated ? "none" : "blur(14px)",
+          transition: "filter 0.4s ease",
+          pointerEvents: isVoiceAuthenticated ? "auto" : "none",
+        }}
+      >
+        {/* ── INITIAL STATE: MINIMALIST CENTERED AGENT LAUNCHER ── */}
+        {isIdle && (
         <div
           style={{
             height: "100vh",
@@ -1003,6 +1020,7 @@ export default function CommandCenter() {
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }
@@ -1014,6 +1032,27 @@ function generateFallbackResultForTool(
   const candidate = parsedData || DemoResults[1].candidate;
 
   switch (tool) {
+    case "verify_company_background":
+      return {
+        company: "AgenticFlow AI",
+        location: "Bengaluru / Global",
+        legitimacy: {
+          score: 92,
+          confidence: "high",
+          signals: ["Official Corporate Domain Active", "LinkedIn Enterprise Verified", "Zero Negative Fraud Mentions"],
+        },
+        hr_contacts: [
+          { name: "Priya Sharma", title: "Head of Talent Acquisition", channel: "LinkedIn" },
+          { name: "David Chen", title: "VP Engineering", channel: "Corporate Portal" },
+        ],
+        hr_contact_number: "+1 (800) 555-0199",
+      };
+    case "get_resume_actionable_summary":
+      return {
+        summary: "Top-tier AI Systems Engineer with proven experience deploying multi-agent workflows, vector RAG pipelines, and high-performance FastAPI backends.",
+        top_skills: ["Multi-Agent Orchestration", "Python", "FastAPI", "React / Next.js", "Vector DBs"],
+        recommendation: "PROCEED_TO_INTERVIEW",
+      };
     case "get_candidate_profile":
       return { candidate, scan_id: "scan_candidate_09a4f", status: "parsed" };
     case "match_candidate_requirement":
