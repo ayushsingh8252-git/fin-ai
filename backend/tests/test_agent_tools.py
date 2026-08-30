@@ -13,9 +13,11 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.agent_tools import registry
-from app.database import SessionLocal
+from app.database import Base, SessionLocal, engine
 from app.main import app
 from app.models import CandidateScoreCard, FraudScan
+
+Base.metadata.create_all(bind=engine)
 
 client = TestClient(app)
 
@@ -40,6 +42,10 @@ def test_catalog_entries_have_required_fields():
         assert entry["connector"] and entry["tool"] and entry["description"]
         assert entry["input_schema"]["type"] == "object"
         assert entry["status"] in ("configured", "not_configured")
+        assert "permissions" in entry and isinstance(entry["permissions"], list)
+        assert "timeout" in entry and isinstance(entry["timeout"], (int, float))
+        assert "retry_policy" in entry and isinstance(entry["retry_policy"], dict)
+        assert "failure_response" in entry and isinstance(entry["failure_response"], dict)
 
 
 def test_call_unknown_connector_returns_404():

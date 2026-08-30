@@ -86,6 +86,11 @@ def unified_catalog() -> List[dict]:
                 "tool": tool["name"],
                 "description": tool["description"],
                 "input_schema": tool["input_schema"],
+                "output_schema": tool.get("output_schema"),
+                "permissions": tool.get("permissions") or info.required_scopes,
+                "timeout": tool.get("timeout", 15.0),
+                "retry_policy": tool.get("retry_policy"),
+                "failure_response": tool.get("failure_response"),
                 "status": info.status,
             })
     return catalog

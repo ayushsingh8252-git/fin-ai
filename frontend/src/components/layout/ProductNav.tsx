@@ -5,11 +5,12 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   ArrowLeft, LayoutGrid, ChevronDown, Search, ShieldCheck, Upload,
-  ShieldAlert, Phone, Video, Zap, Brain, UserPlus, Shield,
+  ShieldAlert, Phone, Video, Zap, Brain, UserPlus, Shield, Radar,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const PRODUCTS = [
+  { href: "/command-center", label: "Command Center", icon: Radar },
   { href: "/rag", label: "RAG Workspace", icon: Search },
   { href: "/rules", label: "Rule Explorer", icon: ShieldCheck },
   { href: "/upload", label: "Ingest Documents", icon: Upload },
@@ -60,7 +61,7 @@ export function ProductNav() {
   // /rag keeps its own bespoke nav (BrandMark-based workspace header) and is
   // explicitly excluded from this pass — render nothing there so it isn't
   // double-navved.
-  if (pathname?.startsWith("/rag")) return null;
+  if (pathname?.startsWith("/rag") || pathname?.startsWith("/command-center")) return null;
 
   return (
     <div className="sticky top-0 z-40 bg-white/85 backdrop-blur-md border-b border-zinc-200/80">

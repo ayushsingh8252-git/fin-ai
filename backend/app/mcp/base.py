@@ -63,14 +63,32 @@ class ToolDefinition:
     name: str
     description: str
     input_schema: Dict[str, Any]  # JSON Schema: {"type": "object", "properties": {...}, "required": [...]}
+    output_schema: Optional[Dict[str, Any]] = None
+    permissions: List[str] = None
+    timeout: float = 15.0
+    retry_policy: Optional[Dict[str, Any]] = None
+    failure_response: Optional[Dict[str, Any]] = None
     # False only for a tool that reads purely local/already-persisted data and
     # never calls out to the connector's external service — e.g. a message-
     # status lookup that reads this app's own DB rather than the vendor API.
     # Defaults True so every pre-existing connector's behavior is unchanged.
     requires_config: bool = True
 
+    def __post_init__(self):
+        if self.permissions is None:
+            self.permissions = []
+
     def to_dict(self) -> Dict[str, Any]:
-        return {"name": self.name, "description": self.description, "input_schema": self.input_schema}
+        return {
+            "name": self.name,
+            "description": self.description,
+            "input_schema": self.input_schema,
+            "output_schema": self.output_schema,
+            "permissions": self.permissions,
+            "timeout": self.timeout,
+            "retry_policy": self.retry_policy,
+            "failure_response": self.failure_response,
+        }
 
 
 @dataclass
@@ -113,9 +131,39 @@ class BaseMCPConnector(ABC):
         description: str,
         input_schema: Dict[str, Any],
         handler: Callable[[dict], dict],
+        output_schema: Optional[Dict[str, Any]] = None,
+        permissions: Optional[List[str]] = None,
+        timeout: float = 15.0,
+        retry_policy: Optional[Dict[str, Any]] = None,
+        failure_response: Optional[Dict[str, Any]] = None,
         requires_config: bool = True,
     ) -> None:
-        self._tools[name] = ToolDefinition(name=name, description=description, input_schema=input_schema, requires_config=requires_config)
+        perms = permissions if permissions is not None else list(self.required_scopes)
+        if retry_policy is None:
+            is_read = any(prefix in name for prefix in ("get_", "list_", "query", "search_", "calculate_", "verify_"))
+            retry_policy = {
+                "max_attempts": 3 if is_read else 1,
+                "backoff": "exponential",
+                "retryable": is_read,
+                "retry_on": ["network_error", "upstream_5xx"],
+            }
+        if failure_response is None:
+            failure_response = {
+                "format": {"error": "string", "code": "string", "status_code": "integer"},
+                "handled_codes": ["validation_error", "not_found", "not_configured", "upstream_error", "business_logic_error"],
+            }
+
+        self._tools[name] = ToolDefinition(
+            name=name,
+            description=description,
+            input_schema=input_schema,
+            output_schema=output_schema,
+            permissions=perms,
+            timeout=timeout,
+            retry_policy=retry_policy,
+            failure_response=failure_response,
+            requires_config=requires_config,
+        )
         self._handlers[name] = handler
 
     def is_configured(self) -> bool:

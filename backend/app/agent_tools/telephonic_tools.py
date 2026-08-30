@@ -70,6 +70,7 @@ class TelephonicConnector(BaseMCPConnector):
                 "required": ["call_id"],
             },
             handler=self._get_call_status,
+            requires_config=False,
         )
 
     def _place_screening_call(self, params: Dict[str, Any]) -> Dict[str, Any]:
