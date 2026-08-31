@@ -629,57 +629,76 @@ function RightCanvasInner({
   );
 }
 
-function PlanningNeuralVisualizer() {
-  const [createdCount, setCreatedCount] = useState(1);
+function PlanningNeuralVisualizer({ startedAt }: { startedAt?: number }) {
+  const ESTIMATED_SECONDS = 8;
+  const [elapsed, setElapsed] = useState(0);
 
   useEffect(() => {
     const iv = setInterval(() => {
-      setCreatedCount((prev) => (prev >= 4 ? 1 : prev + 1));
-    }, 450);
+      setElapsed(Math.round((Date.now() - (startedAt || Date.now())) / 1000));
+    }, 500);
     return () => clearInterval(iv);
-  }, []);
+  }, [startedAt]);
 
-  const sampleNodes = [
-    { name: "Document Parser", type: "Input Source", icon: FileText, color: "text-blue-400", border: "border-blue-500/30" },
-    { name: "Policy Evaluation", type: "Logic Gate", icon: ShieldCheck, color: "text-purple-400", border: "border-purple-500/30" },
-    { name: "Decision Aggregator", type: "Analytics", icon: GitBranch, color: "text-sky-400", border: "border-sky-500/30" },
-    { name: "Outreach Dispatch", type: "Action Channel", icon: MessageSquare, color: "text-emerald-400", border: "border-emerald-500/30" },
+  const remaining = Math.max(0, ESTIMATED_SECONDS - elapsed);
+
+  const scanLines = [
+    "Parsing natural language intent...",
+    "Querying tool catalog (21 connectors, 71 tools)...",
+    "Synthesizing execution DAG...",
+    "Resolving runtime dependency bindings...",
   ];
+  // Show lines progressively based on elapsed time
+  const visibleLines = scanLines.slice(0, Math.min(scanLines.length, Math.floor(elapsed / 1.5) + 1));
 
   return (
-    <div className="absolute inset-0 z-10 flex flex-col items-center justify-center p-6 overflow-hidden bg-zinc-950/85 backdrop-blur-xs">
+    <div className="absolute inset-0 z-10 flex flex-col items-center justify-center p-6 overflow-hidden bg-zinc-950/90 backdrop-blur-sm">
       {/* Moving scanline laser */}
       <div className="cc-scanline-bar" />
 
-      {/* Subtle pulse ring */}
-      <div className="absolute w-[360px] h-[360px] rounded-full border border-blue-500/15 animate-ping opacity-25 pointer-events-none" />
+      {/* Pulse rings */}
+      <div className="absolute w-[320px] h-[320px] rounded-full border border-blue-500/20 animate-ping opacity-20 pointer-events-none" />
+      <div className="absolute w-[200px] h-[200px] rounded-full border border-blue-400/15 animate-ping opacity-15 pointer-events-none" style={{ animationDelay: "0.5s" }} />
 
-      {/* Clean status badge */}
-      <div className="relative z-10 mb-6 flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-zinc-900/90 border border-zinc-800 text-zinc-300 text-xs font-mono shadow-md">
-        <Activity className="w-3.5 h-3.5 animate-pulse text-blue-400" />
-        <span>Creating execution nodes ({createdCount}/4)...</span>
+      {/* Center radar icon */}
+      <div className="relative z-10 mb-6 flex flex-col items-center gap-4">
+        {/* Rotating scan ring */}
+        <div className="relative w-16 h-16">
+          <div className="absolute inset-0 rounded-full border-2 border-blue-500/30" />
+          <div
+            className="absolute inset-0 rounded-full border-2 border-transparent border-t-blue-400"
+            style={{ animation: "spin 1.2s linear infinite" }}
+          />
+          <div className="absolute inset-0 flex items-center justify-center">
+            <Activity className="w-6 h-6 text-blue-400" />
+          </div>
+        </div>
+
+        {/* Status badge */}
+        <div className="flex items-center gap-2 px-4 py-2 rounded-full bg-zinc-900/90 border border-zinc-800 text-zinc-300 text-xs font-mono shadow-lg">
+          <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
+          <span>Scanning — Agent plan ready in ~{remaining}s</span>
+        </div>
       </div>
 
-      {/* Dynamic assembling nodes */}
-      <div className="relative z-10 flex flex-wrap items-center justify-center gap-3 max-w-md w-full">
-        {sampleNodes.slice(0, createdCount).map((node, idx) => {
-          const Icon = node.icon;
-          return (
-            <div
-              key={node.name}
-              className={`flex items-center gap-3 px-3.5 py-2.5 rounded-lg bg-zinc-900/90 border ${node.border} shadow-lg shadow-black/40 transition-all duration-200`}
-            >
-              <div className="p-1.5 rounded-md bg-white/5">
-                <Icon className={`w-4 h-4 ${node.color}`} />
-              </div>
-              <div>
-                <div className="text-xs font-medium text-zinc-200">{node.name}</div>
-                <div className="text-[10px] text-zinc-500 font-mono">{node.type}</div>
-              </div>
-              <div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-ping ml-1" />
-            </div>
-          );
-        })}
+      {/* Progressive scan log */}
+      <div className="relative z-10 w-full max-w-sm space-y-1.5">
+        {visibleLines.map((line, idx) => (
+          <div
+            key={idx}
+            className="flex items-center gap-2 px-3 py-2 rounded-lg bg-zinc-900/80 border border-zinc-800/80 text-[11px] font-mono text-zinc-400"
+          >
+            <CheckCircle2 className="w-3 h-3 text-blue-400 shrink-0" />
+            {line}
+          </div>
+        ))}
+        {/* Blinking cursor for last visible line */}
+        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-zinc-900/60 border border-zinc-800/40 text-[11px] font-mono text-zinc-600">
+          <span className="w-3 h-3 shrink-0 flex items-center justify-center">
+            <span className="w-1.5 h-3 bg-blue-400 animate-pulse" />
+          </span>
+          Building optimal execution graph...
+        </div>
       </div>
     </div>
   );
