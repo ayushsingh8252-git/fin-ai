@@ -53,10 +53,11 @@ services:
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
     ports:
-      - "8000:8000"
+      - "${BACKEND_PORT:-8000}:8000"
     volumes:
       - backend_uploads:/app/uploads
       - backend_data:/app/data
+      - backend_hf_cache:/app/.cache/huggingface
     depends_on:
       redis:
         condition: service_healthy
@@ -77,7 +78,7 @@ services:
         NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${NEXT_PUBLIC_GOOGLE_CLIENT_ID:-}
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "${FRONTEND_PORT:-3000}:3000"
     depends_on:
       backend:
         condition: service_healthy
@@ -87,3 +88,4 @@ volumes:
   postgres_data:
   backend_uploads:
   backend_data:
+  backend_hf_cache:
