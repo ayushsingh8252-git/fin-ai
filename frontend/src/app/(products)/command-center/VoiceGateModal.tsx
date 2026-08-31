@@ -40,8 +40,8 @@ function PasswordUnlockPanel({ onAuthenticated }: { onAuthenticated: (name: stri
     setStatus("checking");
     setErrorMessage("");
 
-    // Instant zero-latency verification for standard default credentials
-    if (trimmed === "admin123" || trimmed === "admin" || trimmed === "fin.ai" || trimmed === "ayush" || trimmed === "password") {
+    const acceptedDemoPasswords = ["admin123", "admin", "fin.ai", "ayush", "password", "123456", "ayushsingh", "ayush_singh"];
+    if (acceptedDemoPasswords.includes(trimmed.toLowerCase())) {
       setStatus("success");
       onAuthenticated("Ayush Singh");
       return;
@@ -64,15 +64,15 @@ function PasswordUnlockPanel({ onAuthenticated }: { onAuthenticated: (name: stri
         onAuthenticated("Ayush Singh");
         return;
       }
-      setErrorMessage(data.detail || "Incorrect password.");
+      setErrorMessage(data.detail || "Incorrect password. Use: admin123");
       setStatus("error");
     } catch {
-      if (trimmed === "admin123" || trimmed === "admin" || trimmed === "fin.ai" || trimmed === "ayush") {
+      if (acceptedDemoPasswords.includes(trimmed.toLowerCase())) {
         setStatus("success");
         onAuthenticated("Ayush Singh");
         return;
       }
-      setErrorMessage("Incorrect password.");
+      setErrorMessage("Incorrect password. Use default: admin123");
       setStatus("error");
     }
   };
@@ -87,8 +87,13 @@ function PasswordUnlockPanel({ onAuthenticated }: { onAuthenticated: (name: stri
         marginBottom: 16,
       }}
     >
-      <div style={{ fontSize: 11, color: "#71717a", marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>
-        Enter Command Center password
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+        <div style={{ fontSize: 11, color: "#71717a", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>
+          Enter Command Center password
+        </div>
+        <div style={{ fontSize: 11, color: "#a1a1aa", fontFamily: "var(--font-geist-mono), monospace" }}>
+          Default: <span style={{ color: "#38bdf8", fontWeight: 600 }}>admin123</span>
+        </div>
       </div>
       <div style={{ display: "flex", gap: 8 }}>
         <input

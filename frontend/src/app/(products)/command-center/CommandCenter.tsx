@@ -268,7 +268,23 @@ export default function CommandCenter() {
   const [jobDescription, setJobDescription] = useState("");
   const [attachedDoc, setAttachedDoc] = useState<AttachedDocument | null>(null);
   const [showJdInput, setShowJdInput] = useState(false);
-  const [isVoiceAuthenticated, setIsVoiceAuthenticated] = useState(false);
+  const [isVoiceAuthenticated, setIsVoiceAuthenticated] = useState<boolean>(() => {
+    if (typeof window !== "undefined") {
+      return sessionStorage.getItem("cc_authenticated") === "true";
+    }
+    return false;
+  });
+
+  const handleAuthenticated = useCallback((_name?: string) => {
+    if (typeof window !== "undefined") {
+      try {
+        sessionStorage.setItem("cc_authenticated", "true");
+      } catch {
+        // ignore
+      }
+    }
+    setIsVoiceAuthenticated(true);
+  }, []);
 
   const [state, setState] = useState<MissionState>({
     phase: "idle",
@@ -847,7 +863,7 @@ export default function CommandCenter() {
       {/* ── VOICE BIOMETRIC SECURITY GATE OVERLAY ── */}
       <VoiceGateModal
         isOpen={!isVoiceAuthenticated}
-        onAuthenticated={() => setIsVoiceAuthenticated(true)}
+        onAuthenticated={handleAuthenticated}
       />
 
       <div
