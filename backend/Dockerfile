@@ -20,7 +20,9 @@ COPY requirements.txt .
 # disk/bandwidth on GPU support that will never be used.
 RUN pip install --no-cache-dir --default-timeout=100 --retries=5 \
     torch torchaudio --index-url https://download.pytorch.org/whl/cpu
-RUN pip install --no-cache-dir --default-timeout=100 --retries=5 -r requirements.txt
+RUN pip install --no-cache-dir --default-timeout=100 --retries=5 \
+    --extra-index-url https://download.pytorch.org/whl/cpu \
+    -r requirements.txt
 
 COPY . .
 
