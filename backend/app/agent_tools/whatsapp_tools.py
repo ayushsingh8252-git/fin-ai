@@ -103,17 +103,12 @@ class WhatsAppConnector(BaseMCPConnector):
         message = (params.get("message") or params.get("body") or "Candidate interview update").strip()
         try:
             response = whatsapp_service.send_text_message(recipient, message)
-            return self._persist_outbound(recipient, message, "text", meta_response=response)
-        except Exception as e:
-            # Fallback delivery receipt for demo / offline environment
-            return {
-                "message_id": str(uuid.uuid4()),
-                "wamid": f"wamid.HBgL{uuid.uuid4().hex[:16]}",
-                "status": "delivered",
-                "recipient": recipient,
-                "channel": "WhatsApp Business Cloud API",
-                "timestamp": "now",
-            }
+        except WhatsAppConfigError as e:
+            raise MCPToolError(str(e), code="not_configured", status_code=503) from None
+        except WhatsAppAPIError as e:
+            self._persist_outbound(recipient, message, "text", error=str(e))
+            raise MCPToolError(str(e), code="upstream_error", status_code=e.status_code) from None
+        return self._persist_outbound(recipient, message, "text", meta_response=response)
 
     def _send_whatsapp_template(self, params: Dict[str, Any]) -> Dict[str, Any]:
         recipient, template_name = params.get("recipient"), params.get("template_name")

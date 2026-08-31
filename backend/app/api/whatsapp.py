@@ -8,6 +8,7 @@ and eventually disables the webhook — if it doesn't see a fast 2xx) and does
 all LLM/tool-calling work in a FastAPI BackgroundTask after the response is
 already on the wire, per the platform spec's explicit requirement not to
 block the webhook on long-running AI processing."""
+import json
 import logging
 import uuid
 
@@ -89,8 +90,14 @@ def _process_webhook_events(payload: dict) -> None:
 
 @router.post("")
 async def receive_webhook(request: Request, background_tasks: BackgroundTasks):
+    raw_body = await request.body()
+
+    if not whatsapp_service.verify_signature(raw_body, request.headers.get("x-hub-signature-256")):
+        logger.warning("[WhatsApp Webhook] Rejected POST with missing/invalid X-Hub-Signature-256.")
+        return Response(status_code=403)
+
     try:
-        payload = await request.json()
+        payload = json.loads(raw_body)
     except Exception:
         # Still ack with 200 — a malformed body from Meta is not something
         # retrying will fix, and a non-2xx here risks Meta disabling the

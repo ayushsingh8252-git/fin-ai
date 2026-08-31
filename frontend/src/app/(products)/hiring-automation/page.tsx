@@ -109,18 +109,28 @@ function candidateFromParsed(raw: Record<string, unknown>, index: number): Candi
   };
 }
 
+// `live: true` marks the 5 stages that call the real backend
+// (/api/v1/hiring/*  — see the file-header comment above); `live: false`
+// marks the 5 that are simulated/human-triggered in this build (no
+// SMTP/MCP/calendar/Okta/Slack integration wired in yet). Surfaced in the
+// chip tooltips below rather than silently presenting all 10 as equally
+// "live" — see platform-status-audit docs for the same distinction.
 const PIPELINE_NODES = [
-  { key: "upload", title: "Bulk PDF Upload", desc: "Ingests resumes from HR bulk upload", icon: Upload },
-  { key: "parser", title: "Resume Parser", desc: "Extracts structured text & entities", icon: ScanSearch },
-  { key: "ats", title: "ATS + Email Extraction", desc: "Scores resumes, extracts contact info", icon: Mail },
-  { key: "matching", title: "Requirement Matching", desc: "Matches skills to role requirements", icon: Target },
-  { key: "assignment", title: "Assignment Generator", desc: "Drafts a personalized take-home task", icon: ClipboardList },
-  { key: "evaluation", title: "Candidate Evaluation", desc: "Scores submissions & ranks candidates", icon: Award },
-  { key: "review", title: "HR & Hiring Manager Review", desc: "Human approval gate before onboarding", icon: ShieldCheck },
-  { key: "scheduling", title: "Interview Scheduling", desc: "Books telephonic & AI interview slots", icon: CalendarDays },
-  { key: "onboarding", title: "Onboarding Agent", desc: "Provisions accounts & equipment", icon: UserPlus },
-  { key: "knowledge", title: "Knowledge Transfer Agent", desc: "Assigns docs, videos & training", icon: BookOpen },
+  { key: "upload", title: "Bulk PDF Upload", desc: "Ingests resumes from HR bulk upload", icon: Upload, live: true },
+  { key: "parser", title: "Resume Parser", desc: "Extracts structured text & entities", icon: ScanSearch, live: true },
+  { key: "ats", title: "ATS + Email Extraction", desc: "Scores resumes, extracts contact info", icon: Mail, live: true },
+  { key: "matching", title: "Requirement Matching", desc: "Matches skills to role requirements", icon: Target, live: true },
+  { key: "assignment", title: "Assignment Generator", desc: "Drafts a personalized take-home task", icon: ClipboardList, live: true },
+  { key: "evaluation", title: "Candidate Evaluation", desc: "Scores submissions & ranks candidates", icon: Award, live: false },
+  { key: "review", title: "HR & Hiring Manager Review", desc: "Human approval gate before onboarding", icon: ShieldCheck, live: false },
+  { key: "scheduling", title: "Interview Scheduling", desc: "Books telephonic & AI interview slots", icon: CalendarDays, live: false },
+  { key: "onboarding", title: "Onboarding Agent", desc: "Provisions accounts & equipment", icon: UserPlus, live: false },
+  { key: "knowledge", title: "Knowledge Transfer Agent", desc: "Assigns docs, videos & training", icon: BookOpen, live: false },
 ] as const;
+
+function nodeTooltip(node: { desc: string; live: boolean }): string {
+  return node.live ? node.desc : `${node.desc} (simulated in this build — no live backend call)`;
+}
 
 const ONBOARDING_STEPS = [
   { label: "Create Employee", icon: UserPlus },
@@ -267,11 +277,31 @@ export default function HiringAutomationPage() {
   const [ktProgress, setKtProgress] = useState(0);
   const [ktRunning, setKtRunning] = useState(false);
   const runId = useRef(0);
+  const pipelineCardRef = useRef<HTMLDivElement>(null);
+  const [showStickyChain, setShowStickyChain] = useState(false);
 
   // Invalidates any in-flight animation chain (runNode/sleep timers) on unmount — otherwise
   // a pending setTimeout from a chain still running when the user navigates away (e.g. via
   // the "Open Onboarding Agent" link mid-animation) would call setState after unmount.
   useEffect(() => () => { runId.current += 1; }, []);
+
+  // The compact "AI Agents" chain in the sticky header is redundant while the
+  // big in-page Live Agent Workflow card is still on screen — it only needs
+  // to appear once that card has scrolled up out of view (not before the
+  // user has scrolled to it at all, which is why boundingClientRect.top < 0
+  // is checked alongside isIntersecting: the observer's negative rootMargin
+  // makes both "not yet scrolled to" and "scrolled past" read as
+  // non-intersecting, and only the latter should show the sticky chain).
+  useEffect(() => {
+    const el = pipelineCardRef.current;
+    if (!el) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => setShowStickyChain(!entry.isIntersecting && entry.boundingClientRect.top < 0),
+      { rootMargin: "-104px 0px 0px 0px", threshold: 0 }
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   const nodeStatus = (idx: number): NodeStatus =>
     completedNodes.includes(idx) ? "done" : activeNode === idx ? "active" : "pending";
@@ -663,6 +693,7 @@ export default function HiringAutomationPage() {
         doneCount={completedNodes.length}
         onReset={handleReset}
         onJump={onJump}
+        showChain={showStickyChain}
       />
 
       <main className="max-w-6xl mx-auto px-4 sm:px-6 py-10 space-y-10 relative z-10">
@@ -679,7 +710,9 @@ export default function HiringAutomationPage() {
         </div>
 
         {/* PIPELINE VISUALIZATION */}
-        <PipelineFlow nodeStatus={nodeStatus} workflowStatus={workflowStatus} onJump={onJump} />
+        <div ref={pipelineCardRef}>
+          <PipelineFlow nodeStatus={nodeStatus} workflowStatus={workflowStatus} onJump={onJump} />
+        </div>
 
         {/* UPLOAD */}
         <div id="upload" className="scroll-mt-[220px]">
@@ -881,6 +914,7 @@ function PipelineFlow({
               <motion.button
                 type="button"
                 onClick={() => onJump(node.key)}
+                title={nodeTooltip(node)}
                 initial={{ opacity: 0, y: 8 }}
                 animate={
                   status === "active"
@@ -892,7 +926,7 @@ function PipelineFlow({
                     ? { boxShadow: { duration: 1.6, repeat: Infinity, ease: "easeInOut" }, default: { duration: 0.3 } }
                     : { delay: i * 0.03, duration: 0.3 }
                 }
-                className={`relative w-full sm:w-[126px] shrink-0 rounded-2xl border p-3 flex flex-col justify-between gap-1.5 min-h-[96px] overflow-hidden text-left transition-shadow cursor-pointer ${
+                className={`relative w-full sm:w-[126px] shrink-0 rounded-2xl border p-3 flex flex-col justify-between gap-1.5 min-h-[64px] overflow-hidden text-left transition-shadow cursor-pointer ${
                   paused
                     ? "bg-amber-50 border-amber-300 hover:shadow-md"
                     : status === "active"
@@ -923,9 +957,11 @@ function PipelineFlow({
                 </div>
                 <div className="relative">
                   <div className={`text-[10.5px] font-bold leading-tight ${status === "active" ? "text-white" : paused ? "text-amber-800" : "text-zinc-900"}`}>{node.title}</div>
-                  <div className={`text-[9px] leading-tight mt-0.5 ${status === "active" ? "text-blue-100" : paused ? "text-amber-700" : "text-zinc-500"}`}>
-                    {paused ? "Approval required" : node.desc}
-                  </div>
+                  {!node.live && (
+                    <div className={`text-[8px] font-mono font-semibold uppercase tracking-wide mt-0.5 ${status === "active" ? "text-blue-100" : "text-zinc-400"}`}>
+                      Simulated
+                    </div>
+                  )}
                 </div>
               </motion.button>
               {i < PIPELINE_NODES.length - 1 && (
@@ -957,19 +993,25 @@ function PipelineFlow({
    ═══════════════════════════════════════════════════════════ */
 
 function WorkflowHeader({
-  nodeStatus, workflowStatus, doneCount, onReset, onJump,
+  nodeStatus, workflowStatus, doneCount, onReset, onJump, showChain,
 }: {
   nodeStatus: (idx: number) => NodeStatus;
   workflowStatus: WorkflowStatus;
   doneCount: number;
   onReset: () => void;
   onJump: (key: string) => void;
+  /** The big in-page "Live Agent Workflow" card already shows this same
+   * chain — the compact header version only needs to appear once that card
+   * has scrolled out of view, instead of duplicating it from the first pixel
+   * of the page. */
+  showChain: boolean;
 }) {
   const pct = Math.round((doneCount / PIPELINE_NODES.length) * 100);
   const isApproval = workflowStatus.mode === "approval";
   const isDone = workflowStatus.mode === "done";
 
   return (
+    <>
     <div className="sticky top-12 z-30">
       {/* Level 1 — application header (unchanged branding + Restart Demo) */}
       <div className="border-b border-zinc-200/80 bg-white/95 backdrop-blur-md">
@@ -992,9 +1034,27 @@ function WorkflowHeader({
           </div>
         </div>
       </div>
+    </div>
 
-      {/* Level 2 — live agent workflow */}
-      <div className={`border-b backdrop-blur-md transition-colors duration-300 ${isApproval ? "bg-amber-50/95 border-amber-200" : "bg-white/95 border-zinc-200/70"}`}>
+      {/* Level 2 — live agent workflow. Only shown once the big in-page
+          pipeline card has scrolled out of view (see showStickyChain in
+          HiringAutomationPage) so it isn't a redundant duplicate at the top
+          of the page. Deliberately `fixed` rather than nested in the sticky
+          flow container above: its own height changes as it animates open —
+          if it were in-flow, that would shift the document (and therefore
+          the pipeline card being observed), which would flip showChain and
+          the animation back and forth in a feedback loop. `fixed` removes it
+          from flow entirely, so its appearance never moves anything else. */}
+      <AnimatePresence>
+      {showChain && (
+      <motion.div
+        initial={{ opacity: 0, height: 0 }}
+        animate={{ opacity: 1, height: "auto" }}
+        exit={{ opacity: 0, height: 0 }}
+        transition={{ duration: 0.2, ease: "easeOut" }}
+        style={{ position: "fixed", top: 104, left: 0, right: 0, zIndex: 30 }}
+        className={`overflow-hidden border-b backdrop-blur-md transition-colors duration-300 ${isApproval ? "bg-amber-50/95 border-amber-200" : "bg-white/95 border-zinc-200/70"}`}
+      >
         <div className="max-w-6xl mx-auto px-4 sm:px-6 py-2.5">
           <div className="flex items-center justify-between gap-3 mb-2">
             <div className="flex items-center gap-1.5">
@@ -1023,7 +1083,7 @@ function WorkflowHeader({
                   <button
                     type="button"
                     onClick={() => onJump(node.key)}
-                    title={node.desc}
+                    title={nodeTooltip(node)}
                     className={`shrink-0 flex items-center gap-1.5 px-2 py-1 rounded-lg border text-[10.5px] font-bold whitespace-nowrap transition-colors ${
                       paused
                         ? "bg-amber-100 border-amber-300 text-amber-800"
@@ -1056,7 +1116,7 @@ function WorkflowHeader({
                   key={node.key}
                   type="button"
                   onClick={() => onJump(node.key)}
-                  title={node.title}
+                  title={nodeTooltip(node)}
                   aria-label={node.title}
                   className={`w-2.5 h-2.5 rounded-full shrink-0 transition-colors ${
                     paused ? "bg-amber-500" : status === "done" ? "bg-emerald-500" : status === "active" ? "bg-blue-600 animate-pulse" : "bg-zinc-200"
@@ -1096,8 +1156,10 @@ function WorkflowHeader({
             </div>
           )}
         </div>
-      </div>
-    </div>
+      </motion.div>
+      )}
+      </AnimatePresence>
+    </>
   );
 }
 

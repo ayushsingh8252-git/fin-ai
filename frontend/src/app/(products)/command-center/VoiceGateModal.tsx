@@ -13,6 +13,7 @@ import {
   Cpu,
   Upload,
   FileAudio,
+  KeyRound,
 } from "lucide-react";
 
 interface Props {
@@ -21,6 +22,120 @@ interface Props {
 }
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+/** Password tab — POSTs to the server-side /command-center/unlock check
+ * (api/command_center.py) and never compares the password itself; the
+ * backend holds the only copy of the bcrypt hash. Mirrors the voice tab's
+ * stateless unlock semantics: on success it just calls onAuthenticated,
+ * no token/session is created or persisted. */
+function PasswordUnlockPanel({ onAuthenticated }: { onAuthenticated: (name: string) => void }) {
+  const [password, setPassword] = useState("");
+  const [status, setStatus] = useState<"idle" | "checking" | "success" | "error">("idle");
+  const [errorMessage, setErrorMessage] = useState("");
+
+  const submit = async () => {
+    if (!password || status === "checking") return;
+    setStatus("checking");
+    setErrorMessage("");
+    try {
+      const res = await fetch(`${API_URL}/api/v1/command-center/unlock`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.unlocked) {
+        setStatus("success");
+        setTimeout(() => onAuthenticated("Ayush Singh"), 600);
+        return;
+      }
+      setErrorMessage(data.detail || "Incorrect password.");
+      setStatus("error");
+    } catch (err: any) {
+      setErrorMessage("Unable to reach the authentication backend.");
+      setStatus("error");
+    }
+  };
+
+  return (
+    <div
+      style={{
+        background: "#121216",
+        border: "1px solid rgba(255, 255, 255, 0.08)",
+        borderRadius: 12,
+        padding: "20px",
+        marginBottom: 16,
+      }}
+    >
+      <div style={{ fontSize: 11, color: "#71717a", marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>
+        Enter Command Center password
+      </div>
+      <div style={{ display: "flex", gap: 8 }}>
+        <input
+          type="password"
+          value={password}
+          onChange={(e) => {
+            setPassword(e.target.value);
+            if (status === "error") setStatus("idle");
+          }}
+          onKeyDown={(e) => e.key === "Enter" && submit()}
+          disabled={status === "checking" || status === "success"}
+          placeholder="********"
+          autoFocus
+          style={{
+            flex: 1,
+            background: "#0c0c0f",
+            border: status === "error" ? "1px solid rgba(239, 68, 68, 0.4)" : "1px solid rgba(255, 255, 255, 0.12)",
+            borderRadius: 8,
+            padding: "10px 12px",
+            color: "#f4f4f5",
+            fontSize: 13,
+            fontFamily: "var(--font-geist-mono), monospace",
+            outline: "none",
+          }}
+        />
+        <button
+          onClick={submit}
+          disabled={!password || status === "checking" || status === "success"}
+          style={{
+            padding: "10px 18px",
+            borderRadius: 8,
+            border: "1px solid rgba(255, 255, 255, 0.2)",
+            background: status === "success" ? "rgba(16, 185, 129, 0.15)" : "#18181f",
+            color: status === "success" ? "#34d399" : "#f4f4f5",
+            fontSize: 12,
+            fontWeight: 700,
+            cursor: !password || status === "checking" ? "not-allowed" : "pointer",
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            whiteSpace: "nowrap",
+          }}
+        >
+          {status === "checking" ? (
+            <Loader2 size={14} className="animate-spin" />
+          ) : status === "success" ? (
+            <CheckCircle2 size={14} />
+          ) : (
+            <Unlock size={14} />
+          )}
+          {status === "success" ? "Access granted" : "Unlock"}
+        </button>
+      </div>
+
+      {status === "success" && (
+        <div style={{ marginTop: 12, fontSize: 12, color: "#34d399", display: "flex", alignItems: "center", gap: 6 }}>
+          <CheckCircle2 size={14} /> <span>Opening Command Center...</span>
+        </div>
+      )}
+      {errorMessage && (
+        <div style={{ marginTop: 12, fontSize: 12, color: "#f87171", display: "flex", alignItems: "center", gap: 6, background: "rgba(239, 68, 68, 0.08)", padding: "8px 12px", borderRadius: 6, border: "1px solid rgba(239, 68, 68, 0.2)" }}>
+          <AlertCircle size={14} style={{ flexShrink: 0 }} /> <span>{errorMessage}</span>
+        </div>
+      )}
+    </div>
+  );
+}
 
 const AUTHORIZATION_PHRASES = [
   "Authorize Ayush Singh for Command Center access.",
@@ -34,6 +149,7 @@ const AUTHORIZATION_PHRASES = [
 ];
 
 export function VoiceGateModal({ isOpen, onAuthenticated }: Props) {
+  const [unlockMethod, setUnlockMethod] = useState<"voice" | "password">("voice");
   const [currentPhrase, setCurrentPhrase] = useState(AUTHORIZATION_PHRASES[0]);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
@@ -259,14 +375,63 @@ export function VoiceGateModal({ isOpen, onAuthenticated }: Props) {
           </div>
 
           <h2 style={{ fontSize: 20, fontWeight: 700, color: "#f4f4f5", marginBottom: 6, letterSpacing: "-0.02em" }}>
-            Voice Biometric Authentication
+            {unlockMethod === "voice" ? "Voice Biometric Authentication" : "Password Authentication"}
           </h2>
           <p style={{ fontSize: 13, color: "#a1a1aa", margin: 0, lineHeight: 1.5 }}>
-            Speak into the microphone to authenticate your voice identity for Ayush Singh.
+            {unlockMethod === "voice"
+              ? "Speak into the microphone to authenticate your voice identity for Ayush Singh."
+              : "Enter the Command Center password to unlock."}
           </p>
         </div>
 
+        {/* Unlock method switcher */}
+        <div
+          style={{
+            display: "flex",
+            gap: 6,
+            marginBottom: 16,
+            background: "#0c0c0f",
+            border: "1px solid rgba(255, 255, 255, 0.06)",
+            borderRadius: 10,
+            padding: 4,
+          }}
+        >
+          {(["voice", "password"] as const).map((method) => (
+            <button
+              key={method}
+              onClick={() => {
+                setUnlockMethod(method);
+                setErrorMessage("");
+                setStatus("idle");
+              }}
+              style={{
+                flex: 1,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 6,
+                padding: "8px 0",
+                borderRadius: 7,
+                border: "none",
+                background: unlockMethod === method ? "#1f1f26" : "transparent",
+                color: unlockMethod === method ? "#f4f4f5" : "#71717a",
+                fontSize: 12,
+                fontWeight: 700,
+                cursor: "pointer",
+                transition: "all 0.15s ease",
+              }}
+            >
+              {method === "voice" ? <Mic size={13} /> : <KeyRound size={13} />}
+              {method === "voice" ? "Voice" : "Password"}
+            </button>
+          ))}
+        </div>
+
+        {unlockMethod === "password" && <PasswordUnlockPanel onAuthenticated={onAuthenticated} />}
+
         {/* Passphrase Recording Card */}
+        {unlockMethod === "voice" && (
+        <>
         <div
           style={{
             background: "#121216",
@@ -404,11 +569,17 @@ export function VoiceGateModal({ isOpen, onAuthenticated }: Props) {
             ))}
           </div>
         )}
+        </>
+        )}
 
         {/* Footer info */}
         <div style={{ fontSize: 11, color: "#71717a", textAlign: "center", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
           <CheckCircle2 size={12} className="text-emerald-400" />
-          <span>Local Neural Speaker Biometrics • Zero Third-Party Audio Leakage</span>
+          <span>
+            {unlockMethod === "voice"
+              ? "Local Neural Speaker Biometrics • Zero Third-Party Audio Leakage"
+              : "Password Verified Server-Side • Never Exposed to the Browser"}
+          </span>
         </div>
       </motion.div>
     </div>

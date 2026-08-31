@@ -199,6 +199,22 @@ class Settings(BaseSettings):
     WHATSAPP_BUSINESS_ACCOUNT_ID: str = ""
     WHATSAPP_VERIFY_TOKEN: str = ""
     WHATSAPP_API_VERSION: str = "v21.0"
+    # App Secret from the Meta App Dashboard (Settings > Basic) — used to
+    # verify the X-Hub-Signature-256 header Meta sends on every webhook POST,
+    # so a POST to the (publicly guessable) /webhooks/whatsapp URL can't be
+    # spoofed. Empty means signature verification is skipped (dev-only; a
+    # warning is logged) rather than rejecting every request outright, since
+    # local/ngrok dev often predates having this configured.
+    WHATSAPP_APP_SECRET: str = ""
+
+    # Command Center — password unlock (server-side alternative to the voice
+    # biometric gate; see api/command_center.py). A bcrypt hash, never the
+    # plaintext password — generate with:
+    #   python -c "import bcrypt; print(bcrypt.hashpw(b'yourpassword', bcrypt.gensalt()).decode())"
+    # Empty means the /command-center/unlock endpoint is disabled (503),
+    # same "empty = not configured, fail with a clear error" convention used
+    # across every other integration in this file.
+    COMMAND_CENTER_PASSWORD_HASH: str = ""
 
     # Fraud detection pipeline
     FRAUD_ELA_THRESHOLD: float = 35.0

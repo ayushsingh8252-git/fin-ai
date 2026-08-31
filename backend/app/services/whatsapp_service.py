@@ -12,6 +12,8 @@ message's delivery state. Delivery/read receipts arrive later as asynchronous
 No new pip dependency — plain `urllib.request`, same convention as
 services/llm_service.py's `_call_grok_groq_api`.
 """
+import hashlib
+import hmac
 import json
 import logging
 import urllib.error
@@ -157,6 +159,28 @@ def send_template_message(
         "template": template,
     }
     return _post(f"{settings.WHATSAPP_PHONE_NUMBER_ID}/messages", payload)
+
+
+def verify_signature(raw_body: bytes, signature_header: Optional[str]) -> bool:
+    """Verifies Meta's X-Hub-Signature-256 header on every webhook POST,
+    computed as HMAC-SHA256 over the raw request body keyed by the app's
+    WHATSAPP_APP_SECRET (Meta App Dashboard > Settings > Basic). Without
+    this, any POST to the (publicly guessable) /webhooks/whatsapp URL would
+    be processed as a genuine inbound message with no proof it came from
+    Meta. Returns True (skips the check, with a warning) when
+    WHATSAPP_APP_SECRET isn't configured, so local/ngrok dev that predates
+    setting it up doesn't break — but that also means it must be set before
+    this endpoint is exposed publicly."""
+    if not settings.WHATSAPP_APP_SECRET:
+        logger.warning("[WhatsApp] WHATSAPP_APP_SECRET isn't set — webhook signature verification is SKIPPED. Set it before exposing this endpoint publicly.")
+        return True
+    if not signature_header or not signature_header.startswith("sha256="):
+        return False
+    expected = hmac.new(
+        settings.WHATSAPP_APP_SECRET.encode("utf-8"), raw_body, hashlib.sha256
+    ).hexdigest()
+    provided = signature_header.removeprefix("sha256=")
+    return hmac.compare_digest(expected, provided)
 
 
 def verify_webhook_challenge(mode: Optional[str], token: Optional[str], challenge: Optional[str]) -> Optional[str]:

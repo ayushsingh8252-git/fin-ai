@@ -1,3 +1,10 @@
+# NOTE: the root-level docker-compose.yml (../../docker-compose.yml, one
+# level above apps/) is the recommended entry point for a full-stack deploy —
+# it additionally wires up the episodic-memory Postgres store and the other
+# two monorepo apps (ai_interview, hiring-automation) in one place. This file
+# is kept for running AI-Policy-Rule-Engine standalone (backend+redis+
+# frontend+postgres only); its overrides below are kept in parity with the
+# root file's so episodic memory and outbound calling still work here too.
 services:
   redis:
     image: redis:7-alpine
@@ -6,6 +13,23 @@ services:
       - redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: policy_episodic
+      POSTGRES_USER: policy
+      POSTGRES_PASSWORD: policy
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U policy -d policy_episodic"]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -24,8 +48,10 @@ services:
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/0
+      EPISODIC_DATABASE_URL: postgresql+psycopg2://policy:policy@postgres:5432/policy_episodic
       TESSERACT_CMD: /usr/bin/tesseract
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
     ports:
       - "8000:8000"
     volumes:
@@ -33,6 +59,8 @@ services:
       - backend_data:/app/data
     depends_on:
       redis:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
@@ -56,5 +84,6 @@ services:
 
 volumes:
   redis_data:
+  postgres_data:
   backend_uploads:
   backend_data:
