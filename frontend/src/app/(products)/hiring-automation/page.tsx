@@ -10,7 +10,7 @@ import {
   ArrowUpDown, ChevronLeft, ChevronRight, Sparkles, Send, RotateCcw, Users,
   KeyRound, Laptop2, Building2, ScrollText, Video, CalendarClock, ClipboardCheck,
   Plug, Radio, Filter, GitBranch, PartyPopper, Bot, MailCheck, Star, ArrowUpRight,
-  AlertTriangle, Calendar, Clock, Phone, Play, CalendarDays,
+  AlertTriangle, Calendar, Clock, Phone, Play, CalendarDays, Pause,
 } from "lucide-react";
 import { writeSyncedHires, clearSyncedHires } from "@/lib/hiringSync";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -157,6 +157,26 @@ type Stage =
   | "sending" | "evaluation" | "scheduling" | "onboarding" | "knowledge" | "done";
 type NodeStatus = "pending" | "active" | "done";
 type InterviewType = "telephonic" | "ai";
+
+/* "What is the AI doing right now", in plain language, for the persistent
+   header — see workflowStatus useMemo in HiringAutomationPage. */
+type WorkflowMode = "idle" | "running" | "waiting" | "approval" | "done";
+interface WorkflowStatus {
+  index: number | null;
+  label: string;
+  detail: string;
+  percent: number | null;
+  mode: WorkflowMode;
+}
+
+/* Maps a PIPELINE_NODES key to the DOM id of the section that best
+   represents it, for header/card click-to-scroll. Several agents share one
+   visible section (e.g. parser/ats both land on the candidate table). */
+const SCROLL_TARGET: Record<string, string> = {
+  upload: "upload", parser: "candidates", ats: "candidates", matching: "requirements",
+  assignment: "assignment", evaluation: "evaluation", review: "evaluation",
+  scheduling: "scheduling", onboarding: "onboarding", knowledge: "knowledge",
+};
 
 interface GeneratedAssignment {
   title: string;
@@ -565,27 +585,85 @@ export default function HiringAutomationPage() {
   };
   const reached = (s: Stage) => stageIndex[stage] >= stageIndex[s];
 
+  /* Single source of truth for "what is the AI doing right now", reused by
+     both the sticky header and the in-page pipeline card. Driven by `stage`
+     rather than `activeNode` alone — activeNode goes briefly null between
+     some stage transitions (e.g. for the whole generating/sending ticker
+     animations), so stage is the more reliable signal for which agent to
+     highlight as current. Never fabricates a percentage where the app has
+     no real step count to report (parsing is time-based, not step-based). */
+  const workflowStatus: WorkflowStatus = useMemo(() => {
+    const scheduledCount = candidates.filter((c) => c.telephonicInterview || c.aiInterview).length;
+    const pendingApproval = candidates.filter((c) => !approvals[c.id]).length;
+    switch (stage) {
+      case "idle":
+        return { index: null, label: "Ready", detail: "Waiting for resumes to upload", percent: null, mode: "idle" };
+      case "parsing": {
+        const idx = activeNode ?? 2;
+        return { index: idx, label: PIPELINE_NODES[idx].title, detail: parsingLog || "Working…", percent: null, mode: "running" };
+      }
+      case "spreadsheet":
+        return { index: 3, label: PIPELINE_NODES[3].title, detail: "Waiting for HR to enter role requirements", percent: null, mode: "waiting" };
+      case "generating":
+        return { index: 4, label: PIPELINE_NODES[4].title, detail: GEN_STEPS[genStep], percent: Math.round(((genStep + 1) / GEN_STEPS.length) * 100), mode: "running" };
+      case "assignment":
+        return { index: 5, label: PIPELINE_NODES[5].title, detail: "Waiting for HR to send the assignment to candidates", percent: null, mode: "waiting" };
+      case "sending":
+        return { index: 5, label: PIPELINE_NODES[5].title, detail: MCP_STEPS[mcpStep], percent: Math.round(((mcpStep + 1) / MCP_STEPS.length) * 100), mode: "running" };
+      case "evaluation":
+        return {
+          index: 6, label: PIPELINE_NODES[6].title,
+          detail: `${pendingApproval} candidate${pendingApproval === 1 ? "" : "s"} ready for review`,
+          percent: null, mode: "approval",
+        };
+      case "scheduling":
+        return {
+          index: 7, label: PIPELINE_NODES[7].title,
+          detail: `${scheduledCount}/${candidates.length} interviews scheduled`,
+          percent: candidates.length > 0 ? Math.round((scheduledCount / candidates.length) * 100) : 0,
+          mode: "running",
+        };
+      case "onboarding": {
+        if (onboardRunning) {
+          const step = ONBOARDING_STEPS[Math.min(onboardProgress, ONBOARDING_STEPS.length - 1)];
+          return { index: 8, label: PIPELINE_NODES[8].title, detail: step.label, percent: Math.round((onboardProgress / ONBOARDING_STEPS.length) * 100), mode: "running" };
+        }
+        if (onboardProgress >= ONBOARDING_STEPS.length) {
+          return { index: 8, label: PIPELINE_NODES[8].title, detail: "Onboarding complete — continue to Knowledge Transfer", percent: 100, mode: "running" };
+        }
+        return { index: 8, label: PIPELINE_NODES[8].title, detail: "Ready — run the onboarding agent", percent: null, mode: "waiting" };
+      }
+      case "knowledge": {
+        if (ktRunning) {
+          const step = KT_STEPS[Math.min(ktProgress, KT_STEPS.length - 1)];
+          return { index: 9, label: PIPELINE_NODES[9].title, detail: step.label, percent: Math.round((ktProgress / KT_STEPS.length) * 100), mode: "running" };
+        }
+        if (ktProgress >= KT_STEPS.length) {
+          return { index: 9, label: PIPELINE_NODES[9].title, detail: "Knowledge transfer complete — finish the workflow", percent: 100, mode: "running" };
+        }
+        return { index: 9, label: PIPELINE_NODES[9].title, detail: "Ready — run the knowledge transfer agent", percent: null, mode: "waiting" };
+      }
+      case "done":
+        return { index: null, label: "Complete", detail: "All 10 agents complete", percent: 100, mode: "done" };
+    }
+  }, [stage, activeNode, parsingLog, genStep, mcpStep, onboardProgress, onboardRunning, ktProgress, ktRunning, candidates, approvals]);
+
+  const onJump = (key: string) => {
+    const targetId = SCROLL_TARGET[key] ?? key;
+    document.getElementById(targetId)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
   return (
     <div className="min-h-screen bg-white text-zinc-900 bg-white-grid relative selection:bg-blue-500/20">
-      {/* PAGE HEADER */}
-      <div className="border-b border-zinc-200/80 bg-white">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Zap className="w-4 h-4 text-amber-500 fill-amber-500" />
-            <span className="text-sm font-bold text-zinc-900">Agentic Hiring Pipeline</span>
-          </div>
-          <button
-            onClick={handleReset}
-            className="text-xs font-mono font-bold px-3 py-1.5 rounded-lg bg-zinc-100 border border-zinc-200 text-zinc-700 hover:bg-zinc-200 transition-colors flex items-center gap-1.5"
-          >
-            <RotateCcw className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Restart Demo</span>
-          </button>
-        </div>
-      </div>
-
-      {/* CONDENSED STICKY PIPELINE — stays pinned under the nav while scrolling */}
-      <PipelineStickyBar nodeStatus={nodeStatus} />
+      {/* PERSISTENT HEADER — application branding (Level 1) + live agent
+          workflow (Level 2), both pinned beneath ProductNav while scrolling */}
+      <WorkflowHeader
+        nodeStatus={nodeStatus}
+        workflowStatus={workflowStatus}
+        doneCount={completedNodes.length}
+        onReset={handleReset}
+        onJump={onJump}
+      />
 
       <main className="max-w-6xl mx-auto px-4 sm:px-6 py-10 space-y-10 relative z-10">
         {/* HERO */}
@@ -601,17 +679,19 @@ export default function HiringAutomationPage() {
         </div>
 
         {/* PIPELINE VISUALIZATION */}
-        <PipelineFlow nodeStatus={nodeStatus} />
+        <PipelineFlow nodeStatus={nodeStatus} workflowStatus={workflowStatus} onJump={onJump} />
 
         {/* UPLOAD */}
-        <UploadPanel
-          files={files}
-          stage={stage}
-          error={apiError}
-          onAdd={handleAddFiles}
-          onRemove={handleRemoveFile}
-          onProcess={handleProcess}
-        />
+        <div id="upload" className="scroll-mt-[220px]">
+          <UploadPanel
+            files={files}
+            stage={stage}
+            error={apiError}
+            onAdd={handleAddFiles}
+            onRemove={handleRemoveFile}
+            onProcess={handleProcess}
+          />
+        </div>
 
         {/* PARSING TICKER */}
         <AnimatePresence>
@@ -621,7 +701,7 @@ export default function HiringAutomationPage() {
         {/* CANDIDATE SPREADSHEET */}
         <AnimatePresence>
           {reached("spreadsheet") && candidates.length > 0 && (
-            <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
+            <motion.div id="candidates" className="scroll-mt-[220px]" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
               <CandidateSpreadsheet candidates={candidates} />
             </motion.div>
           )}
@@ -630,7 +710,7 @@ export default function HiringAutomationPage() {
         {/* HUMAN IN THE LOOP */}
         <AnimatePresence>
           {reached("spreadsheet") && (
-            <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
+            <motion.div id="requirements" className="scroll-mt-[220px]" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
               <HumanInLoopPanel
                 requirement={requirement}
                 setRequirement={setRequirement}
@@ -650,7 +730,7 @@ export default function HiringAutomationPage() {
         {/* ASSIGNMENT CARD */}
         <AnimatePresence>
           {reached("assignment") && (
-            <motion.div initial={{ opacity: 0, y: 16, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0 }}>
+            <motion.div id="assignment" className="scroll-mt-[220px]" initial={{ opacity: 0, y: 16, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0 }}>
               <AssignmentCard assignment={assignment} onBulkSend={handleBulkSend} locked={stage !== "assignment"} sent={reached("sending")} />
             </motion.div>
           )}
@@ -664,7 +744,7 @@ export default function HiringAutomationPage() {
         {/* EVALUATION TABLE */}
         <AnimatePresence>
           {reached("evaluation") && (
-            <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
+            <motion.div id="evaluation" className="scroll-mt-[220px]" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
               <EvaluationTable candidates={candidates} approvals={approvals} onSend={handleSendForApproval} />
             </motion.div>
           )}
@@ -673,7 +753,7 @@ export default function HiringAutomationPage() {
         {/* INTERVIEW SCHEDULING */}
         <AnimatePresence>
           {reached("scheduling") && (
-            <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
+            <motion.div id="scheduling" className="scroll-mt-[220px]" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
               <InterviewSchedulingPanel
                 candidates={candidates}
                 locked={stage !== "scheduling"}
@@ -698,7 +778,7 @@ export default function HiringAutomationPage() {
         {/* ONBOARDING AGENT */}
         <AnimatePresence>
           {reached("onboarding") && (
-            <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
+            <motion.div id="onboarding" className="scroll-mt-[220px]" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
               <OnboardingPanel
                 progress={onboardProgress}
                 running={onboardRunning}
@@ -714,7 +794,7 @@ export default function HiringAutomationPage() {
         {/* KNOWLEDGE TRANSFER AGENT */}
         <AnimatePresence>
           {reached("knowledge") && (
-            <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
+            <motion.div id="knowledge" className="scroll-mt-[220px]" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
               <KnowledgeTransferPanel
                 progress={ktProgress}
                 running={ktRunning}
@@ -756,10 +836,13 @@ export default function HiringAutomationPage() {
    PIPELINE VISUALIZATION
    ═══════════════════════════════════════════════════════════ */
 
-function PipelineFlow({ nodeStatus }: { nodeStatus: (idx: number) => NodeStatus }) {
+function PipelineFlow({
+  nodeStatus, workflowStatus, onJump,
+}: { nodeStatus: (idx: number) => NodeStatus; workflowStatus: WorkflowStatus; onJump: (key: string) => void }) {
   const doneCount = PIPELINE_NODES.filter((_, i) => nodeStatus(i) === "done").length;
   const activeIdx = PIPELINE_NODES.findIndex((_, i) => nodeStatus(i) === "active");
   const isRunning = activeIdx !== -1;
+  const isApproval = workflowStatus.mode === "approval";
 
   return (
     <div className="rounded-2xl bg-white border border-zinc-200 p-4 sm:p-5 shadow-sm relative overflow-hidden">
@@ -788,13 +871,16 @@ function PipelineFlow({ nodeStatus }: { nodeStatus: (idx: number) => NodeStatus 
         )}
       </div>
 
-      <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch gap-1.5">
+      <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch gap-2">
         {PIPELINE_NODES.map((node, i) => {
           const status = nodeStatus(i);
+          const paused = isApproval && node.key === "review";
           const Icon = node.icon;
           return (
             <Fragment key={node.key}>
-              <motion.div
+              <motion.button
+                type="button"
+                onClick={() => onJump(node.key)}
                 initial={{ opacity: 0, y: 8 }}
                 animate={
                   status === "active"
@@ -806,12 +892,14 @@ function PipelineFlow({ nodeStatus }: { nodeStatus: (idx: number) => NodeStatus 
                     ? { boxShadow: { duration: 1.6, repeat: Infinity, ease: "easeInOut" }, default: { duration: 0.3 } }
                     : { delay: i * 0.03, duration: 0.3 }
                 }
-                className={`relative w-full sm:w-[124px] shrink-0 rounded-xl border p-2.5 flex flex-col justify-between gap-1.5 min-h-[92px] overflow-hidden ${
-                  status === "active"
-                    ? "bg-blue-600 border-blue-600 text-white"
+                className={`relative w-full sm:w-[126px] shrink-0 rounded-2xl border p-3 flex flex-col justify-between gap-1.5 min-h-[96px] overflow-hidden text-left transition-shadow cursor-pointer ${
+                  paused
+                    ? "bg-amber-50 border-amber-300 hover:shadow-md"
+                    : status === "active"
+                    ? "bg-blue-600 border-blue-600 text-white shadow-md"
                     : status === "done"
-                    ? "bg-emerald-50/70 border-emerald-300"
-                    : "bg-white border-zinc-200"
+                    ? "bg-emerald-50/70 border-emerald-300 hover:shadow-md"
+                    : "bg-white border-zinc-200 hover:border-zinc-300 hover:shadow-md"
                 }`}
               >
                 {status === "active" && (
@@ -825,19 +913,21 @@ function PipelineFlow({ nodeStatus }: { nodeStatus: (idx: number) => NodeStatus 
                 <div className="flex items-center justify-between relative">
                   <div
                     className={`w-6 h-6 rounded-md flex items-center justify-center shrink-0 ${
-                      status === "active" ? "bg-white/20 text-white" : status === "done" ? "bg-emerald-100 text-emerald-700" : "bg-blue-50 text-blue-600"
+                      paused ? "bg-amber-100 text-amber-700" : status === "active" ? "bg-white/20 text-white" : status === "done" ? "bg-emerald-100 text-emerald-700" : "bg-blue-50 text-blue-600"
                     }`}
                   >
-                    <Icon className="w-3.5 h-3.5" />
+                    {paused ? <Pause className="w-3.5 h-3.5" /> : <Icon className="w-3.5 h-3.5" />}
                   </div>
-                  {status === "active" && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                  {status === "done" && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />}
+                  {status === "active" && !paused && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                  {status === "done" && !paused && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />}
                 </div>
                 <div className="relative">
-                  <div className={`text-[10.5px] font-bold leading-tight ${status === "active" ? "text-white" : "text-zinc-900"}`}>{node.title}</div>
-                  <div className={`text-[9px] leading-tight mt-0.5 ${status === "active" ? "text-blue-100" : "text-zinc-500"}`}>{node.desc}</div>
+                  <div className={`text-[10.5px] font-bold leading-tight ${status === "active" ? "text-white" : paused ? "text-amber-800" : "text-zinc-900"}`}>{node.title}</div>
+                  <div className={`text-[9px] leading-tight mt-0.5 ${status === "active" ? "text-blue-100" : paused ? "text-amber-700" : "text-zinc-500"}`}>
+                    {paused ? "Approval required" : node.desc}
+                  </div>
                 </div>
-              </motion.div>
+              </motion.button>
               {i < PIPELINE_NODES.length - 1 && (
                 <div className="hidden sm:flex items-center justify-center w-3 shrink-0 relative overflow-hidden">
                   <div className={`h-px w-3 transition-colors duration-300 ${status === "done" ? "bg-emerald-400" : "bg-zinc-200"}`} />
@@ -859,37 +949,153 @@ function PipelineFlow({ nodeStatus }: { nodeStatus: (idx: number) => NodeStatus 
   );
 }
 
-function PipelineStickyBar({ nodeStatus }: { nodeStatus: (idx: number) => NodeStatus }) {
-  const doneCount = PIPELINE_NODES.filter((_, i) => nodeStatus(i) === "done").length;
-  const activeIdx = PIPELINE_NODES.findIndex((_, i) => nodeStatus(i) === "active");
-  const isRunning = activeIdx !== -1;
+/* ═══════════════════════════════════════════════════════════
+   PERSISTENT WORKFLOW HEADER — sticky beneath the shared
+   ProductNav (top-12 = ProductNav's h-12). Two rows: application
+   branding (unchanged content) and the live agent workflow, which
+   never disappears while the page scrolls.
+   ═══════════════════════════════════════════════════════════ */
+
+function WorkflowHeader({
+  nodeStatus, workflowStatus, doneCount, onReset, onJump,
+}: {
+  nodeStatus: (idx: number) => NodeStatus;
+  workflowStatus: WorkflowStatus;
+  doneCount: number;
+  onReset: () => void;
+  onJump: (key: string) => void;
+}) {
   const pct = Math.round((doneCount / PIPELINE_NODES.length) * 100);
+  const isApproval = workflowStatus.mode === "approval";
+  const isDone = workflowStatus.mode === "done";
 
   return (
-    <div className="sticky top-12 z-20 bg-white/90 backdrop-blur-md border-b border-zinc-200/70">
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-2 flex items-center gap-3">
-        <div className="flex items-center gap-1.5 shrink-0">
-          <Bot className="w-3.5 h-3.5 text-blue-600" />
-          <span className="text-[10px] font-bold text-zinc-700 uppercase tracking-wide hidden sm:inline">Live Agent Workflow</span>
+    <div className="sticky top-12 z-30">
+      {/* Level 1 — application header (unchanged branding + Restart Demo) */}
+      <div className="border-b border-zinc-200/80 bg-white/95 backdrop-blur-md">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Zap className="w-4 h-4 text-amber-500 fill-amber-500" />
+            <span className="text-sm font-bold text-zinc-900">Agentic Hiring Pipeline</span>
+          </div>
+          <div className="flex items-center gap-2.5">
+            <span className="hidden sm:inline-flex items-center gap-1.5 text-[10px] font-mono font-bold px-2.5 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" /> AI System Live
+            </span>
+            <button
+              onClick={onReset}
+              className="text-xs font-mono font-bold px-3 py-1.5 rounded-lg bg-zinc-100 border border-zinc-200 text-zinc-700 hover:bg-zinc-200 transition-colors flex items-center gap-1.5"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Restart Demo</span>
+            </button>
+          </div>
         </div>
-        <div className="flex-1 flex items-center gap-1 min-w-0 overflow-x-auto scrollbar-hide">
-          {PIPELINE_NODES.map((node, i) => {
-            const status = nodeStatus(i);
-            return (
-              <span
-                key={node.key}
-                title={node.title}
-                className={`w-2 h-2 rounded-full shrink-0 transition-colors ${
-                  status === "done" ? "bg-emerald-500" : status === "active" ? "bg-blue-600 animate-pulse" : "bg-zinc-200"
-                }`}
-              />
-            );
-          })}
+      </div>
+
+      {/* Level 2 — live agent workflow */}
+      <div className={`border-b backdrop-blur-md transition-colors duration-300 ${isApproval ? "bg-amber-50/95 border-amber-200" : "bg-white/95 border-zinc-200/70"}`}>
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-2.5">
+          <div className="flex items-center justify-between gap-3 mb-2">
+            <div className="flex items-center gap-1.5">
+              <span className="relative flex items-center justify-center w-5 h-5 rounded-md bg-blue-50 border border-blue-200 text-blue-600 shrink-0">
+                {!isDone && <span className="absolute inset-0 rounded-md bg-blue-400/30 animate-ping" />}
+                <Bot className="w-3 h-3 relative" />
+              </span>
+              <span className="text-[10px] font-bold text-zinc-900 uppercase tracking-wide">AI Agents</span>
+              {!isDone && (
+                <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded-full bg-blue-50 border border-blue-200 text-blue-600 flex items-center gap-1">
+                  <Radio className="w-2 h-2 animate-pulse" /> LIVE
+                </span>
+              )}
+            </div>
+            <span className="text-[10px] font-mono font-bold text-zinc-500 shrink-0">{doneCount}/{PIPELINE_NODES.length} COMPLETE</span>
+          </div>
+
+          {/* Desktop chain — full chips, clickable, horizontally scrollable if needed */}
+          <div className="hidden sm:flex items-center gap-1 overflow-x-auto scrollbar-hide pb-1">
+            {PIPELINE_NODES.map((node, i) => {
+              const status = nodeStatus(i);
+              const paused = isApproval && node.key === "review";
+              const Icon = node.icon;
+              return (
+                <Fragment key={node.key}>
+                  <button
+                    type="button"
+                    onClick={() => onJump(node.key)}
+                    title={node.desc}
+                    className={`shrink-0 flex items-center gap-1.5 px-2 py-1 rounded-lg border text-[10.5px] font-bold whitespace-nowrap transition-colors ${
+                      paused
+                        ? "bg-amber-100 border-amber-300 text-amber-800"
+                        : status === "done"
+                        ? "bg-emerald-50 border-emerald-200 text-emerald-700 hover:border-emerald-300"
+                        : status === "active"
+                        ? "bg-blue-600 border-blue-600 text-white"
+                        : "bg-white border-zinc-200 text-zinc-500 hover:border-zinc-300 hover:text-zinc-700"
+                    }`}
+                  >
+                    {paused ? <Pause className="w-3 h-3" />
+                      : status === "done" ? <CheckCircle2 className="w-3 h-3" />
+                      : status === "active" ? <Loader2 className="w-3 h-3 animate-spin" />
+                      : <Icon className="w-3 h-3" />}
+                    {node.title}
+                  </button>
+                  {i < PIPELINE_NODES.length - 1 && <div className="w-2 h-px bg-zinc-200 shrink-0" />}
+                </Fragment>
+              );
+            })}
+          </div>
+
+          {/* Mobile chain — compact dots */}
+          <div className="flex sm:hidden items-center gap-1.5 overflow-x-auto scrollbar-hide pb-1">
+            {PIPELINE_NODES.map((node, i) => {
+              const status = nodeStatus(i);
+              const paused = isApproval && node.key === "review";
+              return (
+                <button
+                  key={node.key}
+                  type="button"
+                  onClick={() => onJump(node.key)}
+                  title={node.title}
+                  aria-label={node.title}
+                  className={`w-2.5 h-2.5 rounded-full shrink-0 transition-colors ${
+                    paused ? "bg-amber-500" : status === "done" ? "bg-emerald-500" : status === "active" ? "bg-blue-600 animate-pulse" : "bg-zinc-200"
+                  }`}
+                />
+              );
+            })}
+          </div>
+
+          {/* Overall progress */}
+          <div className="h-1 bg-zinc-100 rounded-full overflow-hidden mt-1.5 mb-2">
+            <motion.div className="h-full bg-gradient-to-r from-blue-500 to-blue-600 rounded-full" animate={{ width: `${pct}%` }} transition={{ duration: 0.4, ease: "easeOut" }} />
+          </div>
+
+          {/* Current operation */}
+          {isApproval ? (
+            <button
+              type="button"
+              onClick={() => onJump("review")}
+              className="w-full flex items-center justify-between gap-3 rounded-lg bg-white/80 border border-amber-200 px-3 py-2 text-left hover:bg-white transition-colors"
+            >
+              <span className="flex items-center gap-2 text-[11px] font-bold text-amber-800">
+                <Pause className="w-3.5 h-3.5 shrink-0" /> AI workflow paused — HR approval required · {workflowStatus.detail}
+              </span>
+              <span className="text-[10px] font-bold text-amber-700 shrink-0 whitespace-nowrap">Review Candidates →</span>
+            </button>
+          ) : (
+            <div className="flex items-center gap-2 text-[11px]">
+              {workflowStatus.mode === "running" && <Loader2 className="w-3 h-3 text-blue-600 animate-spin shrink-0" />}
+              {workflowStatus.mode === "done" && <CheckCircle2 className="w-3 h-3 text-emerald-600 shrink-0" />}
+              <span className="font-bold text-zinc-900 shrink-0">{workflowStatus.label}</span>
+              <span className="text-zinc-300">·</span>
+              <span className="text-zinc-500 truncate flex-1">{workflowStatus.detail}</span>
+              {workflowStatus.percent !== null && (
+                <span className="font-mono font-bold text-blue-600 shrink-0">{workflowStatus.percent}%</span>
+              )}
+            </div>
+          )}
         </div>
-        <span className="text-[10px] font-mono font-bold text-zinc-500 shrink-0 flex items-center gap-1">
-          {isRunning && <Radio className="w-2.5 h-2.5 text-blue-600 animate-pulse" />}
-          {isRunning ? PIPELINE_NODES[activeIdx].title : `${pct}%`}
-        </span>
       </div>
     </div>
   );
