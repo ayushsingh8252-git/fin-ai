@@ -41,7 +41,7 @@ import type {
 } from "./types";
 import { DEMO_PLAN as DemoPlan } from "./types";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001").replace(/\/api\/v1$/, "");
 
 /** Calls the real backend tool endpoint — the only way any step (planned via
  * the LLM planner or the local keyword-matched fallback below) actually

@@ -1129,7 +1129,7 @@ function RAGCardInteractive() {
         </div>
         <h3 className="text-[16px] font-bold text-zinc-900 mb-2">Advanced Enterprise RAG</h3>
         <p className="text-[13px] text-zinc-600 leading-relaxed mb-5">
-          Index millions of PDFs, emails, SharePoint files, and policies with semantic search, hybrid reranking, and citation tracing.
+          Semantic search over PDFs, emails, and policies with hybrid reranking and citation tracing.
         </p>
 
         <div className="space-y-2 mb-5">
@@ -1212,7 +1212,7 @@ function OnboardingCardInteractive() {
 
         <h3 className="text-[15px] font-bold text-zinc-900 mb-1">One-Click Onboarding</h3>
         <p className="text-[12px] text-zinc-600 leading-relaxed mb-4">
-          Provision accounts, permissions, and toolkits for new hires automatically.
+          Auto-provision accounts and permissions for new hires.
         </p>
       </div>
 
@@ -1264,7 +1264,7 @@ function KnowledgeCardInteractive() {
 
         <h3 className="text-[15px] font-bold text-zinc-900 mb-1">Company Knowledge Hub</h3>
         <p className="text-[12px] text-zinc-600 leading-relaxed mb-4">
-          Synthesize team notes, meeting transcripts, and wikis into instant answers.
+          Turn notes, transcripts, and wikis into instant answers.
         </p>
       </div>
 
@@ -1377,7 +1377,7 @@ function FraudDetectionCard() {
 
       <h3 className="text-[16px] font-bold text-zinc-900 mb-1.5">Fraud Detection</h3>
       <p className="text-[13px] text-zinc-600 leading-relaxed mb-5">
-        Screens every candidate and employee before and after they join — catching duplicate identities and fabricated credentials before they get costly.
+        Catches duplicate identities and fabricated credentials before and after joining.
       </p>
 
       <div className="grid grid-cols-2 gap-2.5">
@@ -1411,7 +1411,7 @@ function FraudDetectionCard() {
             <Brain className="w-4 h-4" />
           </div>
           <p className="text-[12px] text-zinc-700 leading-snug">
-            <span className="font-bold text-zinc-900">One shared fraud memory</span> — no duplicate checks, no blind spots.
+            <span className="font-bold text-zinc-900">One shared fraud memory</span> — no duplicate checks.
           </p>
         </div>
 
@@ -1443,7 +1443,7 @@ function TelephonicAgentCard() {
           <WorkingBadge />
         </div>
         <h3 className="text-[16px] font-bold text-zinc-900 mb-1.5">Telephonic Agent</h3>
-        <p className="text-[13px] text-zinc-500 mb-5">AI voice screening · pay only for connects</p>
+        <p className="text-[13px] text-zinc-500 mb-5">AI voice screening · pay per connect</p>
 
         <div className="p-4 bg-zinc-50 border border-zinc-200 rounded-xl mb-5">
           <div className="grid grid-cols-2 gap-3">
@@ -1501,7 +1501,7 @@ function ScreeningAgentCard() {
               <WorkingBadge />
             </div>
             <h3 className="text-[16px] font-bold text-zinc-900 mb-1.5">Screening Agent</h3>
-            <p className="text-[13px] text-zinc-500 mb-5">3D avatar interviews · pay per interview</p>
+            <p className="text-[13px] text-zinc-500 mb-5">3D avatar AI interviews · pay per interview</p>
 
             <div className="flex flex-wrap gap-2">
               {features.map((f) => (
@@ -1571,7 +1571,7 @@ function SecurityCardWhite() {
 
         <h3 className="text-[15px] font-bold text-zinc-900 mb-1">Enterprise Privacy & Security</h3>
         <p className="text-[12px] text-zinc-600 leading-relaxed mb-4">
-          End-to-end encryption, strict compliance boundaries, and verified governance.
+          Encryption, compliance boundaries, and verified governance.
         </p>
       </div>
 
@@ -1590,12 +1590,12 @@ function SecurityCardWhite() {
 /* ── 3. NATIVE INTEGRATIONS CARD WITH ONLY ACTIVE PRODUCTION TOOLS ── */
 function IntegrationsCardInteractive() {
   const workingTools = [
-    { name: "WhatsApp Cloud API", desc: "Automated candidate outreach & messaging", icon: <MessageSquare className="w-4 h-4 text-emerald-600" /> },
-    { name: "Sarvam AI Voice", desc: "Conversational voice screening & telephony", icon: <Phone className="w-4 h-4 text-orange-500" /> },
-    { name: "Voice Biometrics", desc: "ECAPA-TDNN neural speaker authentication", icon: <ShieldCheck className="w-4 h-4 text-blue-600" /> },
-    { name: "Document Forensics", desc: "PDF structure & credential authenticity verification", icon: <FileCheck className="w-4 h-4 text-violet-600" /> },
-    { name: "Pinecone Vector DB", desc: "Hybrid semantic search & rule extraction engine", icon: <Database className="w-4 h-4 text-sky-600" /> },
-    { name: "Google Workspace", desc: "Automated invite delivery via Gmail & calendar sync", icon: <Mail className="w-4 h-4 text-red-500" /> },
+    { name: "WhatsApp Cloud API", desc: "Candidate outreach & messaging", icon: <MessageSquare className="w-4 h-4 text-emerald-600" /> },
+    { name: "Sarvam AI Voice", desc: "Conversational voice screening", icon: <Phone className="w-4 h-4 text-orange-500" /> },
+    { name: "Voice Biometrics", desc: "ECAPA-TDNN speaker auth", icon: <ShieldCheck className="w-4 h-4 text-blue-600" /> },
+    { name: "Document Forensics", desc: "Credential authenticity checks", icon: <FileCheck className="w-4 h-4 text-violet-600" /> },
+    { name: "Pinecone Vector DB", desc: "Hybrid semantic search", icon: <Database className="w-4 h-4 text-sky-600" /> },
+    { name: "Google Workspace", desc: "Gmail & calendar sync", icon: <Mail className="w-4 h-4 text-red-500" /> },
   ];
 
   return (
@@ -1609,7 +1609,7 @@ function IntegrationsCardInteractive() {
         </div>
         <h3 className="text-[16px] font-bold text-zinc-900 mb-1">Production Integrated Tools</h3>
         <p className="text-[13px] text-zinc-600 leading-relaxed mb-4">
-          The verified tools and communication channels actively running in this system:
+          Live integrations actively running in this system:
         </p>
       </div>
 

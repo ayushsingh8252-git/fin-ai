@@ -13,9 +13,20 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Enterprise AI — Automation Platform for Modern Organizations",
+  title: "fin.ai — Enterprise AI Agent Orchestration Platform",
   description:
-    "Automate repetitive workflows, deploy AI agents, connect enterprise systems, and securely scale knowledge across your organization.",
+    "fin.ai automates enterprise policy extraction, orchestrates autonomous multi-agent reasoning, indexes document vectors with hybrid RAG, and executes deterministic actions across your organization.",
+  openGraph: {
+    title: "fin.ai — Enterprise AI Agent Orchestration Platform",
+    description:
+      "Automate complex enterprise workflows with autonomous AI agents. Hybrid RAG, voice biometrics, fraud detection, and multi-agent orchestration — all in one platform.",
+    siteName: "fin.ai",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "fin.ai — Enterprise AI Agent Orchestration Platform",
+    description: "Autonomous multi-agent reasoning and enterprise orchestration by fin.ai.",
+  },
 };
 
 export default function RootLayout({
