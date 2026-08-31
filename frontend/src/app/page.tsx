@@ -221,7 +221,7 @@ export default function LandingPage() {
               </div>
 
               <h1 className="text-[clamp(2.1rem,4.6vw,3.6rem)] font-extrabold leading-[1.08] tracking-tight text-zinc-900 mb-6">
-                Fin AI — Enterprise AI{" "}
+                Autonomous AI{" "}
                 <span className="relative inline-block text-blue-600">
                   Agent Orchestration
                   <DoodleUnderline className="absolute left-0 -bottom-2.5 w-full text-blue-600" />
@@ -415,7 +415,7 @@ function SiteFooter() {
 
         <div className="flex flex-col sm:flex-row items-center justify-between gap-3 mt-14 pt-6 border-t border-white/10">
           <p className="text-[12px] text-zinc-500 font-mono">
-            Fin AI · Autonomous Enterprise AI Platform · © {new Date().getFullYear()}
+            fin.ai · Autonomous AI Platform · © {new Date().getFullYear()}
           </p>
           <button
             onClick={() => reopenCookieConsent()}
@@ -1119,58 +1119,60 @@ function RAGCardInteractive() {
   const [selectedIdx, setSelectedIdx] = useState(0);
 
   return (
-    <div className="cpu-burn-card h-full flex flex-col md:flex-row gap-7">
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center justify-between mb-5">
-          <div className="card-icon-badge">
-            <Database className="w-5 h-5" />
+    <div className="cpu-burn-card h-full flex flex-col md:flex-row gap-6">
+      <div className="flex-1 min-w-0 flex flex-col justify-between">
+        <div>
+          <div className="flex items-center justify-between mb-4">
+            <div className="card-icon-badge">
+              <Database className="w-5 h-5" />
+            </div>
+            <WorkingBadge />
           </div>
-          <WorkingBadge />
-        </div>
-        <h3 className="text-[16px] font-bold text-zinc-900 mb-2">Advanced Enterprise RAG</h3>
-        <p className="text-[13px] text-zinc-600 leading-relaxed mb-5">
-          Semantic search over PDFs, emails, and policies with hybrid reranking and citation tracing.
-        </p>
+          <h3 className="text-[16px] font-bold text-zinc-900 mb-1.5">Enterprise RAG Engine</h3>
+          <p className="text-[12.5px] text-zinc-600 leading-relaxed mb-4">
+            Semantic vector search across PDFs, policies, and emails.
+          </p>
 
-        <div className="space-y-2 mb-5">
-          <div className="text-[11px] font-mono text-zinc-500">Test Vector Queries:</div>
-          <div className="flex flex-wrap gap-1.5">
-            {sampleQueries.map((q, i) => (
-              <button
-                key={q.query}
-                onClick={(e) => {
-                  e.preventDefault();
-                  setSelectedIdx(i);
-                }}
-                className={`inline-flex items-center gap-1.5 text-[11px] font-mono px-2.5 py-1 rounded-lg border transition-all ${
-                  selectedIdx === i
-                    ? "bg-blue-600 text-white border-blue-600 shadow-sm font-bold"
-                    : "bg-zinc-50 text-zinc-700 border-zinc-200 hover:bg-zinc-100"
-                }`}
-              >
-                <Search className="w-3 h-3 shrink-0" /> {q.query}
-              </button>
-            ))}
+          <div className="space-y-1.5 mb-4">
+            <div className="text-[10px] font-mono text-zinc-400 uppercase tracking-wide">Sample Queries:</div>
+            <div className="flex flex-wrap gap-1.5">
+              {sampleQueries.map((q, i) => (
+                <button
+                  key={q.query}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    setSelectedIdx(i);
+                  }}
+                  className={`inline-flex items-center gap-1.5 text-[11px] font-mono px-2.5 py-1 rounded-lg border transition-all ${
+                    selectedIdx === i
+                      ? "bg-blue-600 text-white border-blue-600 shadow-xs font-bold"
+                      : "bg-zinc-50 text-zinc-700 border-zinc-200 hover:bg-zinc-100"
+                  }`}
+                >
+                  <Search className="w-3 h-3 shrink-0" /> {q.query}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
         <Link
           href="/rag"
-          className="inline-flex items-center gap-1.5 text-xs font-mono font-bold text-blue-600 hover:text-blue-700"
+          className="mt-auto inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 text-white text-[13px] font-bold hover:bg-blue-700 transition-colors shadow-sm"
         >
-          Open RAG Workspace <ArrowUpRight className="w-4 h-4" />
+          Open RAG Engine <ArrowRight className="w-3.5 h-3.5" />
         </Link>
       </div>
 
-      <div className="w-full md:w-56 shrink-0 p-4 bg-zinc-50 rounded-xl border border-zinc-200">
-        <div className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide mb-3">Result preview</div>
-        <div className="space-y-3">
+      <div className="w-full md:w-48 shrink-0 p-3.5 bg-zinc-50 rounded-xl border border-zinc-200 flex flex-col justify-center">
+        <div className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide mb-2">Live Match</div>
+        <div className="space-y-2.5">
           <div>
-            <div className="text-[10px] text-zinc-500">Matched page</div>
-            <div className="text-[13px] font-bold text-zinc-900">Page {sampleQueries[selectedIdx].page}</div>
+            <div className="text-[10px] text-zinc-500">Source</div>
+            <div className="text-[12px] font-bold text-zinc-900">Page {sampleQueries[selectedIdx].page}</div>
           </div>
           <div>
-            <div className="text-[10px] text-zinc-500">Match confidence</div>
+            <div className="text-[10px] text-zinc-500">Confidence</div>
             <div className="flex items-center gap-2 mt-1">
               <div className="flex-1 h-1.5 bg-zinc-200 rounded-full overflow-hidden">
                 <div className="h-full rounded-full bg-blue-600" style={{ width: `${sampleQueries[selectedIdx].match}%` }} />
@@ -1198,49 +1200,47 @@ function OnboardingCardInteractive() {
           <div className="card-icon-badge">
             <UserPlus className="w-5 h-5" />
           </div>
-          <div className="flex items-center gap-1.5">
-            <PreviewBadge />
-            <Link
-              href="/onboarding"
-              className="text-[10px] font-mono font-bold bg-blue-600 text-white px-2.5 py-1 rounded-lg hover:bg-blue-700 transition-all flex items-center gap-1"
-            >
-              <Play className="w-3 h-3 fill-white" />
-              <span>Run</span>
-            </Link>
-          </div>
+          <WorkingBadge />
         </div>
 
         <h3 className="text-[15px] font-bold text-zinc-900 mb-1">One-Click Onboarding</h3>
         <p className="text-[12px] text-zinc-600 leading-relaxed mb-4">
-          Auto-provision accounts and permissions for new hires.
+          Auto-provision accounts, credentials, and access.
         </p>
+
+        <div className="space-y-1.5">
+          {steps.map((s) => (
+            <div key={s.name} className="flex items-center justify-between px-3 py-2 rounded-lg bg-zinc-50 border border-zinc-200/80">
+              <span className="text-[11px] text-zinc-700 font-medium">{s.name}</span>
+              <span className="text-[10px] font-mono flex items-center gap-1">
+                {s.done ? (
+                  <span className="text-emerald-600 font-bold flex items-center gap-1">
+                    <CheckCircle2 className="w-3 h-3 text-emerald-600" /> Ready
+                  </span>
+                ) : (
+                  <span className="text-blue-600 font-semibold animate-pulse">In progress</span>
+                )}
+              </span>
+            </div>
+          ))}
+        </div>
       </div>
 
-      <div className="space-y-1.5">
-        {steps.map((s) => (
-          <div key={s.name} className="flex items-center justify-between px-3 py-2 rounded-lg bg-zinc-50 border border-zinc-200/80">
-            <span className="text-[11px] text-zinc-700 font-medium">{s.name}</span>
-            <span className="text-[10px] font-mono flex items-center gap-1">
-              {s.done ? (
-                <span className="text-emerald-600 font-bold flex items-center gap-1">
-                  <CheckCircle2 className="w-3 h-3 text-emerald-600" /> Ready
-                </span>
-              ) : (
-                <span className="text-blue-600 font-semibold animate-pulse">In progress</span>
-              )}
-            </span>
-          </div>
-        ))}
-      </div>
+      <Link
+        href="/onboarding"
+        className="mt-4 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 text-white text-[12.5px] font-bold hover:bg-blue-700 transition-colors shadow-sm"
+      >
+        <Play className="w-3.5 h-3.5 fill-white" /> Launch Onboarding
+      </Link>
     </div>
   );
 }
 
 function KnowledgeCardInteractive() {
   const categories = [
-    { title: "Meeting Summaries", desc: "Automated call takeaways" },
-    { title: "Handbook & FAQs", desc: "Always up-to-date policies" },
-    { title: "Team Knowledge Graph", desc: "Semantic cross-team search" },
+    { title: "Meeting Summaries", desc: "Automated takeaways" },
+    { title: "Handbook & FAQs", desc: "Always up-to-date" },
+    { title: "Knowledge Graph", desc: "Cross-team search" },
   ];
 
   return (
@@ -1250,32 +1250,30 @@ function KnowledgeCardInteractive() {
           <div className="card-icon-badge">
             <Brain className="w-5 h-5" />
           </div>
-          <div className="flex items-center gap-1.5">
-            <PreviewBadge />
-            <Link
-              href="/knowledge"
-              className="text-[10px] font-mono font-bold bg-blue-600 text-white px-2.5 py-1 rounded-lg hover:bg-blue-700 transition-all flex items-center gap-1"
-            >
-              <ArrowUpRight className="w-3 h-3" />
-              <span>Explore</span>
-            </Link>
-          </div>
+          <WorkingBadge />
         </div>
 
         <h3 className="text-[15px] font-bold text-zinc-900 mb-1">Company Knowledge Hub</h3>
         <p className="text-[12px] text-zinc-600 leading-relaxed mb-4">
-          Turn notes, transcripts, and wikis into instant answers.
+          Turn documents, transcripts, and wikis into instant answers.
         </p>
+
+        <div className="space-y-1.5">
+          {categories.map((c) => (
+            <div key={c.title} className="flex items-center justify-between px-3 py-2 rounded-lg bg-zinc-50 border border-zinc-200/80">
+              <span className="text-[11px] font-bold text-zinc-800">{c.title}</span>
+              <span className="text-[10px] text-zinc-500">{c.desc}</span>
+            </div>
+          ))}
+        </div>
       </div>
 
-      <div className="space-y-1.5">
-        {categories.map((c) => (
-          <div key={c.title} className="flex items-center justify-between px-3 py-2 rounded-lg bg-zinc-50 border border-zinc-200/80">
-            <span className="text-[11px] font-bold text-zinc-800">{c.title}</span>
-            <span className="text-[10.5px] text-zinc-500">{c.desc}</span>
-          </div>
-        ))}
-      </div>
+      <Link
+        href="/knowledge"
+        className="mt-4 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 text-white text-[12.5px] font-bold hover:bg-blue-700 transition-colors shadow-sm"
+      >
+        <ArrowRight className="w-3.5 h-3.5" /> Explore Knowledge Hub
+      </Link>
     </div>
   );
 }
@@ -1354,9 +1352,10 @@ function AutomationCardInteractive() {
 }
 
 /* ── Fraud Detection — a live agent, continuously scanning the pre/post-join lifecycle ── */
+/* ── Fraud Detection — a live agent, continuously scanning the pre/post-join lifecycle ── */
 function FraudDetectionCard() {
-  const preJoin = ["Resume authenticity check", "Duplicate identity scan"];
-  const postJoin = ["Credential re-verification", "Expense anomaly detection"];
+  const preJoin = ["Resume authenticity", "Duplicate identity scan"];
+  const postJoin = ["Credential check", "Expense anomaly check"];
   const allChecks = [...preJoin, ...postJoin];
 
   const [activeIdx, setActiveIdx] = useState(0);
@@ -1367,61 +1366,52 @@ function FraudDetectionCard() {
   const activeLabel = allChecks[activeIdx];
 
   return (
-    <div className="cpu-burn-card h-full flex flex-col">
-      <div className="flex items-center justify-between mb-5">
-        <div className="card-icon-badge">
-          <ShieldAlert className="w-5 h-5" />
-        </div>
-        <WorkingBadge />
-      </div>
-
-      <h3 className="text-[16px] font-bold text-zinc-900 mb-1.5">Fraud Detection</h3>
-      <p className="text-[13px] text-zinc-600 leading-relaxed mb-5">
-        Catches duplicate identities and fabricated credentials before and after joining.
-      </p>
-
-      <div className="grid grid-cols-2 gap-2.5">
-        <div className="p-3 bg-zinc-50 border border-zinc-200 rounded-xl">
-          <div className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide mb-1.5">Before joining</div>
-          {preJoin.map((f) => {
-            const active = f === activeLabel;
-            return (
-              <div key={f} className={`flex items-center gap-1.5 text-[11.5px] py-0.5 transition-colors ${active ? "text-blue-700 font-semibold" : "text-zinc-700"}`}>
-                <CheckCircle2 className={`w-3 h-3 shrink-0 ${active ? "text-blue-600" : "text-emerald-600"}`} />{f}
-              </div>
-            );
-          })}
-        </div>
-        <div className="p-3 bg-blue-50/60 border border-blue-200 rounded-xl">
-          <div className="text-[10px] font-semibold text-blue-500 uppercase tracking-wide mb-1.5">After joining</div>
-          {postJoin.map((f) => {
-            const active = f === activeLabel;
-            return (
-              <div key={f} className={`flex items-center gap-1.5 text-[11.5px] py-0.5 transition-colors ${active ? "text-blue-900 font-bold" : "text-blue-800"}`}>
-                <CheckCircle2 className={`w-3 h-3 shrink-0 ${active ? "text-blue-700" : "text-blue-600"}`} />{f}
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      <div className="mt-auto pt-5">
-        <div className="flex items-center gap-3 px-3.5 py-3 rounded-xl bg-blue-50/70 border border-blue-200">
-          <div className="w-8 h-8 rounded-lg bg-white border border-blue-200 flex items-center justify-center text-blue-600 shrink-0">
-            <Brain className="w-4 h-4" />
+    <div className="cpu-burn-card h-full flex flex-col justify-between">
+      <div>
+        <div className="flex items-center justify-between mb-4">
+          <div className="card-icon-badge">
+            <ShieldAlert className="w-5 h-5" />
           </div>
-          <p className="text-[12px] text-zinc-700 leading-snug">
-            <span className="font-bold text-zinc-900">One shared fraud memory</span> — no duplicate checks.
-          </p>
+          <WorkingBadge />
         </div>
 
-        <Link
-          href="/fraud-detection"
-          className="mt-3 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 text-white text-[13px] font-bold hover:bg-blue-700 transition-colors shadow-sm"
-        >
-          Open Fraud Detection <ArrowRight className="w-3.5 h-3.5" />
-        </Link>
+        <h3 className="text-[16px] font-bold text-zinc-900 mb-1">Autonomous Fraud Detection</h3>
+        <p className="text-[12.5px] text-zinc-600 leading-relaxed mb-4">
+          Catches duplicate identities and fabricated credentials across the employee lifecycle.
+        </p>
+
+        <div className="grid grid-cols-2 gap-2 mb-4">
+          <div className="p-2.5 bg-zinc-50 border border-zinc-200 rounded-xl">
+            <div className="text-[9.5px] font-semibold text-zinc-400 uppercase tracking-wide mb-1">Pre-Join</div>
+            {preJoin.map((f) => {
+              const active = f === activeLabel;
+              return (
+                <div key={f} className={`flex items-center gap-1.5 text-[11px] py-0.5 transition-colors ${active ? "text-blue-700 font-semibold" : "text-zinc-700"}`}>
+                  <CheckCircle2 className={`w-3 h-3 shrink-0 ${active ? "text-blue-600" : "text-emerald-600"}`} />{f}
+                </div>
+              );
+            })}
+          </div>
+          <div className="p-2.5 bg-blue-50/60 border border-blue-200 rounded-xl">
+            <div className="text-[9.5px] font-semibold text-blue-500 uppercase tracking-wide mb-1">Post-Join</div>
+            {postJoin.map((f) => {
+              const active = f === activeLabel;
+              return (
+                <div key={f} className={`flex items-center gap-1.5 text-[11px] py-0.5 transition-colors ${active ? "text-blue-900 font-bold" : "text-blue-800"}`}>
+                  <CheckCircle2 className={`w-3 h-3 shrink-0 ${active ? "text-blue-700" : "text-blue-600"}`} />{f}
+                </div>
+              );
+            })}
+          </div>
+        </div>
       </div>
+
+      <Link
+        href="/fraud-detection"
+        className="mt-auto flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 text-white text-[13px] font-bold hover:bg-blue-700 transition-colors shadow-sm"
+      >
+        <ShieldCheck className="w-4 h-4" /> Launch Fraud Detection
+      </Link>
     </div>
   );
 }
@@ -1435,44 +1425,46 @@ function TelephonicAgentCard() {
   ];
 
   return (
-    <div className="cpu-burn-card h-full flex flex-col">
+    <div className="cpu-burn-card h-full flex flex-col justify-between">
+      <div>
         <div className="flex items-center justify-between mb-3 gap-2">
           <div className="card-icon-badge">
             <Phone className="w-5 h-5" />
           </div>
           <WorkingBadge />
         </div>
-        <h3 className="text-[16px] font-bold text-zinc-900 mb-1.5">Telephonic Agent</h3>
-        <p className="text-[13px] text-zinc-500 mb-5">AI voice screening · pay per connect</p>
+        <h3 className="text-[16px] font-bold text-zinc-900 mb-1">Telephonic Agent</h3>
+        <p className="text-[12.5px] text-zinc-500 mb-4">Autonomous voice screening with telephony & WhatsApp.</p>
 
-        <div className="p-4 bg-zinc-50 border border-zinc-200 rounded-xl mb-5">
+        <div className="p-3.5 bg-zinc-50 border border-zinc-200 rounded-xl mb-4">
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <div className="text-[22px] font-extrabold text-zinc-900 leading-none">8–10<span className="text-[11px] font-medium text-zinc-500 ml-1">min</span></div>
-              <div className="text-[10px] text-zinc-500 mt-1.5">Call duration</div>
+              <div className="text-[20px] font-extrabold text-zinc-900 leading-none">8–10<span className="text-[11px] font-medium text-zinc-500 ml-1">min</span></div>
+              <div className="text-[10px] text-zinc-500 mt-1">Average Call</div>
             </div>
             <div>
-              <div className="text-[22px] font-extrabold text-zinc-900 leading-none">10+</div>
-              <div className="text-[10px] text-zinc-500 mt-1.5">Languages</div>
+              <div className="text-[20px] font-extrabold text-zinc-900 leading-none">10+</div>
+              <div className="text-[10px] text-zinc-500 mt-1">Indian Languages</div>
             </div>
           </div>
         </div>
 
-        <div className="space-y-2 mb-6">
+        <div className="space-y-1.5 mb-4">
           {features.map((f) => (
-            <div key={f} className="flex items-center gap-1.5 text-[12px] text-zinc-700 leading-snug">
+            <div key={f} className="flex items-center gap-1.5 text-[11.5px] text-zinc-700 leading-snug">
               <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
               {f}
             </div>
           ))}
         </div>
+      </div>
 
-        <Link
-          href="/telephonic-agent"
-          className="mt-auto inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 text-white text-[13px] font-bold hover:bg-blue-700 transition-colors shadow-sm"
-        >
-          <Phone className="w-3.5 h-3.5" /> Call Now
-        </Link>
+      <Link
+        href="/telephonic-agent"
+        className="mt-auto inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 text-white text-[13px] font-bold hover:bg-blue-700 transition-colors shadow-sm"
+      >
+        <Phone className="w-3.5 h-3.5" /> Start Telephonic Agent
+      </Link>
     </div>
   );
 }
@@ -1480,74 +1472,65 @@ function TelephonicAgentCard() {
 /* ── Screening Agent — 3D avatar interviews, tiered per-interview pricing ── */
 function ScreeningAgentCard() {
   const tiers = [
-    { name: "AI Standard Interview", detail: "15–20 min · adaptive avatar · resume aware" },
-    { name: "AI Deep Interview", detail: "25–30 min · probing follow-ups" },
-    { name: "Structured Interview", detail: "You write the questions · AI conducts" },
+    { name: "Standard AI Interview", detail: "Adaptive 3D avatar" },
+    { name: "Deep Technical Interview", detail: "Probing follow-ups" },
+    { name: "Custom Structured", detail: "Role-specific questions" },
   ];
   const features = [
     { label: "BrewShield proctoring", icon: <ShieldCheck className="w-3 h-3 text-blue-600" /> },
-    { label: "PDF report per candidate", icon: <CheckCircle2 className="w-3 h-3 text-emerald-600" /> },
-    { label: "JD + resume aware", icon: <CheckCircle2 className="w-3 h-3 text-emerald-600" /> },
+    { label: "PDF report scored", icon: <CheckCircle2 className="w-3 h-3 text-emerald-600" /> },
   ];
 
   return (
     <div className="cpu-burn-card h-full">
-        <div className="flex flex-col md:flex-row gap-7">
-          <div className="flex-1 min-w-0 flex flex-col">
+      <div className="flex flex-col md:flex-row gap-6 h-full justify-between">
+        <div className="flex-1 min-w-0 flex flex-col justify-between">
+          <div>
             <div className="flex items-center justify-between mb-3 gap-2">
               <div className="card-icon-badge">
                 <Video className="w-5 h-5" />
               </div>
               <WorkingBadge />
             </div>
-            <h3 className="text-[16px] font-bold text-zinc-900 mb-1.5">Screening Agent</h3>
-            <p className="text-[13px] text-zinc-500 mb-5">3D avatar AI interviews · pay per interview</p>
+            <h3 className="text-[16px] font-bold text-zinc-900 mb-1">3D Avatar Screening Agent</h3>
+            <p className="text-[12.5px] text-zinc-500 mb-4">AI video interviews with live eye-gaze & audio proctoring.</p>
 
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-2 mb-4">
               {features.map((f) => (
-                <span key={f.label} className="text-[11px] font-medium px-2.5 py-1.5 rounded-lg bg-zinc-50 text-zinc-700 border border-zinc-200 flex items-center gap-1.5">
+                <span key={f.label} className="text-[11px] font-medium px-2.5 py-1 rounded-lg bg-zinc-50 text-zinc-700 border border-zinc-200 flex items-center gap-1.5">
                   {f.icon}
                   {f.label}
                 </span>
               ))}
             </div>
-
-            <Link
-              href="/screening-agent"
-              className="mt-auto pt-6 md:pt-0 md:mt-6 inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 text-white text-[13px] font-bold hover:bg-blue-700 transition-colors shadow-sm"
-            >
-              <Video className="w-3.5 h-3.5" /> Try Screening Agent
-            </Link>
           </div>
 
-          <div className="w-full md:w-64 shrink-0 space-y-2.5">
-            {tiers.map((t) => (
-              <div key={t.name} className="p-3.5 bg-zinc-50 border border-zinc-200 rounded-xl">
-                <span className="text-[12px] font-bold text-zinc-900 leading-tight">{t.name}</span>
-                <div className="text-[10px] text-zinc-500 leading-tight mt-1.5">{t.detail}</div>
-              </div>
-            ))}
-          </div>
+          <Link
+            href="/screening-agent"
+            className="mt-auto inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 text-white text-[13px] font-bold hover:bg-blue-700 transition-colors shadow-sm"
+          >
+            <Video className="w-3.5 h-3.5" /> Launch Screening Agent
+          </Link>
         </div>
+
+        <div className="w-full md:w-56 shrink-0 space-y-2 flex flex-col justify-center">
+          {tiers.map((t) => (
+            <div key={t.name} className="p-2.5 bg-zinc-50 border border-zinc-200 rounded-xl">
+              <span className="text-[11.5px] font-bold text-zinc-900 leading-tight">{t.name}</span>
+              <div className="text-[10px] text-zinc-500 leading-tight mt-0.5">{t.detail}</div>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
 
-/* ── Security folder taxonomy — mirrors what a real enterprise security/compliance
-   surface tracks. Each "folder" drills down into the concrete data points it covers. ── */
-const SECURITY_CATEGORY_LABELS = [
-  "Role Based Access Control (RBAC)",
-  "Audit Logs",
-  "Activity Monitoring",
-  "Backup & Disaster Recovery",
-  "Secure File Uploads",
-];
-
 function SecurityCardWhite() {
   const securityItems = [
     "Role-Based Access Control (RBAC)",
-    "Encrypted Document & Audio Vault",
-    "Audit Trails & Proctoring Logs",
+    "Encrypted Vault & Audio Storage",
+    "Proctoring Logs & Audit Trails",
   ];
 
   return (
@@ -1557,32 +1540,30 @@ function SecurityCardWhite() {
           <div className="card-icon-badge">
             <Shield className="w-5 h-5" />
           </div>
-          <div className="flex items-center gap-1.5">
-            <PreviewBadge />
-            <Link
-              href="/security"
-              className="text-[10px] font-mono font-bold bg-blue-600 text-white px-2.5 py-1 rounded-lg hover:bg-blue-700 transition-all flex items-center gap-1"
-            >
-              <FolderOpen className="w-3 h-3" />
-              <span>View</span>
-            </Link>
-          </div>
+          <WorkingBadge />
         </div>
 
         <h3 className="text-[15px] font-bold text-zinc-900 mb-1">Enterprise Privacy & Security</h3>
         <p className="text-[12px] text-zinc-600 leading-relaxed mb-4">
           Encryption, compliance boundaries, and verified governance.
         </p>
+
+        <div className="space-y-1.5">
+          {securityItems.map((item) => (
+            <div key={item} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-zinc-50 border border-zinc-200/80 text-[11px] font-medium text-zinc-700">
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+              <span>{item}</span>
+            </div>
+          ))}
+        </div>
       </div>
 
-      <div className="space-y-1.5">
-        {securityItems.map((item) => (
-          <div key={item} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-zinc-50 border border-zinc-200/80 text-[11px] font-medium text-zinc-700">
-            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-            <span>{item}</span>
-          </div>
-        ))}
-      </div>
+      <Link
+        href="/security"
+        className="mt-4 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 text-white text-[12.5px] font-bold hover:bg-blue-700 transition-colors shadow-sm"
+      >
+        <FolderOpen className="w-3.5 h-3.5" /> View Security Controls
+      </Link>
     </div>
   );
 }
@@ -1590,10 +1571,10 @@ function SecurityCardWhite() {
 /* ── 3. NATIVE INTEGRATIONS CARD WITH ONLY ACTIVE PRODUCTION TOOLS ── */
 function IntegrationsCardInteractive() {
   const workingTools = [
-    { name: "WhatsApp Cloud API", desc: "Candidate outreach & messaging", icon: <MessageSquare className="w-4 h-4 text-emerald-600" /> },
-    { name: "Sarvam AI Voice", desc: "Conversational voice screening", icon: <Phone className="w-4 h-4 text-orange-500" /> },
-    { name: "Voice Biometrics", desc: "ECAPA-TDNN speaker auth", icon: <ShieldCheck className="w-4 h-4 text-blue-600" /> },
-    { name: "Document Forensics", desc: "Credential authenticity checks", icon: <FileCheck className="w-4 h-4 text-violet-600" /> },
+    { name: "WhatsApp Cloud API", desc: "Candidate outreach", icon: <MessageSquare className="w-4 h-4 text-emerald-600" /> },
+    { name: "Sarvam AI Voice", desc: "Voice screening", icon: <Phone className="w-4 h-4 text-orange-500" /> },
+    { name: "Voice Biometrics", desc: "ECAPA-TDNN auth", icon: <ShieldCheck className="w-4 h-4 text-blue-600" /> },
+    { name: "Document Forensics", desc: "Authenticity checks", icon: <FileCheck className="w-4 h-4 text-violet-600" /> },
     { name: "Pinecone Vector DB", desc: "Hybrid semantic search", icon: <Database className="w-4 h-4 text-sky-600" /> },
     { name: "Google Workspace", desc: "Gmail & calendar sync", icon: <Mail className="w-4 h-4 text-red-500" /> },
   ];
@@ -1608,27 +1589,34 @@ function IntegrationsCardInteractive() {
           <WorkingBadge />
         </div>
         <h3 className="text-[16px] font-bold text-zinc-900 mb-1">Production Integrated Tools</h3>
-        <p className="text-[13px] text-zinc-600 leading-relaxed mb-4">
-          Live integrations actively running in this system:
+        <p className="text-[12.5px] text-zinc-600 leading-relaxed mb-4">
+          Live enterprise integrations actively executing across the platform:
         </p>
+
+        <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-2">
+          {workingTools.map((item) => (
+            <div
+              key={item.name}
+              className="p-2.5 rounded-xl bg-zinc-50 border border-zinc-200/80 flex items-start gap-2 hover:bg-blue-50/50 hover:border-blue-200 transition-colors"
+            >
+              <div className="p-1.5 rounded-lg bg-white border border-zinc-200 shadow-2xs shrink-0">
+                {item.icon}
+              </div>
+              <div className="min-w-0">
+                <div className="text-[11.5px] font-bold text-zinc-900 leading-tight">{item.name}</div>
+                <div className="text-[10px] text-zinc-500 leading-tight mt-0.5">{item.desc}</div>
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
 
-      <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-2.5">
-        {workingTools.map((item) => (
-          <div
-            key={item.name}
-            className="p-3 rounded-xl bg-zinc-50 border border-zinc-200/80 flex items-start gap-2.5 hover:bg-blue-50/50 hover:border-blue-200 transition-colors"
-          >
-            <div className="p-1.5 rounded-lg bg-white border border-zinc-200 shadow-2xs shrink-0">
-              {item.icon}
-            </div>
-            <div className="min-w-0">
-              <div className="text-[12px] font-bold text-zinc-900 leading-tight">{item.name}</div>
-              <div className="text-[10.5px] text-zinc-500 leading-tight mt-0.5">{item.desc}</div>
-            </div>
-          </div>
-        ))}
-      </div>
+      <Link
+        href="/command-center"
+        className="mt-4 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 text-white text-[13px] font-bold hover:bg-blue-700 transition-colors shadow-sm self-start"
+      >
+        <ArrowRight className="w-3.5 h-3.5" /> Deploy Connected Tools in Command Center
+      </Link>
     </div>
   );
 }

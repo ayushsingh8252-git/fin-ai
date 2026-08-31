@@ -238,7 +238,7 @@ class Settings(BaseSettings):
     VOICE_ID_MARGIN_THRESHOLD: float = 0.15
     # VAD / quality-gate thresholds.
     VOICE_ID_MIN_SPEECH_DURATION: float = 0.5   # seconds
-    VOICE_ID_MIN_ENROLLMENT_SAMPLES: int = 3
+    VOICE_ID_MIN_ENROLLMENT_SAMPLES: int = 1
     VOICE_ID_MAX_ENROLLMENT_SAMPLES: int = 30
     # Anti-spoofing feature flags — disable individually if latency is critical.
     VOICE_ID_REPLAY_DETECTION_ENABLED: bool = True

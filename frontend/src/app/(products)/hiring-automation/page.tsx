@@ -116,16 +116,16 @@ function candidateFromParsed(raw: Record<string, unknown>, index: number): Candi
 // chip tooltips below rather than silently presenting all 10 as equally
 // "live" — see platform-status-audit docs for the same distinction.
 const PIPELINE_NODES = [
-  { key: "upload", title: "Bulk PDF Upload", desc: "Ingests resumes from HR bulk upload", icon: Upload, live: true },
-  { key: "parser", title: "Resume Parser", desc: "Extracts structured text & entities", icon: ScanSearch, live: true },
-  { key: "ats", title: "ATS + Email Extraction", desc: "Scores resumes, extracts contact info", icon: Mail, live: true },
-  { key: "matching", title: "Requirement Matching", desc: "Matches skills to role requirements", icon: Target, live: true },
-  { key: "assignment", title: "Assignment Generator", desc: "Drafts a personalized take-home task", icon: ClipboardList, live: true },
-  { key: "evaluation", title: "Candidate Evaluation", desc: "Scores submissions & ranks candidates", icon: Award, live: false },
-  { key: "review", title: "HR & Hiring Manager Review", desc: "Human approval gate before onboarding", icon: ShieldCheck, live: false },
-  { key: "scheduling", title: "Interview Scheduling", desc: "Books telephonic & AI interview slots", icon: CalendarDays, live: false },
-  { key: "onboarding", title: "Onboarding Agent", desc: "Provisions accounts & equipment", icon: UserPlus, live: false },
-  { key: "knowledge", title: "Knowledge Transfer Agent", desc: "Assigns docs, videos & training", icon: BookOpen, live: false },
+  { key: "upload", title: "Bulk PDF Upload", shortTitle: "Bulk PDF Upload", desc: "Ingests resumes from HR bulk upload", icon: Upload, live: true },
+  { key: "parser", title: "Resume Parser", shortTitle: "Resume Parser", desc: "Extracts structured text & entities", icon: ScanSearch, live: true },
+  { key: "ats", title: "ATS + Email Extraction", shortTitle: "ATS + Email", desc: "Scores resumes, extracts contact info", icon: Mail, live: true },
+  { key: "matching", title: "Requirement Matching", shortTitle: "Requirement Match", desc: "Matches skills to role requirements", icon: Target, live: true },
+  { key: "assignment", title: "Assignment Generator", shortTitle: "Assignment Gen", desc: "Drafts a personalized take-home task", icon: ClipboardList, live: true },
+  { key: "evaluation", title: "Candidate Evaluation", shortTitle: "Candidate Eval", desc: "Scores submissions & ranks candidates", icon: Award, live: false },
+  { key: "review", title: "HR & Hiring Manager Review", shortTitle: "HR Review", desc: "Human approval gate before onboarding", icon: ShieldCheck, live: false },
+  { key: "scheduling", title: "Interview Scheduling", shortTitle: "Interview Schedule", desc: "Books telephonic & AI interview slots", icon: CalendarDays, live: false },
+  { key: "onboarding", title: "Onboarding Agent", shortTitle: "Onboarding Agent", desc: "Provisions accounts & equipment", icon: UserPlus, live: false },
+  { key: "knowledge", title: "Knowledge Transfer Agent", shortTitle: "Knowledge Transfer", desc: "Assigns docs, videos & training", icon: BookOpen, live: false },
 ] as const;
 
 function nodeTooltip(node: { desc: string; live: boolean }): string {
@@ -904,80 +904,66 @@ function PipelineFlow({
         )}
       </div>
 
-      <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-5 lg:grid-cols-10 gap-2 items-stretch">
         {PIPELINE_NODES.map((node, i) => {
           const status = nodeStatus(i);
           const paused = isApproval && node.key === "review";
           const Icon = node.icon;
           return (
-            <Fragment key={node.key}>
-              <motion.button
-                type="button"
-                onClick={() => onJump(node.key)}
-                title={nodeTooltip(node)}
-                initial={{ opacity: 0, y: 8 }}
-                animate={
-                  status === "active"
-                    ? { opacity: 1, y: 0, scale: 1.03, boxShadow: ["0 0 0px rgba(37,99,235,0.0)", "0 0 22px rgba(37,99,235,0.45)", "0 0 0px rgba(37,99,235,0.0)"] }
-                    : { opacity: 1, y: 0, scale: 1, boxShadow: "0 0 0px rgba(37,99,235,0)" }
-                }
-                transition={
-                  status === "active"
-                    ? { boxShadow: { duration: 1.6, repeat: Infinity, ease: "easeInOut" }, default: { duration: 0.3 } }
-                    : { delay: i * 0.03, duration: 0.3 }
-                }
-                className={`relative w-full sm:w-[126px] shrink-0 rounded-2xl border p-3 flex flex-col justify-between gap-1.5 min-h-[64px] overflow-hidden text-left transition-shadow cursor-pointer ${
-                  paused
-                    ? "bg-amber-50 border-amber-300 hover:shadow-md"
-                    : status === "active"
-                    ? "bg-blue-600 border-blue-600 text-white shadow-md"
-                    : status === "done"
-                    ? "bg-emerald-50/70 border-emerald-300 hover:shadow-md"
-                    : "bg-white border-zinc-200 hover:border-zinc-300 hover:shadow-md"
-                }`}
-              >
-                {status === "active" && (
-                  <motion.div
-                    className="absolute inset-x-0 h-6 bg-white/10 pointer-events-none"
-                    initial={{ top: "-20%" }}
-                    animate={{ top: "110%" }}
-                    transition={{ duration: 1.1, repeat: Infinity, ease: "linear" }}
-                  />
-                )}
-                <div className="flex items-center justify-between relative">
-                  <div
-                    className={`w-6 h-6 rounded-md flex items-center justify-center shrink-0 ${
-                      paused ? "bg-amber-100 text-amber-700" : status === "active" ? "bg-white/20 text-white" : status === "done" ? "bg-emerald-100 text-emerald-700" : "bg-blue-50 text-blue-600"
-                    }`}
-                  >
-                    {paused ? <Pause className="w-3.5 h-3.5" /> : <Icon className="w-3.5 h-3.5" />}
-                  </div>
-                  {status === "active" && !paused && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                  {status === "done" && !paused && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />}
-                </div>
-                <div className="relative">
-                  <div className={`text-[10.5px] font-bold leading-tight ${status === "active" ? "text-white" : paused ? "text-amber-800" : "text-zinc-900"}`}>{node.title}</div>
-                  {!node.live && (
-                    <div className={`text-[8px] font-mono font-semibold uppercase tracking-wide mt-0.5 ${status === "active" ? "text-blue-100" : "text-zinc-400"}`}>
-                      Simulated
-                    </div>
-                  )}
-                </div>
-              </motion.button>
-              {i < PIPELINE_NODES.length - 1 && (
-                <div className="hidden sm:flex items-center justify-center w-3 shrink-0 relative overflow-hidden">
-                  <div className={`h-px w-3 transition-colors duration-300 ${status === "done" ? "bg-emerald-400" : "bg-zinc-200"}`} />
-                  {status === "active" && (
-                    <motion.div
-                      className="absolute w-1 h-1 rounded-full bg-blue-500"
-                      initial={{ left: "-10%" }}
-                      animate={{ left: "110%" }}
-                      transition={{ duration: 0.8, repeat: Infinity, ease: "linear" }}
-                    />
-                  )}
-                </div>
+            <motion.button
+              key={node.key}
+              type="button"
+              onClick={() => onJump(node.key)}
+              title={nodeTooltip(node)}
+              initial={{ opacity: 0, y: 8 }}
+              animate={
+                status === "active"
+                  ? { opacity: 1, y: 0, scale: 1.03, boxShadow: ["0 0 0px rgba(37,99,235,0.0)", "0 0 22px rgba(37,99,235,0.45)", "0 0 0px rgba(37,99,235,0.0)"] }
+                  : { opacity: 1, y: 0, scale: 1, boxShadow: "0 0 0px rgba(37,99,235,0)" }
+              }
+              transition={
+                status === "active"
+                  ? { boxShadow: { duration: 1.6, repeat: Infinity, ease: "easeInOut" }, default: { duration: 0.3 } }
+                  : { delay: i * 0.03, duration: 0.3 }
+              }
+              className={`relative w-full rounded-2xl border p-2.5 flex flex-col items-center justify-center text-center gap-1.5 min-h-[94px] overflow-hidden transition-all cursor-pointer ${
+                paused
+                  ? "bg-amber-50 border-amber-300 hover:shadow-md"
+                  : status === "active"
+                  ? "bg-blue-600 border-blue-600 text-white shadow-md"
+                  : status === "done"
+                  ? "bg-emerald-50/70 border-emerald-300 hover:shadow-md"
+                  : "bg-white border-zinc-200 hover:border-zinc-300 hover:shadow-md"
+              }`}
+            >
+              {status === "active" && (
+                <motion.div
+                  className="absolute inset-x-0 h-6 bg-white/10 pointer-events-none"
+                  initial={{ top: "-20%" }}
+                  animate={{ top: "110%" }}
+                  transition={{ duration: 1.1, repeat: Infinity, ease: "linear" }}
+                />
               )}
-            </Fragment>
+              <div className="flex items-center justify-center relative">
+                <div
+                  className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
+                    paused ? "bg-amber-100 text-amber-700" : status === "active" ? "bg-white/20 text-white" : status === "done" ? "bg-emerald-100 text-emerald-700" : "bg-blue-50 text-blue-600"
+                  }`}
+                >
+                  {paused ? <Pause className="w-3.5 h-3.5" /> : status === "done" ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> : status === "active" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Icon className="w-3.5 h-3.5" />}
+                </div>
+              </div>
+              <div className="relative flex flex-col items-center justify-center">
+                <div className={`text-[10.5px] font-bold leading-snug text-center ${status === "active" ? "text-white" : paused ? "text-amber-800" : "text-zinc-900"}`}>
+                  {node.shortTitle}
+                </div>
+                {!node.live && (
+                  <div className={`text-[8px] font-mono font-semibold uppercase tracking-wide mt-0.5 text-center ${status === "active" ? "text-blue-100" : "text-zinc-400"}`}>
+                    Simulated
+                  </div>
+                )}
+              </div>
+            </motion.button>
           );
         })}
       </div>
@@ -1098,7 +1084,7 @@ function WorkflowHeader({
                       : status === "done" ? <CheckCircle2 className="w-3 h-3" />
                       : status === "active" ? <Loader2 className="w-3 h-3 animate-spin" />
                       : <Icon className="w-3 h-3" />}
-                    {node.title}
+                    {node.shortTitle}
                   </button>
                   {i < PIPELINE_NODES.length - 1 && <div className="w-2 h-px bg-zinc-200 shrink-0" />}
                 </Fragment>

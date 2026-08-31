@@ -11,8 +11,6 @@ import {
   AlertCircle,
   Loader2,
   Cpu,
-  Upload,
-  FileAudio,
   KeyRound,
 } from "lucide-react";
 
@@ -246,6 +244,19 @@ export function VoiceGateModal({ isOpen, onAuthenticated }: Props) {
 
       if (res.ok) {
         const data = await res.json();
+
+        // If speaker is not found in database, inform user to enroll first (do NOT auto-unlock)
+        if (data.decision === "error" && (data.message?.toLowerCase().includes("not found") || data.message?.toLowerCase().includes("not fully enrolled"))) {
+          setLogs((prev) => [
+            ...prev,
+            "Speaker 'ayush_singh' not found in biometric database.",
+            "Security Decision: ACCESS DENIED. Enrollment required.",
+          ]);
+          setErrorMessage("Speaker 'ayush_singh' is not enrolled yet. Please switch to the 'Enroll' tab to register your baseline voiceprint.");
+          setStatus("error");
+          return;
+        }
+
         const score = typeof data.confidence === "number"
           ? data.confidence
           : typeof data.score === "number"
@@ -261,6 +272,7 @@ export function VoiceGateModal({ isOpen, onAuthenticated }: Props) {
           data.decision !== "mismatch" &&
           data.decision !== "error";
 
+        // Strictly enforce 63% cosine similarity threshold for Ayush Singh
         const isScoreSufficient = score >= 0.63;
         const verified = isExplicitMatch && isScoreSufficient;
 
@@ -284,7 +296,7 @@ export function VoiceGateModal({ isOpen, onAuthenticated }: Props) {
             data.message ||
             data.decision_detail?.message ||
             data.reason ||
-            `Voice does not match enrolled profile (similarity: ${(score * 100).toFixed(1)}% < 63.0% required).`;
+            `Voice does not match enrolled profile for Ayush Singh (similarity: ${(score * 100).toFixed(1)}% < 63.0% required).`;
 
           setLogs((prev) => [
             ...prev,
@@ -299,7 +311,18 @@ export function VoiceGateModal({ isOpen, onAuthenticated }: Props) {
       } else {
         const errData = await res.json().catch(() => ({ detail: "Verification service error" }));
         const detailMsg = errData.detail || errData.message || "Voice verification service error.";
-        
+
+        if (res.status === 404 || detailMsg.toLowerCase().includes("not found")) {
+          setLogs((prev) => [
+            ...prev,
+            "Speaker 'ayush_singh' not found in biometric database.",
+            "Security Decision: ACCESS DENIED. Enrollment required.",
+          ]);
+          setErrorMessage("Speaker 'ayush_singh' is not enrolled yet. Please switch to the 'Enroll' tab to register your baseline voiceprint.");
+          setStatus("error");
+          return;
+        }
+
         setLogs((prev) => [
           ...prev,
           `Backend error response (${res.status}): ${detailMsg}`,
@@ -382,7 +405,7 @@ export function VoiceGateModal({ isOpen, onAuthenticated }: Props) {
           </h2>
           <p style={{ fontSize: 13, color: "#a1a1aa", margin: 0, lineHeight: 1.5 }}>
             {unlockMethod === "voice"
-              ? "Speak into the microphone to authenticate your voice identity for Ayush Singh."
+              ? "Speak into the microphone to verify your voice identity for Ayush Singh."
               : "Enter the Command Center password to unlock."}
           </p>
         </div>
@@ -399,7 +422,7 @@ export function VoiceGateModal({ isOpen, onAuthenticated }: Props) {
             padding: 4,
           }}
         >
-          {(["voice", "password"] as const).map((method) => (
+          {(["password", "voice"] as const).map((method) => (
             <button
               key={method}
               onClick={() => {
@@ -424,8 +447,8 @@ export function VoiceGateModal({ isOpen, onAuthenticated }: Props) {
                 transition: "all 0.15s ease",
               }}
             >
-              {method === "voice" ? <Mic size={13} /> : <KeyRound size={13} />}
-              {method === "voice" ? "Voice" : "Password"}
+              {method === "password" ? <KeyRound size={13} /> : <Mic size={13} />}
+              {method === "password" ? "Password" : "Voice Biometric"}
             </button>
           ))}
         </div>
@@ -468,7 +491,7 @@ export function VoiceGateModal({ isOpen, onAuthenticated }: Props) {
           </div>
 
           {/* Record Button */}
-          <div style={{ display: "flex", justifyContent: "center", marginBottom: 12 }}>
+          <div style={{ display: "flex", justifyContent: "center", marginBottom: isRecording ? 10 : 4 }}>
             <button
               onClick={isRecording ? stopRecordingAndProcess : startRecording}
               disabled={status === "processing"}
@@ -497,51 +520,36 @@ export function VoiceGateModal({ isOpen, onAuthenticated }: Props) {
             </button>
           </div>
 
-          <div style={{ fontSize: 12, color: isRecording ? "#f87171" : "#71717a", fontWeight: 500, marginBottom: 14 }}>
-            {isRecording
-              ? `Recording: ${recordingSeconds}s • Click to submit & authenticate`
-              : "Click microphone to start recording"}
-          </div>
-
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
-            <label
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 6,
-                padding: "7px 14px",
-                background: "rgba(255, 255, 255, 0.05)",
-                border: "1px solid rgba(255, 255, 255, 0.12)",
-                borderRadius: 8,
-                fontSize: 12,
-                color: "#d4d4d8",
-                cursor: status === "processing" ? "not-allowed" : "pointer",
-                transition: "all 0.2s ease",
-              }}
-            >
-              <Upload size={13} />
-              <span>Upload Voice Recording</span>
-              <input
-                type="file"
-                accept="audio/*"
-                disabled={status === "processing"}
-                style={{ display: "none" }}
-                onChange={async (e) => {
-                  const file = e.target.files?.[0];
-                  if (!file) return;
-                  setStatus("processing");
-                  setLogs([
-                    `Uploaded audio file: ${file.name} (${(file.size / 1024).toFixed(1)} KB)`,
-                  ]);
-                  await handleVerify(file);
-                }}
-              />
-            </label>
-          </div>
+          {isRecording && (
+            <div style={{ fontSize: 12, color: "#f87171", fontWeight: 500, marginTop: 6 }}>
+              Recording: {recordingSeconds}s • Click mic to submit & authenticate
+            </div>
+          )}
 
           {errorMessage && (
-            <div style={{ marginTop: 12, fontSize: 12, color: "#f87171", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, background: "rgba(239, 68, 68, 0.08)", padding: "8px 12px", borderRadius: 6, border: "1px solid rgba(239, 68, 68, 0.2)" }}>
-              <AlertCircle size={14} style={{ flexShrink: 0 }} /> <span>{errorMessage}</span>
+            <div style={{ marginTop: 12 }}>
+              <div style={{ fontSize: 12, color: "#f87171", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, background: "rgba(239, 68, 68, 0.08)", padding: "8px 12px", borderRadius: 6, border: "1px solid rgba(239, 68, 68, 0.2)" }}>
+                <AlertCircle size={14} style={{ flexShrink: 0 }} /> <span>{errorMessage}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setErrorMessage("");
+                  setUnlockMethod("password");
+                }}
+                style={{
+                  marginTop: 8,
+                  fontSize: 11,
+                  fontFamily: "var(--font-geist-mono), monospace",
+                  color: "#38bdf8",
+                  background: "transparent",
+                  border: "none",
+                  cursor: "pointer",
+                  textDecoration: "underline",
+                }}
+              >
+                ➔ Switch to Password Unlock (Direct Access)
+              </button>
             </div>
           )}
         </div>
@@ -574,16 +582,6 @@ export function VoiceGateModal({ isOpen, onAuthenticated }: Props) {
         )}
         </>
         )}
-
-        {/* Footer info */}
-        <div style={{ fontSize: 11, color: "#71717a", textAlign: "center", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-          <CheckCircle2 size={12} className="text-emerald-400" />
-          <span>
-            {unlockMethod === "voice"
-              ? "Local Neural Speaker Biometrics • Zero Third-Party Audio Leakage"
-              : "Password Verified Server-Side • Never Exposed to the Browser"}
-          </span>
-        </div>
       </motion.div>
     </div>
   );

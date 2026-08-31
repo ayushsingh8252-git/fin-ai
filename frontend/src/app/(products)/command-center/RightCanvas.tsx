@@ -154,6 +154,7 @@ interface Props {
   onToggleExecutionMode?: () => void;
   onExecuteStep?: (stepIndex: number) => void;
   onExecuteNextStep?: () => void;
+  startedAt?: number;
 }
 
 function RightCanvasInner({
@@ -171,6 +172,7 @@ function RightCanvasInner({
   onToggleExecutionMode,
   onExecuteStep,
   onExecuteNextStep,
+  startedAt,
 }: Props) {
   const { fitView } = useReactFlow();
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -417,7 +419,7 @@ function RightCanvasInner({
       {/* ── MAIN CONTENT AREA ── */}
       <div style={{ flex: 1, position: "relative", width: "100%", height: "100%" }}>
         {/* Dynamic Moving Planning Neural Visualizer */}
-        {phase === "planning" && <PlanningNeuralVisualizer />}
+        {phase === "planning" && <PlanningNeuralVisualizer startedAt={startedAt} />}
 
         {/* VIEW 1: AGENT GRAPH */}
         {viewMode === "graph" && (
