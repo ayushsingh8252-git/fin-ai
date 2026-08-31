@@ -39,9 +39,49 @@ import type {
   ApprovalDialogState,
   WorkspaceViewMode,
 } from "./types";
-import { DEMO_PLAN as DemoPlan, DEMO_RESULTS as DemoResults } from "./types";
+import { DEMO_PLAN as DemoPlan } from "./types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+/** Calls the real backend tool endpoint — the only way any step (planned via
+ * the LLM planner or the local keyword-matched fallback below) actually
+ * executes. No caller of this may fabricate a result on failure; a failed
+ * call must be reported as failed. */
+async function callRealTool(
+  connector: string,
+  tool: string,
+  params: Record<string, unknown>,
+  signal?: AbortSignal
+): Promise<{ ok: boolean; status: number; body: Record<string, unknown> }> {
+  const res = await fetch(`${API_URL}/api/v1/agent/tools/${connector}/${tool}/call`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+    signal,
+  });
+  const body = await res.json().catch(() => ({}));
+  return { ok: res.ok, status: res.status, body };
+}
+
+// Extracts a real email address / E.164-ish phone number / free-text time
+// mention straight out of the user's own prompt, so a request like "email
+// jane@x.com about the 3pm interview" or "whatsapp +917209602122 that we're
+// confirmed for tomorrow" carries the actual values the user typed instead
+// of the canned demo candidate's contact info.
+const EMAIL_RE = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/;
+const PHONE_RE = /\+?\d[\d\s-]{7,14}\d/;
+const TIME_RE = /\b(\d{1,2}(:\d{2})?\s?(am|pm|AM|PM))\b|\b(tomorrow|today|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i;
+
+function extractPromptEntities(prompt: string): { email: string | null; phone: string | null; time: string | null } {
+  const emailMatch = prompt.match(EMAIL_RE);
+  const phoneMatch = prompt.match(PHONE_RE);
+  const timeMatch = prompt.match(TIME_RE);
+  return {
+    email: emailMatch ? emailMatch[0] : null,
+    phone: phoneMatch ? phoneMatch[0].replace(/\s|-/g, "") : null,
+    time: timeMatch ? timeMatch[0] : null,
+  };
+}
 
 /**
  * Intelligent plan synthesizer for custom user prompts when backend planner is unconfigured
@@ -49,6 +89,7 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 function synthesizePlanFromPrompt(prompt: string, hasDoc: boolean): Plan {
   const p = prompt.toLowerCase();
   const steps: PlanStep[] = [];
+  const entities = extractPromptEntities(prompt);
 
   const mentionsResume = p.includes("resume") || p.includes("candidate") || p.includes("hire") || p.includes("cv") || hasDoc;
   const mentionsMatching = p.includes("jd") || p.includes("match") || p.includes("requirement") || p.includes("role") || mentionsResume;
@@ -106,7 +147,7 @@ function synthesizePlanFromPrompt(prompt: string, hasDoc: boolean): Plan {
       connector: "telephonic",
       tool: "place_screening_call",
       params: {
-        to: "$step1.candidate.phone",
+        to: entities.phone || "$step1.candidate.phone",
         candidate_name: "$step1.candidate.name",
         role_title: "Senior AI Systems Engineer",
       },
@@ -118,8 +159,8 @@ function synthesizePlanFromPrompt(prompt: string, hasDoc: boolean): Plan {
       connector: "google_calendar",
       tool: "create_meet",
       params: {
-        summary: "Technical Discussion with Ayush Singh",
-        attendee_email: "$step1.candidate.email",
+        summary: entities.time ? `Technical Discussion (${entities.time})` : "Technical Discussion with Ayush Singh",
+        attendee_email: entities.email || "$step1.candidate.email",
       },
     });
   }
@@ -129,8 +170,10 @@ function synthesizePlanFromPrompt(prompt: string, hasDoc: boolean): Plan {
       connector: "whatsapp",
       tool: "send_whatsapp_message",
       params: {
-        recipient: "$step1.candidate.phone",
-        message: "Hi Ayush! Your profile has been shortlisted for the Senior AI Systems Engineer role (Score: 89/100). Please let us know your availability for a technical interview.",
+        recipient: entities.phone || "$step1.candidate.phone",
+        // The prompt itself is the message when the user wrote out real
+        // content (email/time found) — otherwise fall back to the demo copy.
+        message: entities.email || entities.time || entities.phone ? prompt : "Hi Ayush! Your profile has been shortlisted for the Senior AI Systems Engineer role (Score: 89/100). Please let us know your availability for a technical interview.",
       },
     });
   }
@@ -138,11 +181,12 @@ function synthesizePlanFromPrompt(prompt: string, hasDoc: boolean): Plan {
   if (mentionsEmail) {
     steps.push({
       connector: "gmail",
+      // real schema is {to, subject, body} — see mcp/connectors/google/gmail.py
       tool: "send_email",
       params: {
-        recipient: "$step1.candidate.email",
-        subject: "Shortlisted: Senior AI Systems Engineer Application",
-        body: "Hello Ayush, we have reviewed your candidate profile and would love to proceed to the next technical discussion.",
+        to: entities.email || "$step1.candidate.email",
+        subject: entities.time ? `Interview scheduled: ${entities.time}` : "Shortlisted: Senior AI Systems Engineer Application",
+        body: entities.email || entities.time ? prompt : "Hello Ayush, we have reviewed your candidate profile and would love to proceed to the next technical discussion.",
       },
     });
   }
@@ -315,9 +359,13 @@ export default function CommandCenter() {
         }
 
         let plan: Plan = synthesizePlanFromPrompt(trimmed, !!attachedDoc);
-        let useBackendExecution = false;
 
-        // Try requesting backend planner
+        // Try requesting the real backend LLM planner — it extracts
+        // recipient/time/content entities from the prompt far more reliably
+        // than the local keyword-matcher above, so prefer it whenever it
+        // returns a usable plan. Execution below is always real regardless
+        // of which plan source won — this only decides *what* runs, never
+        // *whether* it actually runs.
         try {
           const planRes = await fetch(`${API_URL}/api/v1/agent/plan`, {
             method: "POST",
@@ -330,11 +378,12 @@ export default function CommandCenter() {
             const data = await planRes.json();
             if (data.steps && data.steps.length > 0) {
               plan = data;
-              useBackendExecution = true;
             }
           }
         } catch {
-          // plan fallback used
+          // Real LLM planner unreachable — the local keyword-matched plan
+          // (with prompt-extracted entities) is used instead. Still executed
+          // for real below.
         }
 
         if (controller.signal.aborted) return;
@@ -389,7 +438,11 @@ export default function CommandCenter() {
         if (controller.signal.aborted) return;
 
         setState((prev) => ({ ...prev, phase: "executing" }));
-        const results: Record<number, Record<string, unknown>> = {};
+        // Alias, not a copy — writes below must land in resultsRef.current
+        // too, since handleApproveStep/executeSingleStep resolve $stepN
+        // placeholders from that ref after this function returns at an
+        // approval gate.
+        const results = resultsRef.current;
 
         for (let i = 0; i < plan.steps.length; i++) {
           if (controller.signal.aborted) return;
@@ -460,105 +513,53 @@ export default function CommandCenter() {
             return;
           }
 
-          // Execute Step
-          if (useBackendExecution) {
-            try {
-              const toolRes = await fetch(
-                `${API_URL}/api/v1/agent/tools/${planStep.connector}/${planStep.tool}/call`,
-                {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify(resolvedParams),
-                  signal: controller.signal,
-                }
-              );
+          // Execute Step — always a real call. A failure is reported as a
+          // failed step with the real error, never fabricated as success.
+          try {
+            const { ok, status, body } = await callRealTool(
+              planStep.connector,
+              planStep.tool,
+              resolvedParams,
+              controller.signal
+            );
+            const elapsed = Date.now() - startTime;
 
-              const elapsed = Date.now() - startTime;
-
-              if (toolRes.ok) {
-                const result = await toolRes.json();
-                results[stepIndex] = result;
-
-                setState((prev) => ({
-                  ...prev,
-                  executionSteps: prev.executionSteps.map((s) =>
-                    s.index === stepIndex
-                      ? {
-                          ...s,
-                          status: "completed" as const,
-                          result,
-                          resolvedParams,
-                          completedAt: Date.now(),
-                          durationMs: elapsed,
-                        }
-                      : s
-                  ),
-                }));
-              } else {
-                const demoResult = generateFallbackResultForTool(planStep.tool, parsedCandidateData);
-                results[stepIndex] = demoResult;
-
-                setState((prev) => ({
-                  ...prev,
-                  executionSteps: prev.executionSteps.map((s) =>
-                    s.index === stepIndex
-                      ? {
-                          ...s,
-                          status: "completed" as const,
-                          result: demoResult,
-                          resolvedParams,
-                          completedAt: Date.now(),
-                          durationMs: elapsed,
-                        }
-                      : s
-                  ),
-                }));
-              }
-            } catch {
-              const elapsed = Date.now() - startTime;
-              const demoResult = generateFallbackResultForTool(planStep.tool, parsedCandidateData);
-              results[stepIndex] = demoResult;
-
+            if (ok) {
+              results[stepIndex] = body;
               setState((prev) => ({
                 ...prev,
                 executionSteps: prev.executionSteps.map((s) =>
                   s.index === stepIndex
-                    ? {
-                        ...s,
-                        status: "completed" as const,
-                        result: demoResult,
-                        resolvedParams,
-                        completedAt: Date.now(),
-                        durationMs: elapsed,
-                      }
+                    ? { ...s, status: "completed" as const, result: body, resolvedParams, completedAt: Date.now(), durationMs: elapsed }
                     : s
                 ),
               }));
+            } else {
+              const errorMsg = (body?.detail as any)?.message || (body?.detail as string) || `Tool call failed (HTTP ${status})`;
+              setState((prev) => ({
+                ...prev,
+                phase: "failed",
+                executionSteps: prev.executionSteps.map((s) =>
+                  s.index === stepIndex
+                    ? { ...s, status: "failed" as const, result: body, error: String(errorMsg), resolvedParams, completedAt: Date.now(), durationMs: elapsed }
+                    : s
+                ),
+              }));
+              return;
             }
-          } else {
-            // Local autonomous execution suite
-            await sleep(800 + Math.random() * 600);
+          } catch (err) {
             if (controller.signal.aborted) return;
-
-            const demoResult = generateFallbackResultForTool(planStep.tool, parsedCandidateData);
             const elapsed = Date.now() - startTime;
-            results[stepIndex] = demoResult;
-
             setState((prev) => ({
               ...prev,
+              phase: "failed",
               executionSteps: prev.executionSteps.map((s) =>
                 s.index === stepIndex
-                  ? {
-                      ...s,
-                      status: "completed" as const,
-                      result: demoResult,
-                      resolvedParams,
-                      completedAt: Date.now(),
-                      durationMs: elapsed,
-                    }
+                  ? { ...s, status: "failed" as const, error: (err as Error)?.message || "Network error reaching the backend", resolvedParams, completedAt: Date.now(), durationMs: elapsed }
                   : s
               ),
             }));
+            return;
           }
 
           await sleep(200);
@@ -579,7 +580,10 @@ export default function CommandCenter() {
     [jobDescription, attachedDoc]
   );
 
-  /** Resume execution after human approval */
+  /** Resume execution after human approval — always a real call to the
+   * backend tool (Gmail/WhatsApp/Sarvam telephonic). Approving is the user's
+   * explicit go-ahead to actually send/call; faking success here would mean
+   * the "Approve" button never did what it says it does. */
   const handleApproveStep = useCallback(
     async (stepIndex: number, updatedParams?: Record<string, unknown>) => {
       setState((prev) => ({
@@ -591,62 +595,74 @@ export default function CommandCenter() {
         ),
       }));
 
-      await sleep(1000);
-
       const targetStep = state.executionSteps.find((s) => s.index === stepIndex);
-      const isCall = targetStep?.connector === "telephonic" || targetStep?.tool.includes("call");
-      const isEmail = targetStep?.connector === "gmail" || targetStep?.tool.includes("email");
+      if (!targetStep) return;
 
-      const demoResult = isCall
-        ? {
-            call_id: `call_${Math.random().toString(36).substring(2, 10)}`,
-            status: "completed",
-            to: updatedParams?.recipient || "+91 98765 43210",
-            duration_seconds: 142,
-            communication_score: 92,
-            technical_score: 90,
-            summary: "Candidate answered all 4 architectural questions with high confidence and structured explanations.",
-          }
-        : isEmail
-        ? {
-            message_id: `msg_${Math.random().toString(36).substring(2, 10)}@mail.gmail.com`,
-            status: "sent",
-            to: updatedParams?.recipient || "ayush.singh@agenticflow.ai",
-            subject: "Shortlisted: Senior AI Systems Engineer Application",
-            timestamp: new Date().toISOString(),
-          }
-        : {
-            message_id: `wamid.${Math.random().toString(36).substring(2, 10)}`,
-            status: "delivered",
-            recipient: updatedParams?.recipient || "+91 98765 43210",
-            timestamp: new Date().toISOString(),
-            channel: "WhatsApp Business Cloud API",
-          };
+      // The approval dialog always edits a generic {recipient, message} pair
+      // (LeftPanel.tsx), but gmail.send_email's real params are {to, subject,
+      // body} — see mcp/connectors/google/gmail.py — so map the edited
+      // fields across for email steps, otherwise an edited email would
+      // silently send to/with the original unedited values.
+      const edits = { ...(updatedParams || {}) };
+      if (targetStep.connector === "gmail") {
+        if (typeof edits.recipient === "string") edits.to = edits.recipient;
+        if (typeof edits.message === "string") edits.body = edits.message;
+      }
 
-      setState((prev) => {
-        const updatedSteps = prev.executionSteps.map((s) =>
-          s.index === stepIndex
-            ? {
-                ...s,
-                status: "completed" as const,
-                result: demoResult,
-                completedAt: Date.now(),
-                durationMs: 1100,
-              }
-            : s
-        );
+      const resolvedParams = {
+        ...(resolvePlaceholders(targetStep.params, resultsRef.current) as Record<string, unknown>),
+        ...edits,
+      };
+      const startTime = Date.now();
 
-        const allDone = updatedSteps.every((s) => s.status === "completed");
+      try {
+        const { ok, status, body } = await callRealTool(targetStep.connector, targetStep.tool, resolvedParams);
+        const elapsed = Date.now() - startTime;
 
-        return {
+        if (ok) {
+          resultsRef.current[stepIndex] = body;
+          setState((prev) => {
+            const updatedSteps = prev.executionSteps.map((s) =>
+              s.index === stepIndex
+                ? { ...s, status: "completed" as const, result: body, resolvedParams, completedAt: Date.now(), durationMs: elapsed }
+                : s
+            );
+            const allDone = updatedSteps.every((s) => s.status === "completed");
+            return {
+              ...prev,
+              phase: allDone ? "completed" : "executing",
+              activeStepIndex: null,
+              completedAt: allDone ? Date.now() : prev.completedAt,
+              totalDurationMs: allDone ? Date.now() - (prev.startedAt || Date.now()) : prev.totalDurationMs,
+              executionSteps: updatedSteps,
+            };
+          });
+        } else {
+          const errorMsg = (body?.detail as any)?.message || (body?.detail as string) || `Tool call failed (HTTP ${status})`;
+          setState((prev) => ({
+            ...prev,
+            phase: "failed",
+            activeStepIndex: null,
+            executionSteps: prev.executionSteps.map((s) =>
+              s.index === stepIndex
+                ? { ...s, status: "failed" as const, result: body, error: String(errorMsg), resolvedParams, completedAt: Date.now(), durationMs: elapsed }
+                : s
+            ),
+          }));
+        }
+      } catch (err) {
+        const elapsed = Date.now() - startTime;
+        setState((prev) => ({
           ...prev,
-          phase: allDone ? "completed" : "executing",
+          phase: "failed",
           activeStepIndex: null,
-          completedAt: allDone ? Date.now() : prev.completedAt,
-          totalDurationMs: allDone ? Date.now() - (prev.startedAt || Date.now()) : prev.totalDurationMs,
-          executionSteps: updatedSteps,
-        };
-      });
+          executionSteps: prev.executionSteps.map((s) =>
+            s.index === stepIndex
+              ? { ...s, status: "failed" as const, error: (err as Error)?.message || "Network error reaching the backend", resolvedParams, completedAt: Date.now(), durationMs: elapsed }
+              : s
+          ),
+        }));
+      }
     },
     [state.executionSteps]
   );
@@ -718,34 +734,54 @@ export default function CommandCenter() {
         return;
       }
 
-      await sleep(750);
-      const demoResult = generateFallbackResultForTool(planStep.tool, parsedDataRef.current);
-      const elapsed = Date.now() - startTime;
-      results[stepIndex] = demoResult;
+      try {
+        const { ok, status, body } = await callRealTool(planStep.connector, planStep.tool, resolvedParams);
+        const elapsed = Date.now() - startTime;
 
-      setState((prev) => {
-        const updatedSteps = prev.executionSteps.map((s) =>
-          s.index === stepIndex
-            ? {
-                ...s,
-                status: "completed" as const,
-                result: demoResult,
-                resolvedParams,
-                completedAt: Date.now(),
-                durationMs: elapsed,
-              }
-            : s
-        );
-        const allDone = updatedSteps.every((s) => s.status === "completed");
-        return {
+        if (ok) {
+          results[stepIndex] = body;
+          setState((prev) => {
+            const updatedSteps = prev.executionSteps.map((s) =>
+              s.index === stepIndex
+                ? { ...s, status: "completed" as const, result: body, resolvedParams, completedAt: Date.now(), durationMs: elapsed }
+                : s
+            );
+            const allDone = updatedSteps.every((s) => s.status === "completed");
+            return {
+              ...prev,
+              phase: allDone ? "completed" : "planned",
+              activeStepIndex: null,
+              executionSteps: updatedSteps,
+              completedAt: allDone ? Date.now() : prev.completedAt,
+              totalDurationMs: allDone ? Date.now() - (prev.startedAt || Date.now()) : prev.totalDurationMs,
+            };
+          });
+        } else {
+          const errorMsg = (body?.detail as any)?.message || (body?.detail as string) || `Tool call failed (HTTP ${status})`;
+          setState((prev) => ({
+            ...prev,
+            phase: "failed",
+            activeStepIndex: null,
+            executionSteps: prev.executionSteps.map((s) =>
+              s.index === stepIndex
+                ? { ...s, status: "failed" as const, result: body, error: String(errorMsg), resolvedParams, completedAt: Date.now(), durationMs: elapsed }
+                : s
+            ),
+          }));
+        }
+      } catch (err) {
+        const elapsed = Date.now() - startTime;
+        setState((prev) => ({
           ...prev,
-          phase: allDone ? "completed" : "planned",
+          phase: "failed",
           activeStepIndex: null,
-          executionSteps: updatedSteps,
-          completedAt: allDone ? Date.now() : prev.completedAt,
-          totalDurationMs: allDone ? Date.now() - (prev.startedAt || Date.now()) : prev.totalDurationMs,
-        };
-      });
+          executionSteps: prev.executionSteps.map((s) =>
+            s.index === stepIndex
+              ? { ...s, status: "failed" as const, error: (err as Error)?.message || "Network error reaching the backend", resolvedParams, completedAt: Date.now(), durationMs: elapsed }
+              : s
+          ),
+        }));
+      }
     },
     [state.plan]
   );
@@ -1152,96 +1188,6 @@ export default function CommandCenter() {
       </div>
     </div>
   );
-}
-
-function generateFallbackResultForTool(
-  tool: string,
-  parsedData: Record<string, unknown> | null
-): Record<string, unknown> {
-  const candidate = parsedData || DemoResults[1].candidate;
-
-  switch (tool) {
-    case "verify_company_background":
-      return {
-        company: "AgenticFlow AI",
-        location: "Bengaluru / Global",
-        legitimacy: {
-          score: 92,
-          confidence: "high",
-          signals: ["Official Corporate Domain Active", "LinkedIn Enterprise Verified", "Zero Negative Fraud Mentions"],
-        },
-        hr_contacts: [
-          { name: "Priya Sharma", title: "Head of Talent Acquisition", channel: "LinkedIn" },
-          { name: "David Chen", title: "VP Engineering", channel: "Corporate Portal" },
-        ],
-        hr_contact_number: "+1 (800) 555-0199",
-      };
-    case "get_resume_actionable_summary":
-      return {
-        summary: "Top-tier AI Systems Engineer with proven experience deploying multi-agent workflows, vector RAG pipelines, and high-performance FastAPI backends.",
-        top_skills: ["Multi-Agent Orchestration", "Python", "FastAPI", "React / Next.js", "Vector DBs"],
-        recommendation: "PROCEED_TO_INTERVIEW",
-      };
-    case "get_candidate_profile":
-      return { candidate, scan_id: "scan_candidate_09a4f", status: "parsed" };
-    case "match_candidate_requirement":
-      return {
-        match_score: 89,
-        match_grade: "Strong Match",
-        strengths: [
-          "5+ years Python, FastAPI, React, and Multi-Agent Orchestration",
-          "Production Next.js 16 and TypeScript architecture depth",
-          "Hands-on experience with vector embeddings and LLM streaming",
-        ],
-        gaps: ["Verify distributed tracing in production environments"],
-        recommendation: "PROCEED",
-      };
-    case "run_fraud_check":
-      return {
-        risk_score: 8,
-        verdict: "likely_genuine",
-        explanation: "Font metrics, metadata timestamps, and text alignment verify authentic document compilation.",
-        steps: [
-          { name: "Structure Analysis", status: "passed", score: 98 },
-          { name: "Metadata Triangulation", status: "passed", score: 96 },
-          { name: "Identity Consistency", status: "passed", score: 94 },
-        ],
-      };
-    case "generate_candidate_scorecard":
-      return {
-        scorecard_id: "sc_901928_eval",
-        candidate_name: (candidate as Record<string, unknown>).name || "Ayush Singh",
-        overall_score: 89,
-        skills_score: 94,
-        experience_score: 90,
-        education_score: 84,
-        cultural_fit_score: 88,
-        recommendation: "PROCEED",
-      };
-    case "place_screening_call":
-      return {
-        call_id: `call_${Math.random().toString(36).substring(2, 10)}`,
-        status: "completed",
-        duration_seconds: 134,
-        technical_score: 91,
-        communication_score: 94,
-        summary: "Candidate explained multi-agent decision systems and async event streams with high clarity.",
-      };
-    case "create_meet":
-      return {
-        event_id: `evt_${Math.random().toString(36).substring(2, 10)}`,
-        meet_link: "https://meet.google.com/abc-defg-hij",
-        status: "confirmed",
-        scheduled_for: new Date(Date.now() + 86400000).toISOString(),
-      };
-    case "query_documents":
-      return {
-        answer: "Based on internal policies, candidate evaluation requires ATS score above 75% and verified background checks prior to outreach.",
-        citations: ["hiring_policy_v2.pdf", "compliance_rules.pdf"],
-      };
-    default:
-      return { status: "completed", timestamp: new Date().toISOString() };
-  }
 }
 
 function PresetChip({

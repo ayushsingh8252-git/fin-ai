@@ -230,11 +230,23 @@ def parse_incoming_webhook(payload: dict) -> List[Dict[str, Any]]:
                 })
 
             for status in value.get("statuses", []) or []:
+                # A "failed" status carries Meta's actual reason in errors[] —
+                # e.g. code 131047 "Re-engagement message" when the recipient
+                # hasn't messaged this business number within the last 24h.
+                # Previously dropped entirely, making every failed send
+                # undiagnosable without going back to Meta's own dashboard.
+                errors = status.get("errors") or []
+                error_message = None
+                if errors:
+                    first = errors[0]
+                    detail = (first.get("error_data") or {}).get("details")
+                    error_message = f"({first.get('code')}) {first.get('title')}" + (f" — {detail}" if detail else "")
                 events.append({
                     "status_update": True,
                     "wamid": status.get("id"),
                     "status": status.get("status"),
                     "timestamp": status.get("timestamp"),
+                    "error_message": error_message,
                 })
 
     return events

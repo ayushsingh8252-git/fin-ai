@@ -61,6 +61,8 @@ def _apply_status_update(wamid: str, status: str, raw_event: dict) -> None:
         record = db.query(WhatsAppMessage).filter(WhatsAppMessage.wamid == wamid).first()
         if record:
             record.status = status
+            if raw_event.get("error_message"):
+                record.error_message = raw_event["error_message"]
             record.raw_payload = raw_event
             db.commit()
     finally:
