@@ -214,6 +214,9 @@ class Settings(BaseSettings):
     # Empty means the /command-center/unlock endpoint is disabled (503),
     # same "empty = not configured, fail with a clear error" convention used
     # across every other integration in this file.
+    # Under Docker Compose: escape every `$` in the hash as `$$` in .env —
+    # Compose interpolates env_file contents and will otherwise silently
+    # truncate the hash at the first unresolved `$word` (see .env.example).
     COMMAND_CENTER_PASSWORD_HASH: str = ""
 
     # Fraud detection pipeline

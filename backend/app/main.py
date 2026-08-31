@@ -12,6 +12,24 @@ from contextlib import asynccontextmanager
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # ── Startup Warmup ──
+    # 0. Create any missing tables from the current model definitions.
+    # Alembic's migration chain here only ever applies incremental ALTERs on
+    # top of an assumed-already-existing schema (its own "initial schema"
+    # migration only creates documents/chunks/rules, three tables from this
+    # app's original RAG-only scope) — every other table (users, call_records,
+    # whatsapp_messages, voice_prints, ...) has never had a create-table
+    # migration written for it. That's fine for a long-lived dev/prod DB file
+    # that already has them, but a genuinely fresh DB (e.g. a new Docker
+    # volume) starts with zero tables and every DB-backed feature fails.
+    # create_all() is idempotent (no-op for tables that already exist), so
+    # this is safe to run on every startup regardless of the DB's history.
+    try:
+        print("[Lifespan Startup] Ensuring all tables exist (create_all)...")
+        models.Base.metadata.create_all(bind=engine)
+        print("[Lifespan Startup] Table check complete!")
+    except Exception as e:
+        print(f"[Lifespan Startup Warning] create_all failed: {e}")
+
     # 1. Warm up embedding model (bge-base-en-v1.5) & run dummy forward-pass
     # to eliminate the 17.4s cold-start on the first user query.
     try:
