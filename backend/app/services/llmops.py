@@ -41,6 +41,19 @@ def get_langfuse() -> Langfuse | None:
     return _client
 
 
+def trace_id_for(request_id: str | None) -> str | None:
+    """Deterministic Langfuse trace ID derived from an existing request_id
+    (see services/trace.py's new_trace()) — the same seed always yields the
+    same 32-hex-char ID, so a request's own request_id and its Langfuse trace
+    correlate without introducing a second, unrelated ID system. Pure/local
+    (sha256 of the seed, no network) — safe to call unconditionally even when
+    Langfuse isn't configured; the returned ID is simply unused in that case.
+    """
+    if not request_id:
+        return None
+    return Langfuse.create_trace_id(seed=request_id)
+
+
 def shutdown_langfuse():
     """Flush buffered traces before process exit. Never raises — called from
     main.py's lifespan shutdown, must not block/break app teardown."""

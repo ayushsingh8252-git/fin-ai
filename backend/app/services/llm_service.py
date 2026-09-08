@@ -114,7 +114,12 @@ def _call_gemini_api(prompt: str, system_instruction: str = None, api_key: str =
     raise ValueError("All Gemini model attempts failed.")
 
 
-def generate_json(prompt: str, system_instruction: str = None, trace_sink: list | None = None) -> dict | list:
+def generate_json(
+    prompt: str,
+    system_instruction: str = None,
+    trace_sink: list | None = None,
+    langfuse_trace_id: str | None = None,
+) -> dict | list:
     """
     Executes JSON generation with multi-key round-robin rotation for Groq primary
     and automatic Gemini multi-key fallback, protected by rate-limit cooldowns.
@@ -122,12 +127,21 @@ def generate_json(prompt: str, system_instruction: str = None, trace_sink: list 
     `trace_sink`, if given, collects one attempt record per provider/key tried
     (see key_manager.execute_json_generation) — optional, request-level LLM
     observability for the caller's trace (services/trace.py).
+
+    `langfuse_trace_id`, if given (see services/llmops.py::trace_id_for),
+    nests this call's Langfuse generation(s) under the caller's own trace.
     """
-    return key_manager.execute_json_generation(prompt, system_instruction, trace_sink=trace_sink)
+    return key_manager.execute_json_generation(
+        prompt, system_instruction, trace_sink=trace_sink, langfuse_trace_id=langfuse_trace_id
+    )
 
 
 def generate_json_resilient(
-    prompt: str, system_instruction: str = None, max_attempts: int = 2, trace_sink: list | None = None
+    prompt: str,
+    system_instruction: str = None,
+    max_attempts: int = 2,
+    trace_sink: list | None = None,
+    langfuse_trace_id: str | None = None,
 ) -> dict | list:
     """
     Thin retry wrapper around generate_json() for callers with deterministic fallbacks.
@@ -137,6 +151,7 @@ def generate_json_resilient(
         prompt,
         system_instruction,
         trace_sink=trace_sink,
+        langfuse_trace_id=langfuse_trace_id,
         max_attempts=max_attempts,
         base_delay=0.3,
         max_delay=2.0,

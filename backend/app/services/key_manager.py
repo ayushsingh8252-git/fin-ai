@@ -234,6 +234,7 @@ class LLMKeyManager:
         gemini_fn: Callable = None,
         parse_fn: Callable = None,
         trace_sink: Optional[list] = None,
+        langfuse_trace_id: Optional[str] = None,
     ):
         """
         Main execution flow:
@@ -248,9 +249,20 @@ class LLMKeyManager:
         exactly as before. Attempt granularity is per-provider-key, not
         per-model-candidate — _call_grok_groq_api/_call_gemini_api each try
         several model IDs internally without reporting back which one
-        actually answered, so that finer level isn't visible here.
+        actually answered, so that finer level isn't visible here (same
+        limitation applies to the Langfuse `model` label below: it's the
+        provider name, e.g. "groq", not the specific model ID that answered).
+
+        `langfuse_trace_id`, if given (see services/llmops.py::trace_id_for),
+        makes each attempt below a real Langfuse generation nested under the
+        caller's own trace, capturing the full prompt/completion/latency that
+        `trace_sink` above deliberately omits. Optional and additive: when
+        Langfuse isn't configured (get_langfuse() is None) or this arg is
+        omitted, _traced_call below is a plain passthrough — zero behavior
+        change, same as trace_sink.
         """
         from .llm_service import _call_grok_groq_api, _call_gemini_api, _parse_json
+        from .llmops import get_langfuse
 
         if groq_fn is None:
             groq_fn = _call_grok_groq_api
@@ -258,6 +270,8 @@ class LLMKeyManager:
             gemini_fn = _call_gemini_api
         if parse_fn is None:
             parse_fn = _parse_json
+
+        lf = get_langfuse()
 
         def _record(provider: str, key_info: "APIKeyInfo", success: bool, latency_ms: float, error: str = None):
             if trace_sink is not None:
@@ -269,6 +283,26 @@ class LLMKeyManager:
                     "latency_ms": round(latency_ms, 1),
                     "error": error,
                 })
+
+        def _traced_call(provider: str, fn: Callable, key_info: "APIKeyInfo"):
+            """Runs fn(prompt, ...) inside a Langfuse generation span when
+            configured, else calls it directly — never adds a hard dependency
+            on Langfuse being reachable."""
+            if lf is None:
+                return fn(prompt, system_instruction, api_key=key_info.api_key)
+
+            trace_context = {"trace_id": langfuse_trace_id} if langfuse_trace_id else None
+            with lf.start_as_current_observation(
+                name=f"llm.{provider}",
+                as_type="generation",
+                trace_context=trace_context,
+                input={"prompt": prompt, "system_instruction": system_instruction},
+                model=provider,
+                metadata={"key_label": key_info.label},
+            ) as gen:
+                raw_out = fn(prompt, system_instruction, api_key=key_info.api_key)
+                gen.update(output=raw_out)
+                return raw_out
 
         groq_errors = []
         tried_groq_labels = set()
@@ -282,7 +316,7 @@ class LLMKeyManager:
             tried_groq_labels.add(key_info.label)
             attempt_start = time.time()
             try:
-                raw_out = groq_fn(prompt, system_instruction, api_key=key_info.api_key)
+                raw_out = _traced_call("groq", groq_fn, key_info)
                 result = parse_fn(raw_out)
                 _record("groq", key_info, True, (time.time() - attempt_start) * 1000)
                 return result
@@ -316,7 +350,7 @@ class LLMKeyManager:
             tried_gemini_labels.add(key_info.label)
             attempt_start = time.time()
             try:
-                raw_out = gemini_fn(prompt, system_instruction, api_key=key_info.api_key)
+                raw_out = _traced_call("gemini", gemini_fn, key_info)
                 result = parse_fn(raw_out)
                 _record("gemini", key_info, True, (time.time() - attempt_start) * 1000)
                 return result

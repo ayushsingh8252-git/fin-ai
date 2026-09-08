@@ -6,6 +6,7 @@ from typing import Dict, List, Any, Optional, Tuple
 
 from .retrieval import retrieve_rules_and_chunks_parallel, _query_pinecone, get_query_vector
 from .llm_service import generate_json_resilient
+from .llmops import trace_id_for
 from .web_service import tavily_search
 from .reranking import cross_encoder_rerank as _rerank_candidates
 from . import live_status
@@ -108,7 +109,10 @@ def extract_candidate_text_and_meta(retrieved_rules: List[dict], retrieved_chunk
 
 
 def fast_crag_grader(
-    query: str, candidates: List[dict], trace_sink: Optional[list] = None
+    query: str,
+    candidates: List[dict],
+    trace_sink: Optional[list] = None,
+    langfuse_trace_id: Optional[str] = None,
 ) -> Tuple[str, float, List[dict]]:
     """
     CRAG Grader: Evaluates candidate relevance against the user query.
@@ -148,7 +152,9 @@ def fast_crag_grader(
     """
 
     try:
-        grade_res = generate_json_resilient(prompt, max_attempts=2, trace_sink=trace_sink)
+        grade_res = generate_json_resilient(
+            prompt, max_attempts=2, trace_sink=trace_sink, langfuse_trace_id=langfuse_trace_id
+        )
         if isinstance(grade_res, dict):
             grade = str(grade_res.get("grade", "")).upper()
             conf = float(grade_res.get("confidence", max_raw_score))
@@ -166,7 +172,9 @@ def fast_crag_grader(
         return "LOW", max_raw_score, candidates
 
 
-def generate_query_rewrite(query: str, trace_sink: Optional[list] = None) -> str:
+def generate_query_rewrite(
+    query: str, trace_sink: Optional[list] = None, langfuse_trace_id: Optional[str] = None
+) -> str:
     """
     Generates a crisp, keyword-optimized search query.
     """
@@ -181,7 +189,9 @@ def generate_query_rewrite(query: str, trace_sink: Optional[list] = None) -> str
     }}
     """
     try:
-        res = generate_json_resilient(prompt, max_attempts=2, trace_sink=trace_sink)
+        res = generate_json_resilient(
+            prompt, max_attempts=2, trace_sink=trace_sink, langfuse_trace_id=langfuse_trace_id
+        )
         if isinstance(res, dict) and res.get("rewritten_query"):
             return res["rewritten_query"].strip()
     except Exception as e:
@@ -189,7 +199,9 @@ def generate_query_rewrite(query: str, trace_sink: Optional[list] = None) -> str
     return query
 
 
-def generate_hyde_document(query: str, trace_sink: Optional[list] = None) -> str:
+def generate_hyde_document(
+    query: str, trace_sink: Optional[list] = None, langfuse_trace_id: Optional[str] = None
+) -> str:
     """
     Generates a synthetic hypothetical document passage (HyDE).
     """
@@ -205,7 +217,9 @@ def generate_hyde_document(query: str, trace_sink: Optional[list] = None) -> str
     }}
     """
     try:
-        res = generate_json_resilient(prompt, max_attempts=2, trace_sink=trace_sink)
+        res = generate_json_resilient(
+            prompt, max_attempts=2, trace_sink=trace_sink, langfuse_trace_id=langfuse_trace_id
+        )
         if isinstance(res, dict) and res.get("hypothetical_passage"):
             return res["hypothetical_passage"].strip()
     except Exception as e:
@@ -213,7 +227,9 @@ def generate_hyde_document(query: str, trace_sink: Optional[list] = None) -> str
     return query
 
 
-def generate_step_back_query(query: str, trace_sink: Optional[list] = None) -> str:
+def generate_step_back_query(
+    query: str, trace_sink: Optional[list] = None, langfuse_trace_id: Optional[str] = None
+) -> str:
     """
     Generates a broader high-level principle question (Step-Back Prompting).
     """
@@ -228,7 +244,9 @@ def generate_step_back_query(query: str, trace_sink: Optional[list] = None) -> s
     }}
     """
     try:
-        res = generate_json_resilient(prompt, max_attempts=2, trace_sink=trace_sink)
+        res = generate_json_resilient(
+            prompt, max_attempts=2, trace_sink=trace_sink, langfuse_trace_id=langfuse_trace_id
+        )
         if isinstance(res, dict) and res.get("step_back_query"):
             return res["step_back_query"].strip()
     except Exception as e:
