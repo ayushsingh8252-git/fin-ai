@@ -16,6 +16,18 @@ class Settings(BaseSettings):
 
     TAVILY_API_KEY: str = ""
 
+    # LLMOps observability (Langfuse — https://langfuse.com). Empty keys mean
+    # the feature is fully off: services/llmops.py::get_langfuse() returns
+    # None and every call site skips tracing, same "empty = not configured"
+    # convention used everywhere else in this file. Never a hard dependency
+    # for an LLM call to succeed.
+    LANGFUSE_PUBLIC_KEY: str = ""
+    LANGFUSE_SECRET_KEY: str = ""
+    LANGFUSE_HOST: str = Field(
+        default="https://cloud.langfuse.com",
+        validation_alias=AliasChoices("LANGFUSE_HOST", "LANGFUSE_BASE_URL"),
+    )
+
     # Retrieval — hybrid search (dense Pinecone/local-cosine + sparse BM25,
     # fused via Reciprocal Rank Fusion; see services/retrieval.py and
     # services/sparse_retrieval.py). Defaults on since it's additive on top

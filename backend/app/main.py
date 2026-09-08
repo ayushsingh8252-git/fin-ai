@@ -83,7 +83,32 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"[Lifespan Startup Warning] ECAPA-TDNN warmup failed (will load lazily): {e}")
 
+    # 6. Verify Langfuse (LLMOps observability) connectivity, if configured.
+    #    Non-fatal either way — get_langfuse() already treats missing keys as
+    #    "tracing off", and a failed auth_check just means traces silently
+    #    won't show up upstream, never a reason to block startup.
+    try:
+        from .services.llmops import get_langfuse
+        lf = get_langfuse()
+        if lf is not None:
+            if lf.auth_check():
+                print("[Lifespan Startup] Langfuse observability connected!")
+            else:
+                print("[Lifespan Startup Warning] Langfuse auth_check failed — check LANGFUSE_* keys.")
+    except Exception as e:
+        print(f"[Lifespan Startup Warning] Langfuse init failed: {e}")
+
     yield
+
+    # ── Shutdown ──
+    # Flush any buffered Langfuse traces before the process exits, otherwise
+    # the last batch (whatever hasn't hit flush_at/flush_interval yet) is
+    # silently lost on a clean shutdown.
+    try:
+        from .services.llmops import shutdown_langfuse
+        shutdown_langfuse()
+    except Exception as e:
+        print(f"[Lifespan Shutdown Warning] Langfuse flush failed: {e}")
 
 
 app = FastAPI(
