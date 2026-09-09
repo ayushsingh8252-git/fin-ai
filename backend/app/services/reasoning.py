@@ -1,6 +1,7 @@
 import json
 import re
 from .llm_service import generate_json_resilient as generate_json
+from .llmops import trace_id_for
 from .web_service import tavily_search
 from ..database import SessionLocal
 from ..models import Chunk
@@ -49,17 +50,22 @@ def generate_answer_with_fallback(
         print(f"[Adaptive RAG Engine Error, falling back to legacy reasoning]: {e}")
         if trace is not None:
             trace["adaptive_pipeline_error"] = str(e)
-        return generate_legacy_answer(query, retrieved_rules, retrieved_chunks)
+        return generate_legacy_answer(query, retrieved_rules, retrieved_chunks, trace=trace)
 
 
-def generate_legacy_answer(query: str, retrieved_rules: list[dict], retrieved_chunks: list[dict]) -> dict:
+def generate_legacy_answer(
+    query: str, retrieved_rules: list[dict], retrieved_chunks: list[dict], trace: dict | None = None
+) -> dict:
     """
     Dual-tier legacy reasoning pipeline:
     1. First tries answering using retrieved Rules.
     2. If Rules context does not contain the answer, falls back to Normal Chunk context.
     3. If neither contains the required info, returns "Required info missing".
     """
-    
+    llm_sink = trace.setdefault("llm_attempts", []) if trace is not None else None
+    langfuse_trace_id = trace_id_for(trace.get("request_id")) if trace is not None else None
+
+
     # ── Tier 1: Try Rule-Based Reasoning ──
     rules_text_list = []
     rule_sources = []
@@ -108,7 +114,7 @@ def generate_legacy_answer(query: str, retrieved_rules: list[dict], retrieved_ch
         }}
         """
         try:
-            res_rules = generate_json(prompt_rules)
+            res_rules = generate_json(prompt_rules, trace_sink=llm_sink, langfuse_trace_id=langfuse_trace_id)
             if isinstance(res_rules, dict):
                 has_info = _is_truthy(res_rules.get("has_info"))
                 answer = strip_empty_emphasis(res_rules.get("answer", "").strip())
@@ -194,7 +200,7 @@ def generate_legacy_answer(query: str, retrieved_rules: list[dict], retrieved_ch
         }}
         """
         try:
-            res_chunks = generate_json(prompt_chunks)
+            res_chunks = generate_json(prompt_chunks, trace_sink=llm_sink, langfuse_trace_id=langfuse_trace_id)
             if isinstance(res_chunks, dict):
                 has_info = _is_truthy(res_chunks.get("has_info"))
                 answer = strip_empty_emphasis(res_chunks.get("answer", "").strip())
@@ -241,7 +247,7 @@ def generate_legacy_answer(query: str, retrieved_rules: list[dict], retrieved_ch
         }}
         """
         try:
-            res_web = generate_json(prompt_web)
+            res_web = generate_json(prompt_web, trace_sink=llm_sink, langfuse_trace_id=langfuse_trace_id)
             if isinstance(res_web, dict):
                 has_info = _is_truthy(res_web.get("has_info"))
                 answer = strip_empty_emphasis(res_web.get("answer", "").strip())

@@ -361,6 +361,7 @@ def execute_adaptive_rag_pipeline(
     the returned adaptive_trace/sources fields.
     """
     llm_sink = trace.setdefault("llm_attempts", []) if trace is not None else None
+    langfuse_trace_id = trace_id_for(trace.get("request_id")) if trace is not None else None
 
     # Live-progress mirror only (see services/live_status.py) — every call
     # below is a thin, additive republish of a value this function already
@@ -385,7 +386,9 @@ def execute_adaptive_rag_pipeline(
     candidate_pools = [initial_candidates]
 
     # Step 2: Fast CRAG Grader
-    grade, confidence, _ = fast_crag_grader(query, initial_candidates, trace_sink=llm_sink)
+    grade, confidence, _ = fast_crag_grader(
+        query, initial_candidates, trace_sink=llm_sink, langfuse_trace_id=langfuse_trace_id
+    )
     audit_trace["initial_grade"] = grade
     audit_trace["initial_confidence"] = confidence
     audit_trace["initial_candidate_count"] = len(initial_candidates)
@@ -397,13 +400,13 @@ def execute_adaptive_rag_pipeline(
 
     elif grade == "MEDIUM":
         audit_trace["branches_executed"].append("MEDIUM_REWRITE_SEARCH")
-        rewritten_query = generate_query_rewrite(query, trace_sink=llm_sink)
+        rewritten_query = generate_query_rewrite(query, trace_sink=llm_sink, langfuse_trace_id=langfuse_trace_id)
         secondary_candidates = execute_secondary_search(rewritten_query, document_id=document_id, top_k=top_k, trace=trace)
         candidate_pools.append(secondary_candidates)
 
     else:  # LOW
         audit_trace["branches_executed"].append("LOW_HYDE_SEARCH")
-        hyde_passage = generate_hyde_document(query, trace_sink=llm_sink)
+        hyde_passage = generate_hyde_document(query, trace_sink=llm_sink, langfuse_trace_id=langfuse_trace_id)
         blended_search = f"{query}\n{hyde_passage}"
         secondary_candidates = execute_secondary_search(blended_search, document_id=document_id, top_k=top_k, trace=trace)
         candidate_pools.append(secondary_candidates)
@@ -416,7 +419,7 @@ def execute_adaptive_rag_pipeline(
 
     if max_score < CONFIDENCE_MEDIUM_THRESHOLD and grade != "HIGH":
         audit_trace["step_back_triggered"] = True
-        step_back_q = generate_step_back_query(query, trace_sink=llm_sink)
+        step_back_q = generate_step_back_query(query, trace_sink=llm_sink, langfuse_trace_id=langfuse_trace_id)
         step_back_candidates = execute_secondary_search(step_back_q, document_id=document_id, top_k=top_k, trace=trace)
         candidate_pools.append(step_back_candidates)
         merged_so_far = merge_and_deduplicate_candidates(candidate_pools)
@@ -521,7 +524,9 @@ def execute_adaptive_rag_pipeline(
 
     _stage("generating", "running")
     try:
-        final_res = generate_json_resilient(synthesis_prompt, max_attempts=2, trace_sink=llm_sink)
+        final_res = generate_json_resilient(
+            synthesis_prompt, max_attempts=2, trace_sink=llm_sink, langfuse_trace_id=langfuse_trace_id
+        )
         if isinstance(final_res, dict):
             answer_text = str(final_res.get("answer", "")).strip()
             if answer_text and "required info missing" not in answer_text.lower():
