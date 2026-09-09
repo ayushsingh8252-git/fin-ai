@@ -50,6 +50,7 @@ from sqlalchemy import or_
 from ..database import SessionLocal
 from ..models import IdentityRecord
 from . import fraud_llm
+from .llmops import trace_id_for
 
 FEATURE_NAMES = [
     "name_jaro_winkler", "name_token_sort", "phone_match", "email_local_similarity",
@@ -443,7 +444,7 @@ def check_identity(scan_id: str, text: str, ip_address: str | None, user_agent: 
     handed back so fraud_resume_authenticity can reuse it instead of paying
     for a second identity-extraction LLM call on the same document."""
     try:
-        extracted = fraud_llm.extract_identity(text or "")
+        extracted = fraud_llm.extract_identity(text or "", langfuse_trace_id=trace_id_for(scan_id))
     except Exception as e:
         return _error_step(f"Identity extraction failed: {e}"), None
 

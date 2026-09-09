@@ -30,6 +30,7 @@ import numpy as np
 from ..database import SessionLocal
 from ..models import IdentityRecord
 from . import detection, fraud_llm, fraud_metadata
+from .llmops import trace_id_for
 
 LOGIC_WEIGHT = 0.30
 DOMAIN_WEIGHT = 0.20
@@ -270,7 +271,7 @@ def check_resume_authenticity(
         db.close()
 
     try:
-        ai_signal = fraud_llm.classify_ai_text(text)
+        ai_signal = fraud_llm.classify_ai_text(text, langfuse_trace_id=trace_id_for(scan_id))
     except Exception as e:
         ai_signal = fraud_llm.AiTextSignal(ai_generated_likelihood=50, reasons=[f"AI-text classifier unavailable: {e}"])
     ai_text_score = 100.0 - ai_signal.ai_generated_likelihood

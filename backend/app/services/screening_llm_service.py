@@ -20,6 +20,7 @@ from langchain_groq import ChatGroq
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 from ..config import settings
+from .llmops import langchain_invoke_kwargs
 from .resilience import retry_with_backoff
 from .model_config import GROQ_MODELS, GEMINI_MODELS
 
@@ -270,26 +271,32 @@ def _fallback_question_bank(role_title: str, resume_profile: ResumeProfile) -> L
 # ─────────────────────────────────────────────────────────────────────────
 
 
-def get_resume_profile(resume_text: str) -> ResumeProfile:
+def get_resume_profile(resume_text: str, langfuse_trace_id: str | None = None) -> ResumeProfile:
     try:
         chain = _structured_chain(RESUME_PROMPT, ResumeProfile)
-        return retry_with_backoff(chain.invoke, {"resume_text": resume_text[:8000]}, max_attempts=2, base_delay=0.3, max_delay=2.0)
+        return retry_with_backoff(
+            chain.invoke, {"resume_text": resume_text[:8000]}, max_attempts=2, base_delay=0.3, max_delay=2.0,
+            **langchain_invoke_kwargs(langfuse_trace_id),
+        )
     except Exception as e:
         print(f"[Screening LLM] resume profile extraction failed: {e}")
         return _fallback_resume_profile(resume_text)
 
 
-def get_jd_profile(jd_text: str) -> JDProfile:
+def get_jd_profile(jd_text: str, langfuse_trace_id: str | None = None) -> JDProfile:
     try:
         chain = _structured_chain(JD_PROMPT, JDProfile)
-        return retry_with_backoff(chain.invoke, {"role_title": "the open role", "jd_text": jd_text[:6000]}, max_attempts=2, base_delay=0.3, max_delay=2.0)
+        return retry_with_backoff(
+            chain.invoke, {"role_title": "the open role", "jd_text": jd_text[:6000]}, max_attempts=2, base_delay=0.3, max_delay=2.0,
+            **langchain_invoke_kwargs(langfuse_trace_id),
+        )
     except Exception as e:
         print(f"[Screening LLM] JD profile extraction failed: {e}")
         return _fallback_jd_profile()
 
 
 def analyze_telephonic_screening(
-    transcript: List[dict], role_title: str, jd_text: Optional[str]
+    transcript: List[dict], role_title: str, jd_text: Optional[str], langfuse_trace_id: str | None = None
 ) -> TelephonicScreeningAnalysis:
     """JD-aligned screening analysis of a finished Telephonic Agent call —
     the "Screening Agent" step in Candidate -> Telephonic Agent -> Conversation
@@ -314,6 +321,7 @@ def analyze_telephonic_screening(
                 "transcript": formatted[:8000],
             },
             max_attempts=2, base_delay=0.3, max_delay=2.0,
+            **langchain_invoke_kwargs(langfuse_trace_id),
         )
     except Exception as e:
         print(f"[Screening LLM] telephonic screening analysis failed: {e}")
@@ -350,7 +358,8 @@ def _normalize_question_set(
 
 
 def generate_question_set(
-    role_title: str, resume_profile: ResumeProfile, jd_profile: Optional[JDProfile]
+    role_title: str, resume_profile: ResumeProfile, jd_profile: Optional[JDProfile],
+    langfuse_trace_id: str | None = None,
 ) -> List[ScreeningQuestion]:
     jd_context = "No job description provided — use standard questions for this role title."
     if jd_profile is not None and (jd_profile.key_responsibilities or jd_profile.key_requirements):
@@ -375,6 +384,7 @@ def generate_question_set(
                 "jd_context": jd_context,
             },
             max_attempts=2, base_delay=0.3, max_delay=2.0,
+            **langchain_invoke_kwargs(langfuse_trace_id),
         )
         questions = result.questions
     except Exception as e:

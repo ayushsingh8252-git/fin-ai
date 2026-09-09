@@ -19,6 +19,7 @@ from typing import Any, Dict, Optional
 from ..database import SessionLocal
 from ..models import CallRecord
 from ..services.llm_service import generate_json_resilient
+from ..services.llmops import new_trace_id
 from ..agent_tools import registry
 from ..agent_tools.registry import MCPToolError
 
@@ -123,7 +124,12 @@ def handle_inbound_message(from_number: str, text: str) -> None:
         return
 
     try:
-        classification = generate_json_resilient(text, _INTENT_SYSTEM_INSTRUCTION)
+        # A fresh trace per inbound message (not seeded from from_number) —
+        # each message is its own event, not a continuation of one long-lived
+        # conversation trace.
+        classification = generate_json_resilient(
+            text, _INTENT_SYSTEM_INSTRUCTION, langfuse_trace_id=new_trace_id()
+        )
         if not isinstance(classification, dict):
             classification = {"intent": "unknown"}
     except Exception as e:

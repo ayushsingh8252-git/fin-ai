@@ -67,6 +67,24 @@ def new_trace_id() -> str | None:
     return Langfuse.create_trace_id()
 
 
+def langchain_invoke_kwargs(langfuse_trace_id: str | None) -> dict:
+    """Extra kwargs for a LangChain Runnable's .invoke(), attaching a
+    Langfuse CallbackHandler when tracing is configured. LangChain's own
+    callback mechanism auto-captures a whole chain — including
+    .with_fallbacks() legs — as it runs, so LCEL-based callers
+    (fraud_llm.py, screening_llm_service.py) don't need the manual
+    per-attempt span wrapping key_manager.py uses; that exists only because
+    llm_service.py calls providers via raw urllib, not LangChain.
+
+    Returns {} (a no-op) when Langfuse isn't configured or no trace_id was
+    given — merge into a call with `chain.invoke(input, **kwargs)`.
+    """
+    if get_langfuse() is None or not langfuse_trace_id:
+        return {}
+    from langfuse.langchain import CallbackHandler
+    return {"config": {"callbacks": [CallbackHandler(trace_context={"trace_id": langfuse_trace_id})]}}
+
+
 def shutdown_langfuse():
     """Flush buffered traces before process exit. Never raises — called from
     main.py's lifespan shutdown, must not block/break app teardown."""

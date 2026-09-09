@@ -53,6 +53,7 @@ def generate_call_turn(
     candidate_name: str = "there",
     role_title: str = "the open role",
     max_turns: int = 4,
+    langfuse_trace_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Given the call so far, asks the LLM for the agent's next spoken line.
     Returns {"question": str, "is_final": bool}."""
@@ -71,7 +72,7 @@ def generate_call_turn(
         )
 
     try:
-        result = generate_json(prompt, system_instruction)
+        result = generate_json(prompt, system_instruction, langfuse_trace_id=langfuse_trace_id)
     except Exception as e:
         print(f"[Telephonic Service Error] {e}")
         result = {"question": FALLBACK_QUESTION, "is_final": candidate_turns >= max_turns}
@@ -85,7 +86,9 @@ def generate_call_turn(
     return result
 
 
-def generate_call_evaluation(history: List[Dict[str, str]], role_title: str = "the open role") -> Dict[str, Any]:
+def generate_call_evaluation(
+    history: List[Dict[str, str]], role_title: str = "the open role", langfuse_trace_id: Optional[str] = None
+) -> Dict[str, Any]:
     """Produces a scored evaluation of the whole phone-call transcript, mirroring
     interview_service.generate_evaluation (used for the web Screening Agent chat flow)
     so completed calls get scored the same way completed chat interviews are."""
@@ -96,7 +99,7 @@ def generate_call_evaluation(history: List[Dict[str, str]], role_title: str = "t
     prompt = f"Role: {role_title}\n\nFull call transcript:\n{_format_history(history)}"
 
     try:
-        result = generate_json(prompt, system_instruction)
+        result = generate_json(prompt, system_instruction, langfuse_trace_id=langfuse_trace_id)
         if not isinstance(result, dict):
             raise ValueError("Evaluation response was not a JSON object")
     except Exception as e:

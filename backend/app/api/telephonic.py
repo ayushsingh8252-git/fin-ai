@@ -12,6 +12,7 @@ from ..database import get_db
 from ..memory import global_memory, orchestrator
 from ..services import sarvam_service
 from ..services.hiring_service import match_candidate_to_requirement, parse_resume_pdf
+from ..services.llmops import trace_id_for
 from ..services.telephonic_service import generate_call_evaluation, generate_call_turn
 from ..services.guardrails import check_output
 
@@ -84,7 +85,7 @@ def _dial(to: str, candidate_name: str, role_title: str, variables: Dict[str, An
 
     # Same opening line generator the agent uses turn-by-turn on other call
     # flows in this codebase, so the persona/greeting stays consistent.
-    opening = generate_call_turn([], candidate_name, role_title, MAX_TURNS)
+    opening = generate_call_turn([], candidate_name, role_title, MAX_TURNS, langfuse_trace_id=trace_id_for(record.id))
     opening_line = check_output(opening.get("question", "")).text
 
     try:
@@ -382,7 +383,9 @@ async def sarvam_webhook(call_record_id: str, request: Request, db: Session = De
     if terminal and record.communication_score is None:
         current_transcript = record.transcript or []
         if any(t.get("role") == "candidate" for t in current_transcript):
-            evaluation = generate_call_evaluation(current_transcript, record.role_title)
+            evaluation = generate_call_evaluation(
+                current_transcript, record.role_title, langfuse_trace_id=trace_id_for(record.id)
+            )
             record.communication_score = evaluation.get("communication_score")
             record.relevance_score = evaluation.get("relevance_score")
             record.confidence_score = evaluation.get("confidence_score")

@@ -24,6 +24,7 @@ from langchain_groq import ChatGroq
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 from ..config import settings
+from .llmops import langchain_invoke_kwargs
 from .resilience import retry_with_backoff
 from .model_config import GROQ_MODELS, GEMINI_MODELS
 
@@ -169,7 +170,7 @@ def _fallback_ai_text_signal() -> AiTextSignal:
 # ─────────────────────────────────────────────────────────────────────────
 
 
-def extract_identity(text: str) -> ExtractedIdentity:
+def extract_identity(text: str, langfuse_trace_id: str | None = None) -> ExtractedIdentity:
     # Deliberately does NOT swallow the failure into a blank ExtractedIdentity()
     # here — that made a genuine LLM outage indistinguishable from a document
     # that simply has no name/contact/identity fields (both looked like an
@@ -177,13 +178,19 @@ def extract_identity(text: str) -> ExtractedIdentity:
     # means the caller's own except-block reports it as a distinct "error"
     # step instead of a clean "na" one.
     chain = _structured_chain(IDENTITY_PROMPT, ExtractedIdentity)
-    return retry_with_backoff(chain.invoke, {"text": text[:8000]}, max_attempts=2, base_delay=0.3, max_delay=2.0)
+    return retry_with_backoff(
+        chain.invoke, {"text": text[:8000]}, max_attempts=2, base_delay=0.3, max_delay=2.0,
+        **langchain_invoke_kwargs(langfuse_trace_id),
+    )
 
 
-def classify_ai_text(text: str) -> AiTextSignal:
+def classify_ai_text(text: str, langfuse_trace_id: str | None = None) -> AiTextSignal:
     try:
         chain = _structured_chain(AI_TEXT_PROMPT, AiTextSignal)
-        return retry_with_backoff(chain.invoke, {"text": text[:8000]}, max_attempts=2, base_delay=0.3, max_delay=2.0)
+        return retry_with_backoff(
+            chain.invoke, {"text": text[:8000]}, max_attempts=2, base_delay=0.3, max_delay=2.0,
+            **langchain_invoke_kwargs(langfuse_trace_id),
+        )
     except Exception as e:
         print(f"[Fraud LLM] AI-text classification failed: {e}")
         return _fallback_ai_text_signal()

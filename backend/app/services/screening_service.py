@@ -4,6 +4,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional
 
+from .llmops import new_trace_id, trace_id_for
 from .parsing import parse_pdf
 from .screening_llm_service import (
     analyze_telephonic_screening,
@@ -26,6 +27,12 @@ def parse_resume_and_generate_questions(
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
 
+    # One shared Langfuse trace_id ties resume_profile/jd_profile/questions
+    # together into a single trace even though the first two run in parallel
+    # worker threads below — passed explicitly rather than relying on
+    # thread-local tracing context, so it's correct regardless of threading.
+    langfuse_trace_id = new_trace_id()
+
     # resume_profile and jd_profile are two independent LLM calls (different
     # inputs, no data dependency between them) that used to run sequentially
     # — that's pure added wall-clock latency for no reason, since network-bound
@@ -34,21 +41,24 @@ def parse_resume_and_generate_questions(
     # it genuinely depends on both results.
     if jd_text and jd_text.strip():
         with ThreadPoolExecutor(max_workers=2) as pool:
-            resume_future = pool.submit(get_resume_profile, resume_text)
-            jd_future = pool.submit(get_jd_profile, jd_text)
+            resume_future = pool.submit(get_resume_profile, resume_text, langfuse_trace_id=langfuse_trace_id)
+            jd_future = pool.submit(get_jd_profile, jd_text, langfuse_trace_id=langfuse_trace_id)
             resume_profile = resume_future.result()
             jd_profile = jd_future.result()
     else:
-        resume_profile = get_resume_profile(resume_text)
+        resume_profile = get_resume_profile(resume_text, langfuse_trace_id=langfuse_trace_id)
         jd_profile = None
-    questions = generate_question_set(role_title, resume_profile, jd_profile)
+    questions = generate_question_set(role_title, resume_profile, jd_profile, langfuse_trace_id=langfuse_trace_id)
 
-    return {
+    result = {
         "resume_profile": resume_profile.model_dump(),
         "questions": [
             {"id": f"q{i + 1}", "category": q.category, "text": q.text} for i, q in enumerate(questions)
         ],
     }
+    if langfuse_trace_id:
+        result["trace_id"] = langfuse_trace_id
+    return result
 
 
 def screen_call_transcript(
@@ -65,7 +75,9 @@ def screen_call_transcript(
     -> Response Storage -> Screening Agent -> Screening Result."""
     from .. import models
 
-    analysis = analyze_telephonic_screening(transcript, role_title, jd_text)
+    analysis = analyze_telephonic_screening(
+        transcript, role_title, jd_text, langfuse_trace_id=trace_id_for(call_id)
+    )
 
     result = models.ScreeningResult(
         id=str(uuid.uuid4()),
