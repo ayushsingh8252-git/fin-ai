@@ -18,9 +18,11 @@ a literal value — resolved by _resolve_placeholders before that step runs.
 """
 import json
 import re
+from contextlib import nullcontext
 from typing import Any, Dict, List, Optional
 
 from ..services.llm_service import generate_json_resilient
+from ..services.llmops import get_langfuse, new_trace_id
 from . import registry
 from .registry import MCPToolError
 
@@ -68,14 +70,26 @@ def _resolve_placeholders(value: Any, results: List[Dict[str, Any]]) -> Any:
     return value
 
 
-def build_plan(prompt: str) -> Dict[str, Any]:
-    """Prompt -> {"steps": [...]}. Does not execute anything."""
+def build_plan(prompt: str, langfuse_trace_id: Optional[str] = None) -> Dict[str, Any]:
+    """Prompt -> {"steps": [...]}. Does not execute anything.
+
+    `langfuse_trace_id`, if given, nests the planning LLM call under the
+    caller's own Langfuse trace (see plan_and_run below). If omitted and
+    Langfuse is configured, a fresh trace_id is minted here so a standalone
+    /agent/plan call is still traceable — returned under "trace_id" in that
+    case only, so plan_and_run's own trace_id (already returned at its own
+    level) is never duplicated.
+    """
+    minted_own_trace = langfuse_trace_id is None
+    if minted_own_trace:
+        langfuse_trace_id = new_trace_id()
+
     catalog = registry.unified_catalog()
     catalog_text = json.dumps(catalog, indent=None)
 
     llm_prompt = f"Available tools:\n{catalog_text}\n\nUser request:\n{prompt}"
     try:
-        raw = generate_json_resilient(llm_prompt, _PLANNER_SYSTEM_INSTRUCTION)
+        raw = generate_json_resilient(llm_prompt, _PLANNER_SYSTEM_INSTRUCTION, langfuse_trace_id=langfuse_trace_id)
     except Exception as e:
         return {"steps": [], "error": f"Planning failed: {e}"}
 
@@ -94,15 +108,25 @@ def build_plan(prompt: str) -> Dict[str, Any]:
             steps.append({"connector": connector, "tool": tool, "params": step.get("params", {}), "invalid": True})
         else:
             steps.append({"connector": connector, "tool": tool, "params": step.get("params", {})})
-    return {"steps": steps}
+
+    result = {"steps": steps}
+    if minted_own_trace and langfuse_trace_id:
+        result["trace_id"] = langfuse_trace_id
+    return result
 
 
-def execute_plan(plan: Dict[str, Any]) -> Dict[str, Any]:
+def execute_plan(plan: Dict[str, Any], langfuse_trace_id: Optional[str] = None) -> Dict[str, Any]:
     """Runs each step in order via registry.call_tool(), resolving
     "$stepN.field" references against prior results. Stops at the first
     failing step (fail-fast, not fail-open — a partially-completed hiring
     workflow should be visible, not silently skipped over) but still returns
-    every step attempted so far."""
+    every step attempted so far.
+
+    `langfuse_trace_id`, if given, makes each executed step a Langfuse span
+    nested under the caller's trace — so a multi-step plan (e.g. score a
+    candidate, then run fraud check, then query RAG) shows up as one tool
+    tree, not N disconnected calls."""
+    lf = get_langfuse()
     results: List[Dict[str, Any]] = []
     for i, step in enumerate(plan.get("steps", []), start=1):
         if step.get("invalid"):
@@ -110,8 +134,23 @@ def execute_plan(plan: Dict[str, Any]) -> Dict[str, Any]:
             break
 
         resolved_params = _resolve_placeholders(step.get("params", {}), results)
+        trace_context = {"trace_id": langfuse_trace_id} if langfuse_trace_id else None
+        span_cm = (
+            lf.start_as_current_observation(
+                name=f"tool:{step['tool']}",
+                as_type="tool",
+                trace_context=trace_context,
+                input=resolved_params,
+                metadata={"connector": step["connector"], "step": i},
+            )
+            if lf is not None
+            else nullcontext()
+        )
         try:
-            result = registry.call_tool(step["connector"], step["tool"], resolved_params)
+            with span_cm as span:
+                result = registry.call_tool(step["connector"], step["tool"], resolved_params)
+                if span is not None:
+                    span.update(output=result)
             results.append({"step": i, "connector": step["connector"], "tool": step["tool"], "params": resolved_params, "result": result, "ok": True})
         except MCPToolError as e:
             results.append({"step": i, "connector": step["connector"], "tool": step["tool"], "params": resolved_params, "error": str(e), "error_code": e.code, "ok": False})
@@ -128,8 +167,33 @@ def execute_plan(plan: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def plan_and_run(prompt: str) -> Dict[str, Any]:
-    plan = build_plan(prompt)
-    if plan.get("error"):
-        return {"plan": plan, "execution": {"steps": [], "completed": False, "final_result": None}}
-    execution = execute_plan(plan)
-    return {"plan": plan, "execution": execution}
+    """One Langfuse trace per call, covering both stages: the planning
+    generation (inside build_plan) and every executed tool step (inside
+    execute_plan) all nest under this function's own root span, giving one
+    coherent trace tree for a full plan-then-execute run — see
+    services/llmops.py's docstrings for how the trace_id plumbing works."""
+    lf = get_langfuse()
+    trace_id = new_trace_id()
+    root_cm = (
+        lf.start_as_current_observation(
+            name="agent.plan_and_run",
+            as_type="agent",
+            trace_context={"trace_id": trace_id} if trace_id else None,
+            input=prompt,
+        )
+        if lf is not None
+        else nullcontext()
+    )
+    with root_cm as root:
+        plan = build_plan(prompt, langfuse_trace_id=trace_id)
+        if plan.get("error"):
+            execution = {"steps": [], "completed": False, "final_result": None}
+        else:
+            execution = execute_plan(plan, langfuse_trace_id=trace_id)
+        if root is not None:
+            root.update(output=execution)
+
+    result = {"plan": plan, "execution": execution}
+    if trace_id:
+        result["trace_id"] = trace_id
+    return result

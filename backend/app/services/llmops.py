@@ -54,6 +54,19 @@ def trace_id_for(request_id: str | None) -> str | None:
     return Langfuse.create_trace_id(seed=request_id)
 
 
+def new_trace_id() -> str | None:
+    """Random Langfuse trace ID for call sites with no pre-existing
+    request_id to correlate with (e.g. agent_tools/planner.py, which has no
+    trace.py-style tracker of its own) — None when Langfuse isn't
+    configured, so callers can uniformly treat "no trace_id" as "tracing
+    off" whether that's because of this or because request_id was empty in
+    trace_id_for() above.
+    """
+    if get_langfuse() is None:
+        return None
+    return Langfuse.create_trace_id()
+
+
 def shutdown_langfuse():
     """Flush buffered traces before process exit. Never raises — called from
     main.py's lifespan shutdown, must not block/break app teardown."""
