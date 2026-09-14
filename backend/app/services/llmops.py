@@ -85,6 +85,34 @@ def langchain_invoke_kwargs(langfuse_trace_id: str | None) -> dict:
     return {"config": {"callbacks": [CallbackHandler(trace_context={"trace_id": langfuse_trace_id})]}}
 
 
+def get_prompt_text(name: str, fallback: str, *, label: str = "production", cache_ttl_seconds: int = 300) -> str:
+    """Fetches a Langfuse-managed *text* prompt by name (no template
+    variables — callers needing those should call get_langfuse().get_prompt()
+    directly and .compile(**vars) themselves). `fallback` is the hardcoded
+    prompt string that used to live directly in code; it's still the only
+    thing that ships in this repo, so:
+      - Langfuse not configured -> returns `fallback` immediately, no
+        network call at all.
+      - Langfuse configured but the named prompt doesn't exist yet, or the
+        request fails/times out -> get_prompt()'s own `fallback` param
+        already returns `fallback` without raising.
+      - anything else unexpected -> caught here as one more fail-open layer.
+    A prompt edited in the Langfuse UI takes effect on the next cache
+    refresh (cache_ttl_seconds) with zero deploy — that's the entire point
+    of moving it out of code, while `fallback` keeps this repo runnable
+    standalone if Langfuse is ever removed or unreachable.
+    """
+    lf = get_langfuse()
+    if lf is None:
+        return fallback
+    try:
+        prompt = lf.get_prompt(name, label=label, type="text", fallback=fallback, cache_ttl_seconds=cache_ttl_seconds)
+        return prompt.compile()
+    except Exception as e:
+        logger.warning("[LLMOps] get_prompt(%s) failed, using local fallback: %s", name, e)
+        return fallback
+
+
 def shutdown_langfuse():
     """Flush buffered traces before process exit. Never raises — called from
     main.py's lifespan shutdown, must not block/break app teardown."""

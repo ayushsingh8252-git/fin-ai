@@ -22,11 +22,18 @@ from contextlib import nullcontext
 from typing import Any, Dict, List, Optional
 
 from ..services.llm_service import generate_json_resilient
-from ..services.llmops import get_langfuse, new_trace_id
+from ..services.llmops import get_langfuse, get_prompt_text, new_trace_id
 from . import registry
 from .registry import MCPToolError
 
 _STEP_REF_RE = re.compile(r"^\$step(\d+)((?:\.[A-Za-z0-9_]+)*)$")
+
+# Langfuse-managed prompt name (see _planner_system_instruction below) — this
+# name must match whatever it's seeded/edited as in the Langfuse UI under
+# Prompts. The literal text below is now only the fallback used when
+# Langfuse is unconfigured/unreachable/doesn't have this prompt yet, not the
+# live source of truth — edit prompts in Langfuse going forward, not here.
+_PLANNER_PROMPT_NAME = "agent-planner-system"
 
 _PLANNER_SYSTEM_INSTRUCTION = """You are a tool-call planner for an HR automation platform. Given a user's \
 request and a catalog of available tools, output STRICT JSON (no prose, no markdown fences) with this exact shape:
@@ -45,6 +52,10 @@ instead of guessing a literal value.
 key why, or omit that part of the plan entirely.
 - If nothing in the catalog can satisfy the request, return {"steps": []}.
 Return ONLY the JSON object, nothing else."""
+
+
+def _planner_system_instruction() -> str:
+    return get_prompt_text(_PLANNER_PROMPT_NAME, _PLANNER_SYSTEM_INSTRUCTION)
 
 
 def _resolve_placeholders(value: Any, results: List[Dict[str, Any]]) -> Any:
@@ -89,7 +100,9 @@ def build_plan(prompt: str, langfuse_trace_id: Optional[str] = None) -> Dict[str
 
     llm_prompt = f"Available tools:\n{catalog_text}\n\nUser request:\n{prompt}"
     try:
-        raw = generate_json_resilient(llm_prompt, _PLANNER_SYSTEM_INSTRUCTION, langfuse_trace_id=langfuse_trace_id)
+        raw = generate_json_resilient(
+            llm_prompt, _planner_system_instruction(), langfuse_trace_id=langfuse_trace_id
+        )
     except Exception as e:
         return {"steps": [], "error": f"Planning failed: {e}"}
 
