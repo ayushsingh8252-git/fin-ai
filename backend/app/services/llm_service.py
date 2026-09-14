@@ -20,10 +20,19 @@ def _get_gemini_client(api_key: str):
     return _gemini_clients_cache[api_key]
 
 
-def _call_grok_groq_api(prompt: str, system_instruction: str = None, api_key: str = None) -> str:
+def _call_grok_groq_api(
+    prompt: str, system_instruction: str = None, api_key: str = None, model_used: list | None = None
+) -> str:
     """
     Attempts calling primary Grok / Groq OpenAI-compatible API endpoint.
     Supports both Groq (gsk_...) and xAI Grok (xai-...). Accepts optional specific api_key.
+
+    `model_used`, if given, gets the winning model ID appended to it on
+    success — the only way a caller can learn which of model_candidates
+    actually answered, since the return value is just the raw text. Optional
+    and additive (see key_manager.py::execute_json_generation, the only real
+    caller that passes this — verify_live_keys.py and tests call this
+    directly without it and are unaffected).
     """
     if not api_key:
         api_key = settings.GROK_API_KEY or settings.GROQ_API_KEY
@@ -69,6 +78,8 @@ def _call_grok_groq_api(prompt: str, system_instruction: str = None, api_key: st
             )
             with urllib.request.urlopen(req, timeout=20) as resp:
                 res_data = json.loads(resp.read().decode("utf-8"))
+                if model_used is not None:
+                    model_used.append(model)
                 return res_data["choices"][0]["message"]["content"]
         except Exception as e:
             last_err = e
@@ -81,10 +92,15 @@ def _call_grok_groq_api(prompt: str, system_instruction: str = None, api_key: st
     raise ValueError("All Groq/Grok model candidates failed.")
 
 
-def _call_gemini_api(prompt: str, system_instruction: str = None, api_key: str = None) -> str:
+def _call_gemini_api(
+    prompt: str, system_instruction: str = None, api_key: str = None, model_used: list | None = None
+) -> str:
     """
     Calls fallback Gemini API, trying each model in model_config.GEMINI_MODELS
     in order. Accepts optional specific api_key.
+
+    `model_used`, if given, gets the winning model ID appended on success —
+    see _call_grok_groq_api's docstring above for why this exists.
     """
     client = _get_gemini_client(api_key) if api_key else gemini_client
     if not client:
@@ -105,6 +121,8 @@ def _call_gemini_api(prompt: str, system_instruction: str = None, api_key: str =
                 ),
             )
             if response and response.text:
+                if model_used is not None:
+                    model_used.append(model_name)
                 return response.text
         except Exception as e:
             if is_rate_limit_error(e):

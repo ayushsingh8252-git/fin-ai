@@ -44,6 +44,9 @@ from app.database import SessionLocal  # noqa: E402
 from app.models import Chunk, Rule  # noqa: E402
 from app.services.retrieval import retrieve_rules_and_chunks_parallel  # noqa: E402
 from app.services.reasoning import generate_answer_with_fallback  # noqa: E402
+from app.services.llmops import get_langfuse  # noqa: E402
+
+LANGFUSE_DATASET_NAME = "rag-eval-questions"
 
 MISSING_INFO_PHRASES = (
     "does not contain", "not contain", "no information", "not mention",
@@ -163,6 +166,120 @@ def run_mode(mode: dict, document_id: str | None, top_k: int) -> list[dict]:
     return results
 
 
+def _expected_output_for(q: dict) -> dict:
+    """The part of a question spec check_correctness() actually needs, moved
+    into a dataset item's expected_output so the same grading function works
+    unchanged whether it's called from run_mode() (local script loop) or
+    _correctness_evaluator() (Langfuse experiment) below."""
+    if q.get("expect_missing_info"):
+        return {"expect_missing_info": True}
+    return {"expect_keywords": q.get("expect_keywords", [])}
+
+
+def ensure_langfuse_dataset(lf) -> None:
+    """Seeds the fixed 9-question set as a Langfuse Dataset, once. Safe to
+    call on every run: create_dataset() is a no-op if the dataset already
+    exists, and each item is upserted by its stable id (f"q{n}") rather than
+    appended, so re-running this script never creates duplicate items."""
+    try:
+        lf.create_dataset(
+            name=LANGFUSE_DATASET_NAME,
+            description="Fixed 9-question RAG regression set (docs/platform-status-audit-2026-08-26-rag-improvement-pass.md) — dense vs hybrid vs hybrid+rerank.",
+        )
+    except Exception as e:
+        print(f"[Langfuse] create_dataset skipped/failed (likely already exists): {e}")
+
+    for q in QUESTIONS:
+        try:
+            lf.create_dataset_item(
+                dataset_name=LANGFUSE_DATASET_NAME,
+                id=f"q{q['id']}",
+                input=q["question"],
+                expected_output=_expected_output_for(q),
+                metadata={"category": q["category"]},
+            )
+        except Exception as e:
+            print(f"[Langfuse] create_dataset_item(q{q['id']}) failed: {e}")
+
+
+def _make_task(mode: dict, document_id: str | None, top_k: int):
+    """Task closure for one retrieval mode — runs the exact same real RAG
+    pipeline call run_mode() above uses, per dataset item."""
+
+    def task(*, item, **kwargs):
+        settings.ENABLE_CROSS_ENCODER_RERANK = mode["rerank"]
+        question = item.input
+        rules, chunks = retrieve_rules_and_chunks_parallel(
+            question, top_k=top_k, document_id=document_id, hybrid=mode["hybrid"]
+        )
+        answer_data = generate_answer_with_fallback(question, rules, chunks, document_id=document_id)
+        return {
+            "answer": answer_data.get("answer", ""),
+            "retrieval_mode": answer_data.get("retrieval_mode"),
+            "rules_retrieved_count": len(rules),
+            "chunks_retrieved_count": len(chunks),
+        }
+
+    return task
+
+
+def _correctness_evaluator(*, input, output, expected_output=None, **kwargs):
+    """Same keyword/missing-info heuristic as check_correctness() above,
+    adapted to Langfuse's evaluator signature — one Evaluation per item,
+    aggregated by Langfuse into the run's overall correctness score."""
+    from langfuse import Evaluation
+
+    answer = output.get("answer", "") if isinstance(output, dict) else str(output)
+    is_correct = check_correctness(answer, expected_output or {})
+    return Evaluation(
+        name="correctness",
+        value=1.0 if is_correct else 0.0,
+        data_type="BOOLEAN",
+        comment="Matched expected keywords/missing-info phrasing" if is_correct else "Did not match expectation",
+    )
+
+
+def run_langfuse_experiments(document_id: str | None, top_k: int) -> None:
+    """Pushes the same 3 modes to Langfuse as 3 experiment runs against the
+    shared dataset — additive, never blocks the local script's own report/
+    JSON output above. No-op if Langfuse isn't configured."""
+    lf = get_langfuse()
+    if lf is None:
+        print("\n[Langfuse] Not configured — skipping experiment push (local report/JSON above is unaffected).")
+        return
+
+    original_rerank_flag = settings.ENABLE_CROSS_ENCODER_RERANK
+    try:
+        ensure_langfuse_dataset(lf)
+        dataset = lf.get_dataset(LANGFUSE_DATASET_NAME)
+        for mode in MODES:
+            print(f"\n[Langfuse] Running experiment for mode: {mode['name']}...")
+            result = lf.run_experiment(
+                name="rag-eval",
+                run_name=f"rag-eval-{mode['name']}",
+                description=f"hybrid={mode['hybrid']}, rerank={mode['rerank']}",
+                data=dataset.items,
+                task=_make_task(mode, document_id, top_k),
+                evaluators=[_correctness_evaluator],
+                max_concurrency=1,  # sequential, matching run_mode()'s own for-loop above
+            )
+            # Not result.format() — its human-readable summary includes
+            # emoji that crash on Windows' default cp1252 console encoding.
+            n = len(result.item_results)
+            correct = sum(
+                1 for r in result.item_results
+                for e in r.evaluations if e.name == "correctness" and e.value == 1.0
+            )
+            print(f"[Langfuse] {mode['name']}: {correct}/{n} correct")
+            if result.dataset_run_url:
+                print(f"[Langfuse] {mode['name']} run URL: {result.dataset_run_url}")
+    except Exception as e:
+        print(f"[Langfuse] Experiment push failed (local report/JSON above is unaffected): {e}")
+    finally:
+        settings.ENABLE_CROSS_ENCODER_RERANK = original_rerank_flag
+        lf.flush()
+
+
 def main():
     parser = argparse.ArgumentParser(description="Compare dense-only vs. hybrid vs. hybrid+rerank retrieval.")
     parser.add_argument("--document-id", default=None, help="Scope to one document_id (default: whole corpus)")
@@ -207,6 +324,8 @@ def main():
     with open(args.out, "w", encoding="utf-8") as f:
         json.dump(report, f, indent=2, ensure_ascii=False)
     print(f"\nWrote {args.out}")
+
+    run_langfuse_experiments(args.document_id, args.top_k)
 
 
 if __name__ == "__main__":
