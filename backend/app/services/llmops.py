@@ -6,23 +6,33 @@ call site must treat None as "tracing is off" and skip instrumentation —
 never a reason to fail or slow down an actual LLM call. Same "empty config
 = feature off, fail open" convention as key_manager.py and resilience.py.
 """
+import hashlib
+import json
 import logging
+from typing import Any
 
-from langfuse import Langfuse
+try:
+    from langfuse import Langfuse
+except ImportError:  # The app must keep serving when optional tracing is absent.
+    Langfuse = None
 
 from ..config import settings
 
 logger = logging.getLogger(__name__)
 
-_client: Langfuse | None = None
+_client: Any | None = None
 _init_attempted = False
 
 
-def get_langfuse() -> Langfuse | None:
+def get_langfuse() -> Any | None:
     global _client, _init_attempted
     if _init_attempted:
         return _client
     _init_attempted = True
+
+    if Langfuse is None:
+        logger.warning("[LLMOps] Langfuse package is not installed; tracing disabled.")
+        return None
 
     if not (settings.LANGFUSE_PUBLIC_KEY and settings.LANGFUSE_SECRET_KEY):
         logger.info("[LLMOps] Langfuse keys not configured — tracing disabled.")
@@ -51,7 +61,9 @@ def trace_id_for(request_id: str | None) -> str | None:
     """
     if not request_id:
         return None
-    return Langfuse.create_trace_id(seed=request_id)
+    # Keep this correlation ID deterministic even in a dev environment where
+    # the optional SDK is not installed.
+    return hashlib.sha256(request_id.encode("utf-8")).hexdigest()[:32]
 
 
 def new_trace_id() -> str | None:
@@ -65,6 +77,83 @@ def new_trace_id() -> str | None:
     if get_langfuse() is None:
         return None
     return Langfuse.create_trace_id()
+
+
+def normalize_openai_usage(usage: dict | None) -> dict[str, int] | None:
+    """Convert an OpenAI-compatible provider usage object into Langfuse keys."""
+    if not isinstance(usage, dict):
+        return None
+    input_tokens = usage.get("prompt_tokens")
+    output_tokens = usage.get("completion_tokens")
+    if not isinstance(input_tokens, int) and not isinstance(output_tokens, int):
+        return None
+    details = {
+        "input_tokens": max(0, int(input_tokens or 0)),
+        "output_tokens": max(0, int(output_tokens or 0)),
+    }
+    cached = (usage.get("prompt_tokens_details") or {}).get("cached_tokens")
+    if isinstance(cached, int) and cached >= 0:
+        details["cache_read_input_tokens"] = cached
+    return details
+
+
+def normalize_gemini_usage(usage: Any) -> dict[str, int] | None:
+    """Convert google-genai usage_metadata to Langfuse usage fields."""
+    if usage is None:
+        return None
+
+    def value(name: str) -> int | None:
+        raw = usage.get(name) if isinstance(usage, dict) else getattr(usage, name, None)
+        return int(raw) if isinstance(raw, int) and raw >= 0 else None
+
+    input_tokens = value("prompt_token_count")
+    output_tokens = value("candidates_token_count")
+    if input_tokens is None and output_tokens is None:
+        return None
+    details = {
+        "input_tokens": input_tokens or 0,
+        "output_tokens": output_tokens or 0,
+    }
+    cached = value("cached_content_token_count")
+    if cached is not None:
+        details["cache_read_input_tokens"] = cached
+    return details
+
+
+def calculate_cost_details(model: str, usage_details: dict[str, int] | None) -> dict[str, float] | None:
+    """Return auditable USD costs using explicit account-specific rate config.
+
+    Langfuse can infer prices from its model registry as a fallback, but this
+    path emits an explicit cost only when the deployment has supplied its own
+    rate card. That makes the dashboard match negotiated provider pricing.
+    """
+    if not usage_details:
+        return None
+    try:
+        rates = json.loads(settings.LLM_COST_RATES_JSON)
+        model_rates = rates.get(model, {}) if isinstance(rates, dict) else {}
+    except (TypeError, ValueError):
+        logger.warning("[LLMOps] LLM_COST_RATES_JSON is invalid; skipping explicit cost calculation.")
+        return None
+
+    costs: dict[str, float] = {}
+    input_tokens = usage_details.get("input_tokens", 0)
+    cached_tokens = usage_details.get("cache_read_input_tokens", 0)
+    input_rate = model_rates.get("input") if isinstance(model_rates, dict) else None
+    cached_rate = model_rates.get("cache_read_input") if isinstance(model_rates, dict) else None
+    if isinstance(input_tokens, int) and isinstance(input_rate, (int, float)) and input_rate >= 0:
+        # Provider input totals usually include cache reads. When a dedicated
+        # cache rate is configured, bill only the non-cached share at the
+        # standard input rate.
+        billable_input = input_tokens - cached_tokens if isinstance(cached_rate, (int, float)) else input_tokens
+        costs["input"] = round(max(0, billable_input) * float(input_rate) / 1_000_000, 12)
+    output_tokens = usage_details.get("output_tokens", 0)
+    output_rate = model_rates.get("output") if isinstance(model_rates, dict) else None
+    if isinstance(output_tokens, int) and isinstance(output_rate, (int, float)) and output_rate >= 0:
+        costs["output"] = round(output_tokens * float(output_rate) / 1_000_000, 12)
+    if isinstance(cached_tokens, int) and isinstance(cached_rate, (int, float)) and cached_rate >= 0:
+        costs["cache_read_input"] = round(cached_tokens * float(cached_rate) / 1_000_000, 12)
+    return costs or None
 
 
 def langchain_invoke_kwargs(langfuse_trace_id: str | None) -> dict:

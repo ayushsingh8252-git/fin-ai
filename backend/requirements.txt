@@ -13,7 +13,7 @@ psycopg2-binary
 celery
 redis
 google-genai
-langfuse
+langfuse>=3.3.1,<5
 python-multipart
 pydantic
 pydantic-settings

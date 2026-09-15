@@ -270,7 +270,12 @@ class LLMKeyManager:
         before.
         """
         from .llm_service import _call_grok_groq_api, _call_gemini_api, _parse_json
-        from .llmops import get_langfuse
+        from .llmops import (
+            calculate_cost_details,
+            get_langfuse,
+            normalize_gemini_usage,
+            normalize_openai_usage,
+        )
 
         using_default_groq_fn = groq_fn is None
         using_default_gemini_fn = gemini_fn is None
@@ -300,8 +305,10 @@ class LLMKeyManager:
             on Langfuse being reachable."""
             call_kwargs = {"api_key": key_info.api_key}
             model_used: list = []
+            usage_used: list = []
             if using_default:
                 call_kwargs["model_used"] = model_used
+                call_kwargs["usage_used"] = usage_used
 
             if lf is None:
                 return fn(prompt, system_instruction, **call_kwargs)
@@ -316,7 +323,22 @@ class LLMKeyManager:
                 metadata={"key_label": key_info.label},
             ) as gen:
                 raw_out = fn(prompt, system_instruction, **call_kwargs)
-                gen.update(output=raw_out, model=(model_used[0] if model_used else provider))
+                model = model_used[0] if model_used else provider
+                raw_usage = usage_used[0] if usage_used else None
+                usage_details = (
+                    normalize_openai_usage(raw_usage)
+                    if provider == "groq"
+                    else normalize_gemini_usage(raw_usage)
+                )
+                cost_details = calculate_cost_details(model, usage_details)
+                metadata = {"key_label": key_info.label, "cost_source": "configured_rate_card" if cost_details else "langfuse_model_registry"}
+                gen.update(
+                    output=raw_out,
+                    model=model,
+                    usage_details=usage_details,
+                    cost_details=cost_details,
+                    metadata=metadata,
+                )
                 return raw_out
 
         groq_errors = []

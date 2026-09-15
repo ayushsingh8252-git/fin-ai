@@ -21,7 +21,11 @@ def _get_gemini_client(api_key: str):
 
 
 def _call_grok_groq_api(
-    prompt: str, system_instruction: str = None, api_key: str = None, model_used: list | None = None
+    prompt: str,
+    system_instruction: str = None,
+    api_key: str = None,
+    model_used: list | None = None,
+    usage_used: list | None = None,
 ) -> str:
     """
     Attempts calling primary Grok / Groq OpenAI-compatible API endpoint.
@@ -80,6 +84,8 @@ def _call_grok_groq_api(
                 res_data = json.loads(resp.read().decode("utf-8"))
                 if model_used is not None:
                     model_used.append(model)
+                if usage_used is not None:
+                    usage_used.append(res_data.get("usage"))
                 return res_data["choices"][0]["message"]["content"]
         except Exception as e:
             last_err = e
@@ -93,7 +99,11 @@ def _call_grok_groq_api(
 
 
 def _call_gemini_api(
-    prompt: str, system_instruction: str = None, api_key: str = None, model_used: list | None = None
+    prompt: str,
+    system_instruction: str = None,
+    api_key: str = None,
+    model_used: list | None = None,
+    usage_used: list | None = None,
 ) -> str:
     """
     Calls fallback Gemini API, trying each model in model_config.GEMINI_MODELS
@@ -123,6 +133,8 @@ def _call_gemini_api(
             if response and response.text:
                 if model_used is not None:
                     model_used.append(model_name)
+                if usage_used is not None:
+                    usage_used.append(response.usage_metadata)
                 return response.text
         except Exception as e:
             if is_rate_limit_error(e):

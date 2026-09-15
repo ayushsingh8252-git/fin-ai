@@ -27,6 +27,12 @@ class Settings(BaseSettings):
         default="https://cloud.langfuse.com",
         validation_alias=AliasChoices("LANGFUSE_HOST", "LANGFUSE_BASE_URL"),
     )
+    # JSON map keyed by the exact provider model ID. Values are USD per one
+    # million tokens, e.g. {"gemini-2.5-flash":{"input":0.15,"output":0.60}}.
+    # Keep this tied to the account's actual price card; no guessed provider
+    # prices belong in source code. Langfuse receives costs only when a rate
+    # exists for the model that actually answered.
+    LLM_COST_RATES_JSON: str = "{}"
 
     # Retrieval — hybrid search (dense Pinecone/local-cosine + sparse BM25,
     # fused via Reciprocal Rank Fusion; see services/retrieval.py and
