@@ -62,7 +62,16 @@ def generate_call_turn(
     local_system_instruction = CALL_SYSTEM_INSTRUCTION.format(
         name=AGENT_NAME, role_title=role_title, candidate_name=candidate_name, max_turns=max_turns
     )
-    managed_prompt = get_managed_prompt("telephonic-call-turn", local_system_instruction)
+    managed_prompt = get_managed_prompt(
+        "telephonic-call-turn",
+        local_system_instruction,
+        variables={
+            "name": AGENT_NAME,
+            "role_title": role_title,
+            "candidate_name": candidate_name,
+            "max_turns": max_turns,
+        },
+    )
 
     if not history:
         prompt = f"The call with {candidate_name} just connected. Greet them and start the screen."
@@ -103,7 +112,11 @@ def generate_call_evaluation(
         return {**FALLBACK_CALL_EVALUATION, "summary": "No candidate responses were recorded."}
 
     local_system_instruction = CALL_EVALUATION_SYSTEM_INSTRUCTION.format(name=AGENT_NAME)
-    managed_prompt = get_managed_prompt("telephonic-call-evaluation", local_system_instruction)
+    managed_prompt = get_managed_prompt(
+        "telephonic-call-evaluation",
+        local_system_instruction,
+        variables={"name": AGENT_NAME, "role_title": role_title},
+    )
     prompt = f"Role: {role_title}\n\nFull call transcript:\n{_format_history(history)}"
 
     try:
