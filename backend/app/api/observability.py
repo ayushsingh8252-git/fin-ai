@@ -3,9 +3,16 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models import QueryTrace
+from ..services.cost_governance import cost_summary
 from ..services import live_status
 
 router = APIRouter()
+
+
+@router.get("/observability/costs")
+async def get_costs(db: Session = Depends(get_db)):
+    """Measured raw-provider spend and daily/monthly budget utilization."""
+    return cost_summary(db)
 
 
 @router.get("/observability/live/{request_id}")

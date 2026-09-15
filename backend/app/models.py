@@ -277,6 +277,23 @@ class BusinessOutcomeEvent(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
 
 
+class LLMCostRecord(Base):
+    """One provider generation's measured usage and locally calculated cost."""
+
+    __tablename__ = "llm_cost_records"
+
+    id = Column(String, primary_key=True, index=True)
+    langfuse_trace_id = Column(String, nullable=True, index=True)
+    provider = Column(String, nullable=False, index=True)
+    model = Column(String, nullable=False, index=True)
+    input_tokens = Column(Integer, nullable=True)
+    output_tokens = Column(Integer, nullable=True)
+    cache_read_input_tokens = Column(Integer, nullable=True)
+    cost_usd = Column(Float, nullable=True)
+    cost_source = Column(String, nullable=False)  # configured_rate_card | unpriced
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+
 class WhatsAppMessage(Base):
     """One row per WhatsApp message this platform has sent or received via the
     Meta Cloud API. Needed because Meta's API is send-only — there is no GET

@@ -277,6 +277,7 @@ class LLMKeyManager:
             normalize_gemini_usage,
             normalize_openai_usage,
         )
+        from .cost_governance import record_generation_cost
 
         using_default_groq_fn = groq_fn is None
         using_default_gemini_fn = gemini_fn is None
@@ -311,8 +312,28 @@ class LLMKeyManager:
                 call_kwargs["model_used"] = model_used
                 call_kwargs["usage_used"] = usage_used
 
+            def _usage_and_cost(raw_out):
+                model = model_used[0] if model_used else provider
+                raw_usage = usage_used[0] if usage_used else None
+                usage_details = (
+                    normalize_openai_usage(raw_usage)
+                    if provider == "groq"
+                    else normalize_gemini_usage(raw_usage)
+                )
+                cost_details = calculate_cost_details(model, usage_details)
+                record_generation_cost(
+                    trace_id=langfuse_trace_id,
+                    provider=provider,
+                    model=model,
+                    usage_details=usage_details,
+                    cost_details=cost_details,
+                )
+                return model, usage_details, cost_details
+
             if lf is None:
-                return fn(prompt, system_instruction, **call_kwargs)
+                raw_out = fn(prompt, system_instruction, **call_kwargs)
+                _usage_and_cost(raw_out)
+                return raw_out
 
             trace_context = {"trace_id": langfuse_trace_id} if langfuse_trace_id else None
             with lf.start_as_current_observation(
@@ -324,14 +345,7 @@ class LLMKeyManager:
                 metadata={"key_label": key_info.label, **(prompt_metadata or {})},
             ) as gen:
                 raw_out = fn(prompt, system_instruction, **call_kwargs)
-                model = model_used[0] if model_used else provider
-                raw_usage = usage_used[0] if usage_used else None
-                usage_details = (
-                    normalize_openai_usage(raw_usage)
-                    if provider == "groq"
-                    else normalize_gemini_usage(raw_usage)
-                )
-                cost_details = calculate_cost_details(model, usage_details)
+                model, usage_details, cost_details = _usage_and_cost(raw_out)
                 metadata = {
                     "key_label": key_info.label,
                     "cost_source": "configured_rate_card" if cost_details else "langfuse_model_registry",

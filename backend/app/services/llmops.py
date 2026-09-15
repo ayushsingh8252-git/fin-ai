@@ -10,6 +10,7 @@ import hashlib
 import json
 import logging
 from dataclasses import dataclass
+from contextlib import contextmanager, nullcontext
 from typing import Any
 
 try:
@@ -175,6 +176,31 @@ def calculate_cost_details(model: str, usage_details: dict[str, int] | None) -> 
     if isinstance(cached_tokens, int) and isinstance(cached_rate, (int, float)) and cached_rate >= 0:
         costs["cache_read_input"] = round(cached_tokens * float(cached_rate) / 1_000_000, 12)
     return costs or None
+
+
+@contextmanager
+def observe_operation(
+    name: str,
+    *,
+    as_type: str,
+    trace_id: str | None = None,
+    input: Any = None,
+    metadata: dict[str, Any] | None = None,
+):
+    """Create a non-generation Langfuse observation without making it critical-path."""
+    lf = get_langfuse()
+    cm = (
+        lf.start_as_current_observation(
+            name=name,
+            as_type=as_type,
+            trace_context={"trace_id": trace_id} if trace_id else None,
+            input=input,
+            metadata=metadata,
+        )
+        if lf is not None else nullcontext()
+    )
+    with cm as observation:
+        yield observation
 
 
 def langchain_invoke_kwargs(

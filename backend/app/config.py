@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     # prices belong in source code. Langfuse receives costs only when a rate
     # exists for the model that actually answered.
     LLM_COST_RATES_JSON: str = "{}"
+    # Operational guardrails for measured USD spend. Example:
+    # {"daily_usd":25,"monthly_usd":500,"warning_ratio":0.8}
+    LLM_COST_BUDGETS_JSON: str = "{}"
     LANGFUSE_PROMPT_LABEL: str = "production"
 
     # Retrieval — hybrid search (dense Pinecone/local-cosine + sparse BM25,

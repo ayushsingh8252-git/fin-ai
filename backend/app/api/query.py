@@ -6,6 +6,7 @@ from ..services.reasoning import generate_answer_with_fallback
 from ..services.cache import get_cached_query, set_cached_query
 from ..services.guardrails import check_input, check_output
 from ..services.trace import new_trace, persist_trace
+from ..services.llmops import observe_operation, trace_id_for
 from ..services import live_status
 from ..database import SessionLocal
 from ..models import Document
@@ -63,7 +64,15 @@ def process_query(request: QueryRequest):
         # 0a. Input guardrail — length cap, control-char stripping, and a
         # small prompt-injection phrase blocklist. Regex-only, so this adds
         # no measurable latency to a normal query.
-        input_check = check_input(raw_query)
+        with observe_operation(
+            "rag.input_guardrail",
+            as_type="guardrail",
+            trace_id=trace_id_for(trace["request_id"]),
+            input={"char_count": len(raw_query)},
+        ) as observation:
+            input_check = check_input(raw_query)
+            if observation is not None:
+                observation.update(output={"allowed": input_check.allowed, "reason": input_check.reason})
         trace["guardrails"]["input"] = {"allowed": input_check.allowed, "reason": input_check.reason}
         if not input_check.allowed:
             status = "blocked"
@@ -159,9 +168,18 @@ def process_query(request: QueryRequest):
         # 3. Parallel Vector Retrieval for Rules AND Raw Chunks (dense +,
         # when enabled, sparse BM25 fused via RRF — see retrieval.py)
         live_status.update_stage(trace["request_id"], "hybrid_search", "running")
-        retrieved_rules, retrieved_chunks = retrieve_rules_and_chunks_parallel(
-            search_query, request.top_k, request.document_id, trace=trace
-        )
+        with observe_operation(
+            "rag.hybrid_retrieval",
+            as_type="retriever",
+            trace_id=trace_id_for(trace["request_id"]),
+            input={"query": search_query[:200], "top_k": request.top_k, "document_id": request.document_id},
+            metadata={"hybrid_search": True},
+        ) as observation:
+            retrieved_rules, retrieved_chunks = retrieve_rules_and_chunks_parallel(
+                search_query, request.top_k, request.document_id, trace=trace
+            )
+            if observation is not None:
+                observation.update(output={"rule_count": len(retrieved_rules), "chunk_count": len(retrieved_chunks)})
 
         # 4. Adaptive-Corrective Reasoning Layer (CRAG + HyDE + Step-Back + Reranking)
         answer_data = generate_answer_with_fallback(
@@ -206,7 +224,15 @@ def process_query(request: QueryRequest):
         # 6b. Output guardrail — redacts anything credential/PII-shaped that
         # slipped into the generated answer (e.g. from a crawled web result).
         if answer_data.get("answer"):
-            output_check = check_output(answer_data["answer"])
+            with observe_operation(
+                "rag.output_guardrail",
+                as_type="guardrail",
+                trace_id=trace_id_for(trace["request_id"]),
+                input={"char_count": len(answer_data["answer"])},
+            ) as observation:
+                output_check = check_output(answer_data["answer"])
+                if observation is not None:
+                    observation.update(output={"redaction_count": len(output_check.redactions)})
             answer_data["answer"] = output_check.text
             trace["guardrails"]["output"] = {"redactions": output_check.redactions}
 
