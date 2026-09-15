@@ -24,7 +24,7 @@ from langchain_groq import ChatGroq
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 from ..config import settings
-from .llmops import langchain_invoke_kwargs
+from .llmops import get_managed_prompt, langchain_invoke_kwargs
 from .resilience import retry_with_backoff
 from .model_config import GROQ_MODELS, GEMINI_MODELS
 
@@ -98,6 +98,16 @@ def _structured_chain(prompt: ChatPromptTemplate, schema: type[BaseModel]):
     primary, *rest = legs
     runnable = primary.with_fallbacks(rest) if rest else primary
     return prompt | runnable
+
+
+def _managed_chain(name: str, fallback: ChatPromptTemplate, schema: type[BaseModel]):
+    """Replace only the system instruction from Langfuse; input schema stays local."""
+    managed = get_managed_prompt(name, fallback.messages[0].prompt.template)
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", managed.text),
+        ("human", fallback.messages[1].prompt.template),
+    ])
+    return _structured_chain(prompt, schema), managed.metadata
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -177,19 +187,19 @@ def extract_identity(text: str, langfuse_trace_id: str | None = None) -> Extract
     # all-None result to fraud_identity.check_identity). Letting this raise
     # means the caller's own except-block reports it as a distinct "error"
     # step instead of a clean "na" one.
-    chain = _structured_chain(IDENTITY_PROMPT, ExtractedIdentity)
+    chain, prompt_metadata = _managed_chain("fraud-identity-extraction", IDENTITY_PROMPT, ExtractedIdentity)
     return retry_with_backoff(
         chain.invoke, {"text": text[:8000]}, max_attempts=2, base_delay=0.3, max_delay=2.0,
-        **langchain_invoke_kwargs(langfuse_trace_id),
+        **langchain_invoke_kwargs(langfuse_trace_id, prompt_metadata),
     )
 
 
 def classify_ai_text(text: str, langfuse_trace_id: str | None = None) -> AiTextSignal:
     try:
-        chain = _structured_chain(AI_TEXT_PROMPT, AiTextSignal)
+        chain, prompt_metadata = _managed_chain("fraud-ai-text-classification", AI_TEXT_PROMPT, AiTextSignal)
         return retry_with_backoff(
             chain.invoke, {"text": text[:8000]}, max_attempts=2, base_delay=0.3, max_delay=2.0,
-            **langchain_invoke_kwargs(langfuse_trace_id),
+            **langchain_invoke_kwargs(langfuse_trace_id, prompt_metadata),
         )
     except Exception as e:
         print(f"[Fraud LLM] AI-text classification failed: {e}")

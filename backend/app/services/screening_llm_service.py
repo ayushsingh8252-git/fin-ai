@@ -20,7 +20,7 @@ from langchain_groq import ChatGroq
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 from ..config import settings
-from .llmops import langchain_invoke_kwargs
+from .llmops import get_managed_prompt, langchain_invoke_kwargs
 from .resilience import retry_with_backoff
 from .model_config import GROQ_MODELS, GEMINI_MODELS
 
@@ -116,6 +116,16 @@ def _structured_chain(prompt: ChatPromptTemplate, schema: type[BaseModel]):
     primary, *rest = legs
     runnable = primary.with_fallbacks(rest) if rest else primary
     return prompt | runnable
+
+
+def _managed_chain(name: str, fallback: ChatPromptTemplate, schema: type[BaseModel]):
+    """Use a versioned Langfuse system prompt while retaining local input templates."""
+    managed = get_managed_prompt(name, fallback.messages[0].prompt.template)
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", managed.text),
+        ("human", fallback.messages[1].prompt.template),
+    ])
+    return _structured_chain(prompt, schema), managed.metadata
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -273,10 +283,10 @@ def _fallback_question_bank(role_title: str, resume_profile: ResumeProfile) -> L
 
 def get_resume_profile(resume_text: str, langfuse_trace_id: str | None = None) -> ResumeProfile:
     try:
-        chain = _structured_chain(RESUME_PROMPT, ResumeProfile)
+        chain, prompt_metadata = _managed_chain("screening-resume-profile", RESUME_PROMPT, ResumeProfile)
         return retry_with_backoff(
             chain.invoke, {"resume_text": resume_text[:8000]}, max_attempts=2, base_delay=0.3, max_delay=2.0,
-            **langchain_invoke_kwargs(langfuse_trace_id),
+            **langchain_invoke_kwargs(langfuse_trace_id, prompt_metadata),
         )
     except Exception as e:
         print(f"[Screening LLM] resume profile extraction failed: {e}")
@@ -285,10 +295,10 @@ def get_resume_profile(resume_text: str, langfuse_trace_id: str | None = None) -
 
 def get_jd_profile(jd_text: str, langfuse_trace_id: str | None = None) -> JDProfile:
     try:
-        chain = _structured_chain(JD_PROMPT, JDProfile)
+        chain, prompt_metadata = _managed_chain("screening-jd-profile", JD_PROMPT, JDProfile)
         return retry_with_backoff(
             chain.invoke, {"role_title": "the open role", "jd_text": jd_text[:6000]}, max_attempts=2, base_delay=0.3, max_delay=2.0,
-            **langchain_invoke_kwargs(langfuse_trace_id),
+            **langchain_invoke_kwargs(langfuse_trace_id, prompt_metadata),
         )
     except Exception as e:
         print(f"[Screening LLM] JD profile extraction failed: {e}")
@@ -312,7 +322,9 @@ def analyze_telephonic_screening(
         )
 
     try:
-        chain = _structured_chain(TELEPHONIC_SCREENING_PROMPT, TelephonicScreeningAnalysis)
+        chain, prompt_metadata = _managed_chain(
+            "screening-telephonic-evaluation", TELEPHONIC_SCREENING_PROMPT, TelephonicScreeningAnalysis
+        )
         return retry_with_backoff(
             chain.invoke,
             {
@@ -321,7 +333,7 @@ def analyze_telephonic_screening(
                 "transcript": formatted[:8000],
             },
             max_attempts=2, base_delay=0.3, max_delay=2.0,
-            **langchain_invoke_kwargs(langfuse_trace_id),
+            **langchain_invoke_kwargs(langfuse_trace_id, prompt_metadata),
         )
     except Exception as e:
         print(f"[Screening LLM] telephonic screening analysis failed: {e}")
@@ -369,7 +381,7 @@ def generate_question_set(
         )
 
     try:
-        chain = _structured_chain(QUESTION_SET_PROMPT, ScreeningQuestionSet)
+        chain, prompt_metadata = _managed_chain("screening-question-set", QUESTION_SET_PROMPT, ScreeningQuestionSet)
         result = retry_with_backoff(
             chain.invoke,
             {
@@ -384,7 +396,7 @@ def generate_question_set(
                 "jd_context": jd_context,
             },
             max_attempts=2, base_delay=0.3, max_delay=2.0,
-            **langchain_invoke_kwargs(langfuse_trace_id),
+            **langchain_invoke_kwargs(langfuse_trace_id, prompt_metadata),
         )
         questions = result.questions
     except Exception as e:

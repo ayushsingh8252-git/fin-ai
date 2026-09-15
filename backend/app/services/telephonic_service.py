@@ -10,6 +10,7 @@ short, plain, and free of anything that only makes sense written down.
 from typing import Any, Dict, List, Optional
 
 from .llm_service import generate_json_resilient as generate_json
+from .llmops import get_managed_prompt
 
 AGENT_NAME = "Ayush"
 
@@ -58,9 +59,10 @@ def generate_call_turn(
     """Given the call so far, asks the LLM for the agent's next spoken line.
     Returns {"question": str, "is_final": bool}."""
     candidate_turns = sum(1 for t in history if t.get("role") == "candidate")
-    system_instruction = CALL_SYSTEM_INSTRUCTION.format(
+    local_system_instruction = CALL_SYSTEM_INSTRUCTION.format(
         name=AGENT_NAME, role_title=role_title, candidate_name=candidate_name, max_turns=max_turns
     )
+    managed_prompt = get_managed_prompt("telephonic-call-turn", local_system_instruction)
 
     if not history:
         prompt = f"The call with {candidate_name} just connected. Greet them and start the screen."
@@ -72,7 +74,12 @@ def generate_call_turn(
         )
 
     try:
-        result = generate_json(prompt, system_instruction, langfuse_trace_id=langfuse_trace_id)
+        result = generate_json(
+            prompt,
+            managed_prompt.text,
+            langfuse_trace_id=langfuse_trace_id,
+            prompt_metadata=managed_prompt.metadata,
+        )
     except Exception as e:
         print(f"[Telephonic Service Error] {e}")
         result = {"question": FALLBACK_QUESTION, "is_final": candidate_turns >= max_turns}
@@ -95,11 +102,17 @@ def generate_call_evaluation(
     if not any(t.get("role") == "candidate" for t in history):
         return {**FALLBACK_CALL_EVALUATION, "summary": "No candidate responses were recorded."}
 
-    system_instruction = CALL_EVALUATION_SYSTEM_INSTRUCTION.format(name=AGENT_NAME)
+    local_system_instruction = CALL_EVALUATION_SYSTEM_INSTRUCTION.format(name=AGENT_NAME)
+    managed_prompt = get_managed_prompt("telephonic-call-evaluation", local_system_instruction)
     prompt = f"Role: {role_title}\n\nFull call transcript:\n{_format_history(history)}"
 
     try:
-        result = generate_json(prompt, system_instruction, langfuse_trace_id=langfuse_trace_id)
+        result = generate_json(
+            prompt,
+            managed_prompt.text,
+            langfuse_trace_id=langfuse_trace_id,
+            prompt_metadata=managed_prompt.metadata,
+        )
         if not isinstance(result, dict):
             raise ValueError("Evaluation response was not a JSON object")
     except Exception as e:

@@ -177,7 +177,10 @@ def calculate_cost_details(model: str, usage_details: dict[str, int] | None) -> 
     return costs or None
 
 
-def langchain_invoke_kwargs(langfuse_trace_id: str | None) -> dict:
+def langchain_invoke_kwargs(
+    langfuse_trace_id: str | None,
+    prompt_metadata: dict[str, Any] | None = None,
+) -> dict:
     """Extra kwargs for a LangChain Runnable's .invoke(), attaching a
     Langfuse CallbackHandler when tracing is configured. LangChain's own
     callback mechanism auto-captures a whole chain — including
@@ -192,7 +195,12 @@ def langchain_invoke_kwargs(langfuse_trace_id: str | None) -> dict:
     if get_langfuse() is None or not langfuse_trace_id:
         return {}
     from langfuse.langchain import CallbackHandler
-    return {"config": {"callbacks": [CallbackHandler(trace_context={"trace_id": langfuse_trace_id})]}}
+    config: dict[str, Any] = {
+        "callbacks": [CallbackHandler(trace_context={"trace_id": langfuse_trace_id})],
+    }
+    if prompt_metadata:
+        config["metadata"] = prompt_metadata
+    return {"config": config}
 
 
 def get_managed_prompt(
@@ -200,6 +208,7 @@ def get_managed_prompt(
     fallback: str,
     *,
     label: str | None = None,
+    variables: dict[str, Any] | None = None,
     cache_ttl_seconds: int = 300,
 ) -> ManagedPrompt:
     """Fetches a Langfuse-managed *text* prompt by name (no template
@@ -225,7 +234,7 @@ def get_managed_prompt(
     try:
         prompt = lf.get_prompt(name, label=label, type="text", fallback=fallback, cache_ttl_seconds=cache_ttl_seconds)
         return ManagedPrompt(
-            text=prompt.compile(),
+            text=prompt.compile(**(variables or {})),
             name=name,
             label=label,
             version=getattr(prompt, "version", None),

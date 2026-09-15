@@ -6,7 +6,7 @@ from typing import Dict, List, Any, Optional, Tuple
 
 from .retrieval import retrieve_rules_and_chunks_parallel, _query_pinecone, get_query_vector
 from .llm_service import generate_json_resilient
-from .llmops import trace_id_for
+from .llmops import get_managed_prompt, trace_id_for
 from .web_service import tavily_search
 from .reranking import cross_encoder_rerank as _rerank_candidates
 from . import live_status
@@ -151,9 +151,16 @@ def fast_crag_grader(
     }}
     """
 
+    managed_prompt = get_managed_prompt(
+        "rag-crag-grader", prompt, variables={"query": query, "context": context_str}
+    )
     try:
         grade_res = generate_json_resilient(
-            prompt, max_attempts=2, trace_sink=trace_sink, langfuse_trace_id=langfuse_trace_id
+            managed_prompt.text,
+            max_attempts=2,
+            trace_sink=trace_sink,
+            langfuse_trace_id=langfuse_trace_id,
+            prompt_metadata=managed_prompt.metadata,
         )
         if isinstance(grade_res, dict):
             grade = str(grade_res.get("grade", "")).upper()
@@ -188,9 +195,14 @@ def generate_query_rewrite(
       "rewritten_query": "concise search query with essential terms"
     }}
     """
+    managed_prompt = get_managed_prompt("rag-query-rewrite", prompt, variables={"query": query})
     try:
         res = generate_json_resilient(
-            prompt, max_attempts=2, trace_sink=trace_sink, langfuse_trace_id=langfuse_trace_id
+            managed_prompt.text,
+            max_attempts=2,
+            trace_sink=trace_sink,
+            langfuse_trace_id=langfuse_trace_id,
+            prompt_metadata=managed_prompt.metadata,
         )
         if isinstance(res, dict) and res.get("rewritten_query"):
             return res["rewritten_query"].strip()
@@ -216,9 +228,14 @@ def generate_hyde_document(
       "hypothetical_passage": "formal factual statement answering the question"
     }}
     """
+    managed_prompt = get_managed_prompt("rag-hyde-document", prompt, variables={"query": query})
     try:
         res = generate_json_resilient(
-            prompt, max_attempts=2, trace_sink=trace_sink, langfuse_trace_id=langfuse_trace_id
+            managed_prompt.text,
+            max_attempts=2,
+            trace_sink=trace_sink,
+            langfuse_trace_id=langfuse_trace_id,
+            prompt_metadata=managed_prompt.metadata,
         )
         if isinstance(res, dict) and res.get("hypothetical_passage"):
             return res["hypothetical_passage"].strip()
@@ -243,9 +260,14 @@ def generate_step_back_query(
       "step_back_query": "broader principle or overarching topic question"
     }}
     """
+    managed_prompt = get_managed_prompt("rag-step-back-query", prompt, variables={"query": query})
     try:
         res = generate_json_resilient(
-            prompt, max_attempts=2, trace_sink=trace_sink, langfuse_trace_id=langfuse_trace_id
+            managed_prompt.text,
+            max_attempts=2,
+            trace_sink=trace_sink,
+            langfuse_trace_id=langfuse_trace_id,
+            prompt_metadata=managed_prompt.metadata,
         )
         if isinstance(res, dict) and res.get("step_back_query"):
             return res["step_back_query"].strip()
@@ -522,10 +544,19 @@ def execute_adaptive_rag_pipeline(
     }}
     """
 
+    managed_prompt = get_managed_prompt(
+        "rag-answer-synthesis",
+        synthesis_prompt,
+        variables={"query": query, "context": context_str},
+    )
     _stage("generating", "running")
     try:
         final_res = generate_json_resilient(
-            synthesis_prompt, max_attempts=2, trace_sink=llm_sink, langfuse_trace_id=langfuse_trace_id
+            managed_prompt.text,
+            max_attempts=2,
+            trace_sink=llm_sink,
+            langfuse_trace_id=langfuse_trace_id,
+            prompt_metadata=managed_prompt.metadata,
         )
         if isinstance(final_res, dict):
             answer_text = str(final_res.get("answer", "")).strip()
