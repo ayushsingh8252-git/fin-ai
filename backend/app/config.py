@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     # prices belong in source code. Langfuse receives costs only when a rate
     # exists for the model that actually answered.
     LLM_COST_RATES_JSON: str = "{}"
+    LANGFUSE_PROMPT_LABEL: str = "production"
 
     # Retrieval — hybrid search (dense Pinecone/local-cosine + sparse BM25,
     # fused via Reciprocal Rank Fusion; see services/retrieval.py and

@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import os
 from .config import settings
-from .api import upload, query, rules, audio, fraud, interview, auth, telephonic, hiring, screening, orchestrator, mcp, observability, google_oauth, agent, whatsapp, voice, command_center
+from .api import upload, query, rules, audio, fraud, interview, auth, telephonic, hiring, screening, orchestrator, mcp, observability, google_oauth, agent, whatsapp, voice, command_center, outcomes
 from .database import engine
 from . import models
 
@@ -160,6 +160,7 @@ app.include_router(screening.router, prefix="/api/v1")
 app.include_router(orchestrator.router, prefix="/api/v1")
 app.include_router(mcp.router, prefix="/api/v1")
 app.include_router(observability.router, prefix="/api/v1")
+app.include_router(outcomes.router, prefix="/api/v1")
 app.include_router(agent.router, prefix="/api/v1")
 app.include_router(voice.router, prefix="/api/v1")
 app.include_router(command_center.router, prefix="/api/v1")

@@ -252,6 +252,31 @@ class QueryTrace(Base):
     trace = Column(JSON, default=dict)
 
 
+class BusinessOutcomeEvent(Base):
+    """Auditable business-impact event correlated to a product workflow.
+
+    The row contains only measurements and opaque IDs. Candidate documents,
+    prompts, transcripts, and model output remain outside this ledger.
+    """
+
+    __tablename__ = "business_outcome_events"
+
+    id = Column(String, primary_key=True, index=True)
+    workflow_type = Column(String, nullable=False, index=True)
+    workflow_id = Column(String, nullable=False, index=True)
+    langfuse_trace_id = Column(String, nullable=True, index=True)
+    status = Column(String, nullable=False, default="completed", index=True)
+    automated = Column(String, nullable=False, default="false")
+    manual_baseline_minutes = Column(Float, nullable=True)
+    human_active_minutes = Column(Float, nullable=True)
+    labor_cost_per_hour_usd = Column(Float, nullable=True)
+    ai_cost_usd = Column(Float, nullable=True)
+    review_outcome = Column(String, nullable=True, index=True)  # accepted | rework | rejected
+    required_rework = Column(String, nullable=False, default="false")
+    metadata_ = Column("metadata", JSON, default=dict)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+
 class WhatsAppMessage(Base):
     """One row per WhatsApp message this platform has sent or received via the
     Meta Cloud API. Needed because Meta's API is send-only — there is no GET

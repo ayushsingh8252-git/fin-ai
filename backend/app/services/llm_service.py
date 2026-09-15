@@ -149,6 +149,7 @@ def generate_json(
     system_instruction: str = None,
     trace_sink: list | None = None,
     langfuse_trace_id: str | None = None,
+    prompt_metadata: dict | None = None,
 ) -> dict | list:
     """
     Executes JSON generation with multi-key round-robin rotation for Groq primary
@@ -162,7 +163,11 @@ def generate_json(
     nests this call's Langfuse generation(s) under the caller's own trace.
     """
     return key_manager.execute_json_generation(
-        prompt, system_instruction, trace_sink=trace_sink, langfuse_trace_id=langfuse_trace_id
+        prompt,
+        system_instruction,
+        trace_sink=trace_sink,
+        langfuse_trace_id=langfuse_trace_id,
+        prompt_metadata=prompt_metadata,
     )
 
 
@@ -172,6 +177,7 @@ def generate_json_resilient(
     max_attempts: int = 2,
     trace_sink: list | None = None,
     langfuse_trace_id: str | None = None,
+    prompt_metadata: dict | None = None,
 ) -> dict | list:
     """
     Thin retry wrapper around generate_json() for callers with deterministic fallbacks.
@@ -182,6 +188,7 @@ def generate_json_resilient(
         system_instruction,
         trace_sink=trace_sink,
         langfuse_trace_id=langfuse_trace_id,
+        prompt_metadata=prompt_metadata,
         max_attempts=max_attempts,
         base_delay=0.3,
         max_delay=2.0,

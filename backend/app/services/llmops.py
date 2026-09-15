@@ -9,6 +9,7 @@ never a reason to fail or slow down an actual LLM call. Same "empty config
 import hashlib
 import json
 import logging
+from dataclasses import dataclass
 from typing import Any
 
 try:
@@ -22,6 +23,26 @@ logger = logging.getLogger(__name__)
 
 _client: Any | None = None
 _init_attempted = False
+
+
+@dataclass(frozen=True)
+class ManagedPrompt:
+    """Compiled prompt text plus the version identity used for one call."""
+
+    text: str
+    name: str
+    label: str
+    version: int | None
+    source: str  # "langfuse" | "local_fallback"
+
+    @property
+    def metadata(self) -> dict[str, Any]:
+        return {
+            "prompt_name": self.name,
+            "prompt_label": self.label,
+            "prompt_version": self.version,
+            "prompt_source": self.source,
+        }
 
 
 def get_langfuse() -> Any | None:
@@ -174,7 +195,13 @@ def langchain_invoke_kwargs(langfuse_trace_id: str | None) -> dict:
     return {"config": {"callbacks": [CallbackHandler(trace_context={"trace_id": langfuse_trace_id})]}}
 
 
-def get_prompt_text(name: str, fallback: str, *, label: str = "production", cache_ttl_seconds: int = 300) -> str:
+def get_managed_prompt(
+    name: str,
+    fallback: str,
+    *,
+    label: str | None = None,
+    cache_ttl_seconds: int = 300,
+) -> ManagedPrompt:
     """Fetches a Langfuse-managed *text* prompt by name (no template
     variables — callers needing those should call get_langfuse().get_prompt()
     directly and .compile(**vars) themselves). `fallback` is the hardcoded
@@ -191,15 +218,27 @@ def get_prompt_text(name: str, fallback: str, *, label: str = "production", cach
     of moving it out of code, while `fallback` keeps this repo runnable
     standalone if Langfuse is ever removed or unreachable.
     """
+    label = label or settings.LANGFUSE_PROMPT_LABEL
     lf = get_langfuse()
     if lf is None:
-        return fallback
+        return ManagedPrompt(fallback, name, label, None, "local_fallback")
     try:
         prompt = lf.get_prompt(name, label=label, type="text", fallback=fallback, cache_ttl_seconds=cache_ttl_seconds)
-        return prompt.compile()
+        return ManagedPrompt(
+            text=prompt.compile(),
+            name=name,
+            label=label,
+            version=getattr(prompt, "version", None),
+            source="langfuse",
+        )
     except Exception as e:
         logger.warning("[LLMOps] get_prompt(%s) failed, using local fallback: %s", name, e)
-        return fallback
+        return ManagedPrompt(fallback, name, label, None, "local_fallback")
+
+
+def get_prompt_text(name: str, fallback: str, *, label: str = "production", cache_ttl_seconds: int = 300) -> str:
+    """Compatibility wrapper for call sites that only need prompt text."""
+    return get_managed_prompt(name, fallback, label=label, cache_ttl_seconds=cache_ttl_seconds).text
 
 
 def shutdown_langfuse():

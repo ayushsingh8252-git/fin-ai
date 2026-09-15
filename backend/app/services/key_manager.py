@@ -235,6 +235,7 @@ class LLMKeyManager:
         parse_fn: Callable = None,
         trace_sink: Optional[list] = None,
         langfuse_trace_id: Optional[str] = None,
+        prompt_metadata: Optional[dict] = None,
     ):
         """
         Main execution flow:
@@ -320,7 +321,7 @@ class LLMKeyManager:
                 trace_context=trace_context,
                 input={"prompt": prompt, "system_instruction": system_instruction},
                 model=provider,
-                metadata={"key_label": key_info.label},
+                metadata={"key_label": key_info.label, **(prompt_metadata or {})},
             ) as gen:
                 raw_out = fn(prompt, system_instruction, **call_kwargs)
                 model = model_used[0] if model_used else provider
@@ -331,7 +332,11 @@ class LLMKeyManager:
                     else normalize_gemini_usage(raw_usage)
                 )
                 cost_details = calculate_cost_details(model, usage_details)
-                metadata = {"key_label": key_info.label, "cost_source": "configured_rate_card" if cost_details else "langfuse_model_registry"}
+                metadata = {
+                    "key_label": key_info.label,
+                    "cost_source": "configured_rate_card" if cost_details else "langfuse_model_registry",
+                    **(prompt_metadata or {}),
+                }
                 gen.update(
                     output=raw_out,
                     model=model,

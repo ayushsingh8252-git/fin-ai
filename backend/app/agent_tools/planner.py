@@ -22,7 +22,7 @@ from contextlib import nullcontext
 from typing import Any, Dict, List, Optional
 
 from ..services.llm_service import generate_json_resilient
-from ..services.llmops import get_langfuse, get_prompt_text, new_trace_id
+from ..services.llmops import ManagedPrompt, get_langfuse, get_managed_prompt, new_trace_id
 from . import registry
 from .registry import MCPToolError
 
@@ -54,8 +54,8 @@ key why, or omit that part of the plan entirely.
 Return ONLY the JSON object, nothing else."""
 
 
-def _planner_system_instruction() -> str:
-    return get_prompt_text(_PLANNER_PROMPT_NAME, _PLANNER_SYSTEM_INSTRUCTION)
+def _planner_system_instruction() -> ManagedPrompt:
+    return get_managed_prompt(_PLANNER_PROMPT_NAME, _PLANNER_SYSTEM_INSTRUCTION)
 
 
 def _resolve_placeholders(value: Any, results: List[Dict[str, Any]]) -> Any:
@@ -97,11 +97,15 @@ def build_plan(prompt: str, langfuse_trace_id: Optional[str] = None) -> Dict[str
 
     catalog = registry.unified_catalog()
     catalog_text = json.dumps(catalog, indent=None)
+    managed_prompt = _planner_system_instruction()
 
     llm_prompt = f"Available tools:\n{catalog_text}\n\nUser request:\n{prompt}"
     try:
         raw = generate_json_resilient(
-            llm_prompt, _planner_system_instruction(), langfuse_trace_id=langfuse_trace_id
+            llm_prompt,
+            managed_prompt.text,
+            langfuse_trace_id=langfuse_trace_id,
+            prompt_metadata=managed_prompt.metadata,
         )
     except Exception as e:
         return {"steps": [], "error": f"Planning failed: {e}"}
@@ -122,7 +126,7 @@ def build_plan(prompt: str, langfuse_trace_id: Optional[str] = None) -> Dict[str
         else:
             steps.append({"connector": connector, "tool": tool, "params": step.get("params", {})})
 
-    result = {"steps": steps}
+    result = {"steps": steps, "prompt": managed_prompt.metadata}
     if minted_own_trace and langfuse_trace_id:
         result["trace_id"] = langfuse_trace_id
     return result
