@@ -260,6 +260,17 @@ class Settings(BaseSettings):
     # truncate the hash at the first unresolved `$word` (see .env.example).
     COMMAND_CENTER_PASSWORD_HASH: str = ""
 
+    # --- Auth (JWT) ---
+    # Signs/verifies the access token issued by POST /auth/google (see
+    # api/auth.py) and required by api/deps.py's get_current_user on every
+    # protected route. Empty in dev is tolerated (a random key is generated
+    # once at process startup, with a logged warning) so a fresh checkout
+    # still boots — but that means every restart invalidates all existing
+    # sessions, so ALWAYS set a real value in any deployed environment.
+    # Generate one with: python -c "import secrets; print(secrets.token_hex(32))"
+    JWT_SECRET_KEY: str = ""
+    JWT_EXPIRE_DAYS: int = 7
+
     # Fraud detection pipeline
     FRAUD_ELA_THRESHOLD: float = 35.0
     # Empty by default so pytesseract resolves `tesseract` from PATH, which is
