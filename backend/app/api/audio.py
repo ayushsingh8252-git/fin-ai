@@ -1,8 +1,10 @@
 import os
 import tempfile
-from fastapi import APIRouter, UploadFile, File, HTTPException, Response
+from fastapi import APIRouter, UploadFile, File, HTTPException, Response, Request
 from pydantic import BaseModel
+from ..rate_limit import limiter
 from ..services.audio_service import transcribe_audio, generate_tts_audio_async, validate_audio_format
+from ..services.upload_safety import enforce_upload_size
 
 router = APIRouter()
 
@@ -12,18 +14,21 @@ class TTSRequest(BaseModel):
     voice: str = "en-US-AndrewMultilingualNeural"
 
 @router.post("/transcribe")
-async def transcribe_audio_endpoint(file: UploadFile = File(...)):
+@limiter.limit("20/minute")
+async def transcribe_audio_endpoint(request: Request, file: UploadFile = File(...)):
     """
     Accepts recorded voice audio file (e.g. webm/wav/mp3) from frontend mic
     and returns transcribed text.
     """
+    content = await file.read()
+    enforce_upload_size(content)
+
     try:
         suffix = os.path.splitext(file.filename)[1] if file.filename else ".webm"
         if not suffix or suffix == ".":
             suffix = ".webm"
-            
+
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
-            content = await file.read()
             temp_file.write(content)
             temp_path = temp_file.name
 
@@ -38,13 +43,14 @@ async def transcribe_audio_endpoint(file: UploadFile = File(...)):
         finally:
             if os.path.exists(temp_path):
                 os.remove(temp_path)
-                
+
     except Exception as e:
         print(f"[Transcribe API Error] {str(e)}")
         raise HTTPException(status_code=500, detail=f"Audio transcription failed: {str(e)}")
 
 @router.post("/tts")
-async def text_to_speech_endpoint(request: TTSRequest):
+@limiter.limit("20/minute")
+async def text_to_speech_endpoint(http_request: Request, request: TTSRequest):
     """
     Converts text to speech MP3 audio stream for playback using neural voice.
     """

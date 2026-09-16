@@ -19,6 +19,7 @@ import ChatMarkdown from "@/components/ChatMarkdown";
 import AgentLatencyAnimation from "@/components/ai-assistant/AgentLatencyAnimation";
 import RagExecutionTrace, { type LiveTraceSnapshot } from "@/components/ai-assistant/RagExecutionTrace";
 import { getLlmopsHeaders } from "@/lib/llmopsIdentity";
+import { getAuthHeaders } from "@/lib/auth";
 import FeedbackButtons from "@/components/FeedbackButtons";
 
 function liveTraceNeedsRefresh(snapshot: LiveTraceSnapshot | null): boolean {
@@ -746,7 +747,7 @@ export default function RAGPage() {
       const url = targetDocId
         ? `${apiUrl}/api/v1/rules?document_id=${targetDocId}`
         : `${apiUrl}/api/v1/rules`;
-      const res = await fetch(url).catch(() => null);
+      const res = await fetch(url, { headers: getAuthHeaders() }).catch(() => null);
 
       if (res && res.ok) {
         const data = await res.json();
@@ -804,7 +805,7 @@ export default function RAGPage() {
     setIsRetryingDoc(true);
     try {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-      const res = await fetch(`${apiUrl}/api/v1/documents/${docId}/reprocess`, { method: "POST" });
+      const res = await fetch(`${apiUrl}/api/v1/documents/${docId}/reprocess`, { method: "POST", headers: getAuthHeaders() });
       if (res.ok) {
         setDocStatus("uploaded");
         setDocError(null);
@@ -855,6 +856,7 @@ export default function RAGPage() {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
       const res = await fetch(`${apiUrl}/api/v1/upload`, {
         method: "POST",
+        headers: getAuthHeaders(),
         body: formData,
       }).catch(() => null);
 
@@ -938,7 +940,7 @@ export default function RAGPage() {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
       const res = await fetch(`${apiUrl}/api/v1/upload-url`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({ url }),
       }).catch(() => null);
 
@@ -1047,7 +1049,7 @@ export default function RAGPage() {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
       const res = await fetch(`${apiUrl}/api/v1/mcp/connectors/github/tools/${tool}/call`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify(params),
       });
       const data = await res.json();
@@ -1104,7 +1106,7 @@ export default function RAGPage() {
         return;
       }
       try {
-        const res = await fetch(`${apiUrl}/api/v1/observability/live/${requestId}`);
+        const res = await fetch(`${apiUrl}/api/v1/observability/live/${requestId}`, { headers: getAuthHeaders() });
         if (!res.ok) return;
         const snap: LiveTraceSnapshot = await res.json();
         liveTraceRef.current = snap;
@@ -1219,7 +1221,7 @@ export default function RAGPage() {
       // beats showing a stale "still running" stage next to a finished answer.
       if (liveTraceNeedsRefresh(liveTraceRef.current)) {
         try {
-          const liveRes = await fetch(`${apiUrl}/api/v1/observability/live/${requestId}`);
+          const liveRes = await fetch(`${apiUrl}/api/v1/observability/live/${requestId}`, { headers: getAuthHeaders() });
           if (liveRes.ok) liveTraceRef.current = await liveRes.json();
         } catch {
           // Best-effort only — the collapsed trace just falls back to

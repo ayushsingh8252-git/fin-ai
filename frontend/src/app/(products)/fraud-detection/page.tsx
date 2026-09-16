@@ -9,6 +9,7 @@ import {
   Fingerprint, FileSearch, Camera, ScanFace, CreditCard, IdCard, Landmark,
 } from "lucide-react";
 import { getLlmopsHeaders, getLlmopsSessionId, getLlmopsUserId } from "@/lib/llmopsIdentity";
+import { getAuthHeaders, loadStoredSession } from "@/lib/auth";
 import FeedbackButtons from "@/components/FeedbackButtons";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -203,7 +204,7 @@ export default function FraudDetectionPage() {
     try {
       const fd = new FormData();
       fd.append("file", file);
-      const res = await fetch(`${API_URL}/api/v1/fraud/upload`, { method: "POST", headers: getLlmopsHeaders(), body: fd });
+      const res = await fetch(`${API_URL}/api/v1/fraud/upload`, { method: "POST", headers: { ...getLlmopsHeaders(), ...getAuthHeaders() }, body: fd });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.detail || `Upload failed (${res.status})`);
@@ -229,7 +230,8 @@ export default function FraudDetectionPage() {
     setScanError("");
     setStage("scanning");
 
-    // EventSource can't set custom request headers, so identity is passed as
+    // EventSource can't set custom request headers, so identity (and now the
+    // auth token — see api/deps.py::get_current_user_query) are passed as
     // query params here instead (backend accepts both — see
     // services/llmops_identity.py).
     const identityParams = new URLSearchParams();
@@ -237,6 +239,7 @@ export default function FraudDetectionPage() {
     const userId = getLlmopsUserId();
     if (sessionId) identityParams.set("session_id", sessionId);
     if (userId) identityParams.set("user_id", userId);
+    identityParams.set("token", loadStoredSession()?.accessToken || "");
     const es = new EventSource(`${API_URL}/api/v1/fraud/scan/${scanId}/stream?${identityParams.toString()}`);
     esRef.current = es;
 

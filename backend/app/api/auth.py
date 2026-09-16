@@ -1,7 +1,10 @@
+import logging
+import secrets
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+import jwt
 import requests
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -11,6 +14,8 @@ from ..config import settings
 from ..database import get_db
 from .. import models
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 # Google's own tokeninfo endpoint validates the ID token's signature and
@@ -18,6 +23,35 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 # google-auth just to re-verify a JWT locally (same "fastest POC stack"
 # tradeoff used elsewhere in this backend).
 GOOGLE_TOKENINFO_URL = "https://oauth2.googleapis.com/tokeninfo"
+
+JWT_ALGORITHM = "HS256"
+
+# Falls back to a random per-process key if JWT_SECRET_KEY isn't set (see
+# config.py) rather than refusing to boot — matches this app's "empty =
+# not configured, fail soft with a clear log line" convention used for every
+# other integration. The tradeoff: every process restart invalidates all
+# existing sessions when running on the generated key, so this must never be
+# relied on outside local dev.
+if settings.JWT_SECRET_KEY:
+    _JWT_SIGNING_KEY = settings.JWT_SECRET_KEY
+else:
+    _JWT_SIGNING_KEY = secrets.token_hex(32)
+    logger.warning(
+        "[Auth] JWT_SECRET_KEY is not set — generated a random per-process key. "
+        "All sessions will be invalidated on the next restart. Set JWT_SECRET_KEY "
+        "in .env for any deployed environment."
+    )
+
+
+def create_access_token(user: "models.User") -> str:
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": user.id,
+        "email": user.email,
+        "iat": now,
+        "exp": now + timedelta(days=settings.JWT_EXPIRE_DAYS),
+    }
+    return jwt.encode(payload, _JWT_SIGNING_KEY, algorithm=JWT_ALGORITHM)
 
 
 class GoogleLoginRequest(BaseModel):
@@ -33,6 +67,7 @@ class AuthUserOut(BaseModel):
 class AuthResponse(BaseModel):
     user: AuthUserOut
     unique_user_count: int
+    access_token: str
 
 
 @router.post("/google", response_model=AuthResponse)
@@ -80,6 +115,7 @@ def google_login(payload: GoogleLoginRequest, db: Session = Depends(get_db)):
     return AuthResponse(
         user=AuthUserOut(email=user.email, name=user.name, picture=user.picture),
         unique_user_count=unique_user_count,
+        access_token=create_access_token(user),
     )
 
 

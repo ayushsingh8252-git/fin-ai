@@ -51,7 +51,7 @@ Every other credential in `.env.example` — Pinecone, Sarvam, SMTP, Google OAut
 - **Live hand-off** — approved hires flow straight into the real onboarding and knowledge-transfer systems below, zero re-entry.
 
 ### 🏢 Enterprise Operations
-- **One-click onboarding** — provisions accounts, repo access, and equipment automatically across HR / Manager / Employee RBAC portals.
+- **One-click onboarding UI** — a three-portal HR / Manager / Employee flow (access requests, approvals, document sharing) for provisioning accounts, repo access, and equipment; see [Honest Status](#honest-status) for what's wired to real provisioning today versus still a UI walkthrough.
 - **Enterprise Orchestration Layer** (`backend/app/memory/orchestrator.py`, `POST/GET /api/v1/orchestrator/*`) — the shared session lifecycle behind Screening and Telephonic: opens a working-memory session, feeds it question/answer/sentiment as the conversation happens, and on end folds it into episodic + semantic memory — see [Memory Architecture](#memory-architecture) below. Intent parsing / MCP tool routing / an enforced approval gate are not part of this layer yet.
 - **Track Insights** — auto-generated executive digests: automations run, hours saved, docs indexed, cost saved.
 - **Live ROI calculator** — a real cost model, not marketing copy — computes manual-vs-automated screening cost from the same per-unit pricing that bills usage, so the numbers can't drift from reality.
@@ -59,7 +59,7 @@ Every other credential in `.env.example` — Pinecone, Sarvam, SMTP, Google OAut
   ![Live ROI calculator computing a cost estimate from real per-unit pricing](image1.png)
 
 ### 🔐 Trust & Infra
-- **Zero-trust surface** — RBAC, audit logs, activity monitoring, backup/DR, secure uploads.
+- **Auth** — Google Sign-In issues a real JWT session; every product API requires it (see [Honest Status](#honest-status) for the two intentionally-public exceptions). RBAC/per-tenant data scoping is not built yet — treat this as single-tenant-pilot readiness today, not enterprise multi-tenant.
 - **Dual-provider LLM fallback** — primary calls go to Groq/Grok; on failure the pipeline transparently retries on Gemini, so one provider outage doesn't take the product down.
 - **Redis-backed caching** for embeddings and query results, keeping repeat queries fast without re-hitting the LLM or vector DB.
 - **18+ native integrations** — Slack, Teams, Jira, GitHub, Salesforce, SAP, SharePoint, and custom MCP connectors.

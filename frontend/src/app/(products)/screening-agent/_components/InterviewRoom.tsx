@@ -13,6 +13,7 @@ import type {
 import { Toast, type ToastState } from "./Toast";
 import InterviewReport from "./InterviewReport";
 import { getLlmopsHeaders } from "@/lib/llmopsIdentity";
+import { getAuthHeaders } from "@/lib/auth";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const INTERVIEWER_NAME = "Ayush";
@@ -163,6 +164,9 @@ export default function InterviewRoom({
       try {
         const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
         const wsHost = (API_URL || "http://localhost:8000").replace(/^https?:\/\//, "");
+        // Deliberately unauthenticated — a candidate on an invite link was
+        // never a signed-in platform user, and the session_id itself is the
+        // access control (see api/interview.py's WS route docstring).
         const wsUrl = `${wsProtocol}//${wsHost}/api/v1/interview/ws/${sessionId || "demo-session"}`;
         const ws = new WebSocket(wsUrl);
         wsRef.current = ws;
@@ -363,7 +367,7 @@ export default function InterviewRoom({
           `${API_URL}/api/v1/interview/evaluate`,
           {
             method: "POST",
-            headers: { "Content-Type": "application/json", ...getLlmopsHeaders() },
+            headers: { "Content-Type": "application/json", ...getLlmopsHeaders(), ...getAuthHeaders() },
             body: JSON.stringify({
               history: history.map((t) => ({ role: t.role, text: t.text })),
               role_title: roleTitle || DEFAULT_ROLE,
@@ -440,7 +444,7 @@ export default function InterviewRoom({
             `${API_URL}/api/v1/interview/turn`,
             {
               method: "POST",
-              headers: { "Content-Type": "application/json" },
+              headers: { "Content-Type": "application/json", ...getAuthHeaders() },
               body: JSON.stringify({
                 history: history.map((t) => ({ role: t.role, text: t.text })),
                 role_title: roleTitle || DEFAULT_ROLE,
@@ -566,7 +570,7 @@ export default function InterviewRoom({
       formData.append("jd_text", jdText || "");
       if (sessionId) formData.append("session_id", sessionId);
 
-      const res = await fetchWithRetry(`${API_URL}/api/v1/screening/start`, { method: "POST", body: formData }, 1, 30000);
+      const res = await fetchWithRetry(`${API_URL}/api/v1/screening/start`, { method: "POST", headers: getAuthHeaders(), body: formData }, 1, 30000);
       if (!res.ok) throw new Error(`Screening start failed (${res.status})`);
       const data = (await res.json()) as ScreeningStartResponse;
 
@@ -719,7 +723,7 @@ export default function InterviewRoom({
     try {
       const res = await fetchWithRetry(`${API_URL}/api/v1/screening/invite`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({ email: inviteEmail, role_title: roleTitle, jd_text: jdText || null }),
       });
       const data = await res.json();

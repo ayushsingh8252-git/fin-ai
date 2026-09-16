@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
+import { getAuthHeaders } from "@/lib/auth";
 
 type RuleItem = {
   id: string;
@@ -27,7 +28,7 @@ export default function RulesExplorerPage() {
     setIsLoading(true);
     try {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-      const res = await fetch(`${apiUrl}/api/v1/rules`);
+      const res = await fetch(`${apiUrl}/api/v1/rules`, { headers: getAuthHeaders() });
       if (res.ok) {
         const data = await res.json();
         if (data.rules && Array.isArray(data.rules)) {

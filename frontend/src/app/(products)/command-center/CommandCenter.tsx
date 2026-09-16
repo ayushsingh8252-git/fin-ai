@@ -40,6 +40,7 @@ import type {
   WorkspaceViewMode,
 } from "./types";
 import { DEMO_PLAN as DemoPlan, DEMO_RESULTS } from "./types";
+import { getAuthHeaders } from "@/lib/auth";
 
 const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001").replace(/\/api\/v1$/, "");
 
@@ -61,7 +62,7 @@ async function callRealTool(
 
     const res = await fetch(`${API_URL}/api/v1/agent/tools/${connector}/${tool}/call`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...getAuthHeaders() },
       body: JSON.stringify(params),
       signal: timeoutController.signal,
     }).finally(() => {
@@ -322,7 +323,7 @@ export default function CommandCenter() {
 
   async function fetchCatalog() {
     try {
-      const res = await fetch(`${API_URL}/api/v1/agent/tools`);
+      const res = await fetch(`${API_URL}/api/v1/agent/tools`, { headers: getAuthHeaders() });
       if (res.ok) {
         const data = await res.json();
         setCatalogTools(data.tools || []);
@@ -407,7 +408,7 @@ export default function CommandCenter() {
 
           const planRes = await fetch(`${API_URL}/api/v1/agent/plan`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: { "Content-Type": "application/json", ...getAuthHeaders() },
             body: JSON.stringify({ prompt: trimmed }),
             signal: timeoutController.signal,
           }).finally(() => clearTimeout(timeoutId));
@@ -435,6 +436,7 @@ export default function CommandCenter() {
             formData.append("files", attachedDoc.file);
             const uploadRes = await fetch(`${API_URL}/api/v1/hiring/parse-resumes`, {
               method: "POST",
+              headers: getAuthHeaders(),
               body: formData,
               signal: timeoutController.signal,
             }).finally(() => clearTimeout(timeoutId));

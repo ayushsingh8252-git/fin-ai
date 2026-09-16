@@ -13,6 +13,7 @@ import {
   AlertTriangle, Calendar, Clock, Phone, Play, CalendarDays, Pause,
 } from "lucide-react";
 import { writeSyncedHires, clearSyncedHires } from "@/lib/hiringSync";
+import { getAuthHeaders } from "@/lib/auth";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { StatusPill, type StatusTone } from "@/components/ui/status-pill";
 
@@ -339,7 +340,7 @@ export default function HiringAutomationPage() {
     let parsed: Record<string, unknown>[];
     try {
       const res = await withMinDelay(
-        fetch(`${API_URL}/api/v1/hiring/parse-resumes`, { method: "POST", body: formData }),
+        fetch(`${API_URL}/api/v1/hiring/parse-resumes`, { method: "POST", headers: getAuthHeaders(), body: formData }),
         1200
       );
       if (myRun !== runId.current) return;
@@ -381,7 +382,7 @@ export default function HiringAutomationPage() {
       const matchRes = await withMinDelay(
         fetch(`${API_URL}/api/v1/hiring/match`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", ...getAuthHeaders() },
           body: JSON.stringify({
             candidates: candidates.map((c) => ({
               id: c.id, name: c.name, experience: c.experience, skills: c.skills, summary: c.summary, ats_score: c.ats,
@@ -427,7 +428,7 @@ export default function HiringAutomationPage() {
       const asgRes = await withMinDelay(
         fetch(`${API_URL}/api/v1/hiring/assignment`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", ...getAuthHeaders() },
           body: JSON.stringify({ requirement, role_title: "the open role" }),
         }),
         600
@@ -511,7 +512,7 @@ export default function HiringAutomationPage() {
       try {
         const res = await fetch(`${API_URL}/api/v1/orchestrator/candidates/schedule`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", ...getAuthHeaders() },
           body: JSON.stringify({
             candidate_id: candidate.id,
             candidate_name: candidate.name,

@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import { motion } from "framer-motion";
+import { getAuthHeaders } from "@/lib/auth";
 import {
   Mic,
   MicOff,
@@ -28,7 +29,13 @@ const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001").rep
  * (api/command_center.py) and never compares the password itself; the
  * backend holds the only copy of the bcrypt hash. Mirrors the voice tab's
  * stateless unlock semantics: on success it just calls onAuthenticated,
- * no token/session is created or persisted. */
+ * no token/session is created or persisted.
+ *
+ * There used to be a client-side `acceptedDemoPasswords` list here that
+ * matched before (and on network failure, instead of) the real backend
+ * check — a hardcoded password bypass shipped straight into the JS bundle.
+ * Removed: the real bcrypt check below is now the only path to
+ * onAuthenticated, no exceptions. */
 function PasswordUnlockPanel({ onAuthenticated }: { onAuthenticated: (name: string) => void }) {
   const [password, setPassword] = useState("");
   const [status, setStatus] = useState<"idle" | "checking" | "success" | "error">("idle");
@@ -40,23 +47,12 @@ function PasswordUnlockPanel({ onAuthenticated }: { onAuthenticated: (name: stri
     setStatus("checking");
     setErrorMessage("");
 
-    const acceptedDemoPasswords = ["admin123", "admin", "fin.ai", "ayush", "password", "123456", "ayushsingh", "ayush_singh"];
-    if (acceptedDemoPasswords.includes(trimmed.toLowerCase())) {
-      setStatus("success");
-      onAuthenticated("Ayush Singh");
-      return;
-    }
-
     try {
-      const timeoutController = new AbortController();
-      const timeoutId = setTimeout(() => timeoutController.abort(), 1200);
-
       const res = await fetch(`${API_URL}/api/v1/command-center/unlock`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({ password: trimmed }),
-        signal: timeoutController.signal,
-      }).finally(() => clearTimeout(timeoutId));
+      });
 
       const data = await res.json().catch(() => ({}));
       if (res.ok && data.unlocked) {
@@ -64,15 +60,10 @@ function PasswordUnlockPanel({ onAuthenticated }: { onAuthenticated: (name: stri
         onAuthenticated("Ayush Singh");
         return;
       }
-      setErrorMessage(data.detail || "Incorrect password. Use: admin123");
+      setErrorMessage(data.detail || "Incorrect password.");
       setStatus("error");
     } catch {
-      if (acceptedDemoPasswords.includes(trimmed.toLowerCase())) {
-        setStatus("success");
-        onAuthenticated("Ayush Singh");
-        return;
-      }
-      setErrorMessage("Incorrect password. Use default: admin123");
+      setErrorMessage("Couldn't reach the server to verify the password. Check your connection and try again.");
       setStatus("error");
     }
   };
@@ -90,9 +81,6 @@ function PasswordUnlockPanel({ onAuthenticated }: { onAuthenticated: (name: stri
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
         <div style={{ fontSize: 11, color: "#71717a", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>
           Enter Command Center password
-        </div>
-        <div style={{ fontSize: 11, color: "#a1a1aa", fontFamily: "var(--font-geist-mono), monospace" }}>
-          Default: <span style={{ color: "#38bdf8", fontWeight: 600 }}>admin123</span>
         </div>
       </div>
       <div style={{ display: "flex", gap: 8 }}>
@@ -263,6 +251,7 @@ export function VoiceGateModal({ isOpen, onAuthenticated }: Props) {
 
       const res = await fetch(`${API_URL}/api/v1/voice/verify`, {
         method: "POST",
+        headers: getAuthHeaders(),
         body: formData,
       });
 

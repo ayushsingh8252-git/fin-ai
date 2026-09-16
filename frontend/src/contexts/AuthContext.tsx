@@ -19,10 +19,12 @@ import {
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 export const GOOGLE_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || "";
 
-// Single kill switch for the whole login feature — flip back to true to
-// re-enable the sign-in popup and header bar with no other code changes.
-// Nothing else in the auth code path is removed while this is off.
-export const AUTH_GATE_ENABLED = false;
+// Single kill switch for the whole login feature. Was off while login only
+// upserted a DB row with no real session; now that /auth/google issues a
+// real JWT enforced by the backend on every protected route, leaving this
+// off would mean the frontend UI wall doesn't match backend reality — a
+// signed-out visitor would see 401s instead of the sign-in prompt.
+export const AUTH_GATE_ENABLED = true;
 
 const GSI_SCRIPT_SRC = "https://accounts.google.com/gsi/client";
 
@@ -71,11 +73,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const notConfigured = !GOOGLE_CLIENT_ID;
   const initializedRef = useRef(false);
 
-  const applySession = useCallback((nextUser: AuthUser, nextCount: number) => {
+  const applySession = useCallback((nextUser: AuthUser, nextCount: number, accessToken: string) => {
     setUser(nextUser);
     setUniqueUserCount(nextCount);
     setStatus("signed-in");
-    saveStoredSession({ user: nextUser, uniqueUserCount: nextCount });
+    saveStoredSession({ user: nextUser, uniqueUserCount: nextCount, accessToken });
   }, []);
 
   const handleCredentialResponse = useCallback(
@@ -93,7 +95,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           throw new Error(body?.detail || `Sign-in failed (${res.status})`);
         }
         const data = await res.json();
-        applySession(data.user, data.unique_user_count);
+        applySession(data.user, data.unique_user_count, data.access_token);
       } catch (err) {
         console.error("Google sign-in failed", err);
         setStatus("signed-out");

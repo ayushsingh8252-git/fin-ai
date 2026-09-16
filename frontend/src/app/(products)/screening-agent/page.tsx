@@ -31,6 +31,7 @@ import {
   CalendarClock, Mail, Loader2,
 } from "lucide-react";
 import { askAssistant } from "@/components/ai-assistant/AIAssistantWidget";
+import { getAuthHeaders } from "@/lib/auth";
 import InterviewRoom from "./_components/InterviewRoom";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -145,7 +146,7 @@ function ScheduledInterviewsSection() {
     let cancelled = false;
     const fetchScheduled = async () => {
       try {
-        const res = await fetch(`${API_URL}/api/v1/orchestrator/candidates`);
+        const res = await fetch(`${API_URL}/api/v1/orchestrator/candidates`, { headers: getAuthHeaders() });
         if (!res.ok) return;
         const data = await res.json();
         if (!cancelled) setCandidates(data.candidates || []);

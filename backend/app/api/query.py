@@ -1,7 +1,8 @@
 import time
 from contextlib import ExitStack
 from pydantic import BaseModel, Field
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request
+from ..rate_limit import limiter
 from ..services.retrieval import retrieve_rules_and_chunks_parallel
 from ..services.reasoning import generate_answer_with_fallback
 from ..services.cache import get_cached_query, set_cached_query
@@ -34,7 +35,8 @@ class QueryRequest(BaseModel):
     request_id: str | None = Field(default=None, max_length=100)
 
 @router.post("/query")
-def process_query(request: QueryRequest, identity: LLMOpsIdentity = Depends(get_llmops_identity)):
+@limiter.limit("20/minute")
+def process_query(http_request: Request, request: QueryRequest, identity: LLMOpsIdentity = Depends(get_llmops_identity)):
     # Plain `def`, not `async def` — this function's body is entirely
     # synchronous (embedding model, Pinecone/HTTP calls, LLM calls), and
     # declaring it `async def` with no `await` inside pins the single event

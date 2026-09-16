@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { StatusPill, type StatusTone } from "@/components/ui/status-pill";
 import { getLlmopsHeaders } from "@/lib/llmopsIdentity";
+import { getAuthHeaders } from "@/lib/auth";
 import FeedbackButtons from "@/components/FeedbackButtons";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -343,7 +344,7 @@ function RealCallSection() {
     if (pollRef.current) clearInterval(pollRef.current);
     const tick = async () => {
       try {
-        const res = await fetch(`${API_URL}/api/v1/telephonic/calls/${id}`);
+        const res = await fetch(`${API_URL}/api/v1/telephonic/calls/${id}`, { headers: getAuthHeaders() });
         if (!res.ok) return;
         const data: CallRecordState = await res.json();
         setCall(data);
@@ -377,13 +378,13 @@ function RealCallSection() {
         if (jobRequirement.trim()) form.append("job_requirement", jobRequirement.trim());
         res = await fetch(`${API_URL}/api/v1/telephonic/call-with-resume`, {
           method: "POST",
-          headers: getLlmopsHeaders(),
+          headers: { ...getLlmopsHeaders(), ...getAuthHeaders() },
           body: form,
         });
       } else {
         res = await fetch(`${API_URL}/api/v1/telephonic/call`, {
           method: "POST",
-          headers: { "Content-Type": "application/json", ...getLlmopsHeaders() },
+          headers: { "Content-Type": "application/json", ...getLlmopsHeaders(), ...getAuthHeaders() },
           body: JSON.stringify({
             to: toNumber.trim(),
             candidate_name: candidateName.trim() || "there",
@@ -634,7 +635,7 @@ function useScheduledCandidates(pollMs = 8000) {
     let cancelled = false;
     const fetchScheduled = async () => {
       try {
-        const res = await fetch(`${API_URL}/api/v1/orchestrator/candidates`);
+        const res = await fetch(`${API_URL}/api/v1/orchestrator/candidates`, { headers: getAuthHeaders() });
         if (!res.ok) return;
         const data = await res.json();
         if (!cancelled) setCandidates(data.candidates || []);

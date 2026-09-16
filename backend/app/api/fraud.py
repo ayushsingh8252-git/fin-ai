@@ -6,11 +6,15 @@ import fitz
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
+from .. import models
+from .deps import get_current_user, get_current_user_query
 from ..database import get_db
 from ..models import FraudScan
+from ..rate_limit import limiter
 from ..services.fraud_orchestrator import run_scan
 from ..services.llmops import llmops_context
 from ..services.llmops_identity import LLMOpsIdentity, get_llmops_identity
+from ..services.upload_safety import safe_filename, enforce_upload_size
 
 router = APIRouter(prefix="/fraud", tags=["fraud"])
 
@@ -34,18 +38,19 @@ def _render_pdf_preview(file_path: str, out_path: str) -> bool:
 
 
 @router.post("/upload")
-async def upload_fraud_document(file: UploadFile = File(...), db: Session = Depends(get_db)):
+async def upload_fraud_document(file: UploadFile = File(...), db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
     ext = os.path.splitext(file.filename)[1].lower() if file.filename else ""
     if ext not in EXT_CONTENT_TYPE:
         raise HTTPException(status_code=400, detail=f"Unsupported file type. Allowed: {', '.join(EXT_CONTENT_TYPE)}")
 
     scan_id = str(uuid.uuid4())
-    saved_name = f"{scan_id}_{file.filename}"
+    saved_name = f"{scan_id}_{safe_filename(file.filename)}"
     file_path = os.path.join(UPLOAD_DIR, saved_name)
 
     content = await file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+    enforce_upload_size(content)
     with open(file_path, "wb") as f:
         f.write(content)
 
@@ -79,11 +84,13 @@ async def upload_fraud_document(file: UploadFile = File(...), db: Session = Depe
 
 
 @router.get("/scan/{scan_id}/stream")
+@limiter.limit("10/minute")
 async def stream_scan(
     scan_id: str,
     request: Request,
     identity: LLMOpsIdentity = Depends(get_llmops_identity),
     db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user_query),
 ):
     scan = db.query(FraudScan).filter(FraudScan.id == scan_id).first()
     if not scan:
@@ -136,7 +143,7 @@ async def stream_scan(
 
 
 @router.get("/scan/{scan_id}")
-def get_scan(scan_id: str, db: Session = Depends(get_db)):
+def get_scan(scan_id: str, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
     scan = db.query(FraudScan).filter(FraudScan.id == scan_id).first()
     if not scan:
         raise HTTPException(status_code=404, detail="Scan not found.")
@@ -150,7 +157,7 @@ def get_scan(scan_id: str, db: Session = Depends(get_db)):
 
 
 @router.post("/bundle")
-def triangulate_bundle(payload: dict, db: Session = Depends(get_db)):
+def triangulate_bundle(payload: dict, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
     """
     Cross-triangulates a bundle of completed document scans.
     Payload: {"scan_ids": ["scan_id_1", "scan_id_2", ...]}

@@ -16,6 +16,8 @@ from ..services.llmops import llmops_context, trace_id_for
 from ..services.llmops_identity import LLMOpsIdentity, get_llmops_identity
 from ..services.telephonic_service import generate_call_evaluation, generate_call_turn
 from ..services.guardrails import check_output
+from ..services.upload_safety import safe_filename, enforce_upload_size
+from ..rate_limit import limiter
 
 router = APIRouter(prefix="/telephonic", tags=["telephonic"])
 
@@ -189,7 +191,9 @@ def _autofill_sarvam_variables(payload: PlaceCallRequest, db: Session) -> Dict[s
 
 
 @router.post("/call")
+@limiter.limit("10/minute")
 def place_call(
+    request: Request,
     payload: PlaceCallRequest,
     identity: LLMOpsIdentity = Depends(get_llmops_identity),
     db: Session = Depends(get_db),
@@ -199,7 +203,9 @@ def place_call(
 
 
 @router.post("/call-with-resume")
+@limiter.limit("10/minute")
 async def call_with_resume(
+    request: Request,
     file: UploadFile = File(...),
     to: str = Form(...),
     candidate_name: Optional[str] = Form(None),
@@ -221,9 +227,10 @@ async def call_with_resume(
     content = await file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+    enforce_upload_size(content)
 
     cand_id = str(uuid.uuid4())
-    file_path = os.path.join(RESUME_UPLOAD_DIR, f"{cand_id}_{file.filename}")
+    file_path = os.path.join(RESUME_UPLOAD_DIR, f"{cand_id}_{safe_filename(file.filename)}")
     with open(file_path, "wb") as f:
         f.write(content)
     try:

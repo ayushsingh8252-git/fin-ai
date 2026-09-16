@@ -38,3 +38,5 @@ pyzbar
 bcrypt
 speechbrain
 torchaudio
+PyJWT
+slowapi

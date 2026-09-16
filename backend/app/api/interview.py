@@ -2,7 +2,7 @@ import uuid
 from contextlib import ExitStack
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -10,11 +10,20 @@ from sqlalchemy.orm import Session
 from .. import models
 from ..database import get_db
 from ..memory import orchestrator
+from ..rate_limit import limiter
 from ..services.interview_service import generate_evaluation, generate_next_turn
 from ..services.guardrails import check_input, check_output
 from ..services.llmops import llmops_context
 from ..services.llmops_identity import LLMOpsIdentity, get_llmops_identity
 
+# NOT covered by main.py's blanket per-router auth guard, and deliberately
+# so: every route here is reached either by a candidate taking an interview
+# from an emailed invite link (turn, evaluate, report, the WS route) — who
+# was never a signed-in platform user and must not be forced to become
+# one — or, for the WS route specifically, by a browser that couldn't send
+# an Authorization header on the handshake even if we wanted it to. The long
+# random session_id already in play on every one of these calls is the
+# access control, same model as screening.router's candidate-facing routes.
 router = APIRouter()
 
 
@@ -96,7 +105,8 @@ def _serialize_interview_report(result: models.ScreeningResult) -> dict:
 
 
 @router.post("/interview/turn")
-async def interview_turn(request: InterviewTurnRequest):
+@limiter.limit("30/minute")
+async def interview_turn(http_request: Request, request: InterviewTurnRequest):
     """
     Given the conversation so far, returns the AI interviewer's next line
     (or a closing line + is_final=true once max_turns is reached).
@@ -120,7 +130,9 @@ async def interview_turn(request: InterviewTurnRequest):
 
 
 @router.post("/interview/evaluate")
+@limiter.limit("15/minute")
 async def interview_evaluate(
+    http_request: Request,
     request: InterviewEvaluationRequest,
     identity: LLMOpsIdentity = Depends(get_llmops_identity),
     db: Session = Depends(get_db),
@@ -252,6 +264,9 @@ async def interview_websocket_endpoint(websocket: WebSocket, session_id: str):
     - Pre-streamed neural TTS audio
     - Immediate barge-in / speech cancellation acknowledgment
     - Live proctoring telemetry frame streaming
+
+    Deliberately open (no auth) — a candidate on an invite link was never a
+    signed-in platform user, and the session_id itself is the access control.
     """
     await websocket.accept()
     try:

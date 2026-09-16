@@ -7,6 +7,7 @@ from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 
 from .. import models
+from .deps import get_current_user
 from ..config import settings
 from ..database import get_db
 from ..memory import global_memory, orchestrator
@@ -19,6 +20,13 @@ from ..services.screening_service import (
 from ..services.llmops import llmops_context
 from ..services.llmops_identity import LLMOpsIdentity, get_llmops_identity
 
+# Not blanket-protected in main.py — this router mixes platform-user routes
+# (invite_candidate, screen_from_call, get_latest_screening_result_for_call:
+# require Depends(get_current_user) individually below) with candidate-facing
+# routes reached via an emailed invite link (start_screening, get_session,
+# record_proctor_telemetry), where the long random session_id IS the access
+# control — a candidate taking this interview was never a signed-in platform
+# user and must not be forced to become one just to open their interview link.
 router = APIRouter(prefix="/screening", tags=["screening"])
 
 
@@ -75,7 +83,7 @@ class InviteResponse(BaseModel):
 
 
 @router.post("/invite", response_model=InviteResponse)
-def invite_candidate(payload: InviteRequest, db: Session = Depends(get_db)):
+def invite_candidate(payload: InviteRequest, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
     if not payload.role_title.strip():
         raise HTTPException(status_code=400, detail="Role title is required.")
 
@@ -114,6 +122,7 @@ def screen_from_call(
     jd_text: Optional[str] = Form(None),
     identity: LLMOpsIdentity = Depends(get_llmops_identity),
     db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user),
 ):
     """Screening Agent step of Candidate -> Telephonic Agent -> Conversation
     -> Response Storage -> Screening Agent -> Screening Result: runs a
@@ -155,7 +164,7 @@ def screen_from_call(
 
 
 @router.get("/result/by-call/{call_id}")
-def get_latest_screening_result_for_call(call_id: str, db: Session = Depends(get_db)):
+def get_latest_screening_result_for_call(call_id: str, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
     """Most recent Screening Result for a given Telephonic Agent call, if one has been run."""
     result = (
         db.query(models.ScreeningResult)

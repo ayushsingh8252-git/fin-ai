@@ -9,17 +9,21 @@ pre-existing MCP connectors together instead of only the latter.
   POST /agent/plan                                — prompt -> plan (no execution)
   POST /agent/run                                 — prompt -> plan -> executed, in one call
 
-No auth on these routes, matching every other route in this backend today —
-see the platform audit's explicit call-out that this is a real, currently-
-accepted gap, not an oversight specific to this file.
+Auth: gated at the router-registration level (main.py's `_auth_guard`, backed
+by api/deps.py::get_current_user) — every route here requires a valid signed-
+in session. This used to be a real, explicitly-accepted no-auth gap (this
+docstring said so); it no longer is, and this is exactly the API surface the
+Command Center's client-side password gate was supposed to protect but
+structurally couldn't, since it never actually guarded this router.
 """
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from ..agent_tools import planner, registry
 from ..agent_tools.registry import MCPToolError
+from ..rate_limit import limiter
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 
@@ -42,14 +46,16 @@ class PromptRequest(BaseModel):
 
 
 @router.post("/plan")
-def create_plan(payload: PromptRequest):
+@limiter.limit("10/minute")
+def create_plan(request: Request, payload: PromptRequest):
     if not payload.prompt.strip():
         raise HTTPException(status_code=400, detail="`prompt` cannot be empty.")
     return planner.build_plan(payload.prompt)
 
 
 @router.post("/run")
-def run_prompt(payload: PromptRequest):
+@limiter.limit("10/minute")
+def run_prompt(request: Request, payload: PromptRequest):
     if not payload.prompt.strip():
         raise HTTPException(status_code=400, detail="`prompt` cannot be empty.")
     return planner.plan_and_run(payload.prompt)

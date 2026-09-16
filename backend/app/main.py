@@ -1,11 +1,16 @@
 import asyncio
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 import os
 from .config import settings
 from .api import upload, query, rules, audio, fraud, interview, auth, telephonic, hiring, screening, orchestrator, mcp, observability, google_oauth, agent, whatsapp, voice, command_center, outcomes, feedback, evals
+from .api.deps import get_current_user
 from .database import engine
+from .rate_limit import limiter
 from . import models
 
 from contextlib import asynccontextmanager
@@ -160,6 +165,10 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
+
 cors_origins = [o.strip() for o in settings.CORS_ORIGINS.split(",") if o.strip()]
 
 # Every Vercel deployment (production and each PR/branch preview) gets its own
@@ -189,25 +198,54 @@ else:
         allow_headers=["*"],
     )
 
-app.include_router(upload.router, prefix="/api/v1")
+# Auth guard (api/deps.py::get_current_user) is applied per-router here
+# rather than per-route, so most routers need only this one line. Left OPEN
+# by deliberate scope decision (see docs/client-readiness-audit-2026-09-16.md):
+# auth.router (this is how a token is obtained), google_oauth.router/
+# whatsapp.router (external callback/webhook, not a user session), and
+# query.router/audio.router (the public marketing-page chat widget —
+# AIAssistantWidget.tsx, mounted site-wide in layout.tsx — calls /query and
+# /transcribe unauthenticated; forcing sign-in there would break that public
+# feature). Both stay rate-limited (see the routers themselves) since they're
+# reachable by anonymous traffic. interview.router and fraud.router are each
+# handled specially inside their own files instead of via this blanket
+# dependency, because both have one route that can't use a header-based
+# Authorization check: interview.py's WebSocket route (browsers can't set
+# custom headers on a WS handshake) and fraud.py's SSE scan-progress stream
+# (browsers' EventSource API can't set custom headers on ANY request, not
+# just the handshake) — both instead read the JWT from a `?token=` query
+# param (api/deps.py::get_current_user_query), except interview.py's
+# candidate-facing routes, which intentionally stay open — see below.
+#
+# screening.router is ALSO handled per-route rather than blanket-protected:
+# it's a mix of platform-user routes (HR sending an invite, viewing a result)
+# and candidate-facing routes reached via an invite link, where the candidate
+# has no platform account at all. For those, the long random session_id in
+# the URL — not a login — is the access control, same model as
+# interview.router's /turn, /evaluate, /report/{id} and its WS route (a
+# candidate taking an interview from an emailed link was never a signed-in
+# platform user and must not be forced to become one).
+_auth_guard = [Depends(get_current_user)]
+
+app.include_router(upload.router, prefix="/api/v1", dependencies=_auth_guard)
 app.include_router(query.router, prefix="/api/v1")
-app.include_router(rules.router, prefix="/api/v1")
+app.include_router(rules.router, prefix="/api/v1", dependencies=_auth_guard)
 app.include_router(audio.router, prefix="/api/v1")
 app.include_router(fraud.router, prefix="/api/v1")
 app.include_router(interview.router, prefix="/api/v1")
 app.include_router(auth.router, prefix="/api/v1")
-app.include_router(telephonic.router, prefix="/api/v1")
-app.include_router(hiring.router, prefix="/api/v1")
+app.include_router(telephonic.router, prefix="/api/v1", dependencies=_auth_guard)
+app.include_router(hiring.router, prefix="/api/v1", dependencies=_auth_guard)
 app.include_router(screening.router, prefix="/api/v1")
-app.include_router(orchestrator.router, prefix="/api/v1")
-app.include_router(mcp.router, prefix="/api/v1")
-app.include_router(observability.router, prefix="/api/v1")
-app.include_router(outcomes.router, prefix="/api/v1")
-app.include_router(feedback.router, prefix="/api/v1")
-app.include_router(evals.router, prefix="/api/v1")
-app.include_router(agent.router, prefix="/api/v1")
-app.include_router(voice.router, prefix="/api/v1")
-app.include_router(command_center.router, prefix="/api/v1")
+app.include_router(orchestrator.router, prefix="/api/v1", dependencies=_auth_guard)
+app.include_router(mcp.router, prefix="/api/v1", dependencies=_auth_guard)
+app.include_router(observability.router, prefix="/api/v1", dependencies=_auth_guard)
+app.include_router(outcomes.router, prefix="/api/v1", dependencies=_auth_guard)
+app.include_router(feedback.router, prefix="/api/v1", dependencies=_auth_guard)
+app.include_router(evals.router, prefix="/api/v1", dependencies=_auth_guard)
+app.include_router(agent.router, prefix="/api/v1", dependencies=_auth_guard)
+app.include_router(voice.router, prefix="/api/v1", dependencies=_auth_guard)
+app.include_router(command_center.router, prefix="/api/v1", dependencies=_auth_guard)
 
 # Mounted at the root (not /api/v1) so the callback path matches
 # GOOGLE_AUTH_REDIRECT_URL in .env exactly: /auth/google/callback.
@@ -217,9 +255,21 @@ app.include_router(google_oauth.router)
 # Meta App Dashboard's webhook config: /webhooks/whatsapp (not /api/v1/...).
 app.include_router(whatsapp.router)
 
-# Mount uploads directory for static file serving
-os.makedirs("uploads", exist_ok=True)
-app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+UPLOADS_ROOT = os.path.abspath("uploads")
+os.makedirs(UPLOADS_ROOT, exist_ok=True)
+
+
+@app.get("/uploads/{file_path:path}")
+def get_uploaded_file(file_path: str, user: models.User = Depends(get_current_user)):
+    """Replaces a raw StaticFiles mount (which served every uploaded resume/
+    scan to anyone with the URL, no auth at all) with a gated route. Also
+    closes a read-side path-traversal risk symmetrically with the write-side
+    filename sanitization in services/upload_safety.py: the resolved path
+    must still land inside UPLOADS_ROOT after normalization."""
+    candidate = os.path.abspath(os.path.join(UPLOADS_ROOT, file_path))
+    if os.path.commonpath([candidate, UPLOADS_ROOT]) != UPLOADS_ROOT or not os.path.isfile(candidate):
+        raise HTTPException(status_code=404, detail="File not found.")
+    return FileResponse(candidate)
 
 
 

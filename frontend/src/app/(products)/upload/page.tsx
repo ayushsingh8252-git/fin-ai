@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
+import { getAuthHeaders } from "@/lib/auth";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -85,6 +86,7 @@ export default function UploadPage() {
       try {
         const response = await fetch(`${API_URL}/api/v1/upload`, {
           method: "POST",
+          headers: getAuthHeaders(),
           body: formData,
         });
         

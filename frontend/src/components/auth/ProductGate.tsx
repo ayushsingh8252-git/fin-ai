@@ -9,14 +9,17 @@ import GoogleSignInButton from "./GoogleSignInButton";
  * has signed in with Google. Presented as a popup dialog (dim backdrop, card
  * pops in) rather than a plain page, and is the single place sign-in lives —
  * the site header carries no sign-in control of its own.
- * Gating is currently switched off via AUTH_GATE_ENABLED (see AuthContext). */
-import { usePathname } from "next/navigation";
-
+ *
+ * Command Center used to carve itself out of this gate entirely (it had its
+ * own separate password modal instead). That carve-out is removed: Command
+ * Center calls real, now-backend-authenticated agent-tool APIs like every
+ * other product, so it needs the same real sign-in wall as everything else —
+ * its password modal is a second factor on top of this, not a replacement
+ * for it. */
 export default function ProductGate({ children }: { children: React.ReactNode }) {
-  const pathname = usePathname();
   const { status, uniqueUserCount, errorMessage, notConfigured } = useAuth();
 
-  if (!AUTH_GATE_ENABLED || status === "signed-in" || pathname?.startsWith("/command-center")) return <>{children}</>;
+  if (!AUTH_GATE_ENABLED || status === "signed-in") return <>{children}</>;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-zinc-950 via-zinc-900 to-blue-950 flex items-center justify-center px-6 py-20">

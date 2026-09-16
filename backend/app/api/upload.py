@@ -10,6 +10,7 @@ from ..models import Document, Chunk, Rule
 from ..worker import process_document_task, process_url_task
 from ..services.canonicalization import delete_vectors_by_ids
 from ..services.cache import flush_query_cache
+from ..services.upload_safety import safe_filename, MAX_UPLOAD_BYTES
 
 router = APIRouter()
 UPLOAD_DIR = "uploads"
@@ -38,11 +39,18 @@ async def upload_documents(files: List[UploadFile] = File(...), db: Session = De
             results.append({"filename": file.filename, "status": "failed", "reason": f"Unsupported file type. Allowed: {', '.join(ALLOWED_EXTENSIONS)}"})
             continue
             
+        content = await file.read()
+        if len(content) > MAX_UPLOAD_BYTES:
+            results.append({
+                "filename": file.filename, "status": "failed",
+                "reason": f"File exceeds the {MAX_UPLOAD_BYTES // (1024 * 1024)}MB upload limit.",
+            })
+            continue
+
         doc_id = str(uuid.uuid4())
-        file_path = os.path.join(UPLOAD_DIR, f"{doc_id}_{file.filename}")
+        file_path = os.path.join(UPLOAD_DIR, f"{doc_id}_{safe_filename(file.filename)}")
 
         with open(file_path, "wb") as f:
-            content = await file.read()
             f.write(content)
 
         # Create DB record. Status starts "uploaded" (file saved, not yet

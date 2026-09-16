@@ -10,6 +10,7 @@ from ..services.hiring_service import (
     match_candidate_to_requirement,
     parse_resume_pdf,
 )
+from ..services.upload_safety import safe_filename, MAX_UPLOAD_BYTES
 
 router = APIRouter(prefix="/hiring", tags=["hiring"])
 
@@ -37,9 +38,15 @@ async def parse_resumes(files: List[UploadFile] = File(...)):
         if not content:
             candidates.append({"filename": file.filename, "status": "failed", "reason": "File is empty."})
             continue
+        if len(content) > MAX_UPLOAD_BYTES:
+            candidates.append({
+                "filename": file.filename, "status": "failed",
+                "reason": f"File exceeds the {MAX_UPLOAD_BYTES // (1024 * 1024)}MB upload limit.",
+            })
+            continue
 
         cand_id = str(uuid.uuid4())
-        file_path = os.path.join(UPLOAD_DIR, f"{cand_id}_{file.filename}")
+        file_path = os.path.join(UPLOAD_DIR, f"{cand_id}_{safe_filename(file.filename)}")
         with open(file_path, "wb") as f:
             f.write(content)
 
