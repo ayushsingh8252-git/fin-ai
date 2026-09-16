@@ -18,6 +18,8 @@ import dynamic from "next/dynamic";
 import ChatMarkdown from "@/components/ChatMarkdown";
 import AgentLatencyAnimation from "@/components/ai-assistant/AgentLatencyAnimation";
 import RagExecutionTrace, { type LiveTraceSnapshot } from "@/components/ai-assistant/RagExecutionTrace";
+import { getLlmopsHeaders } from "@/lib/llmopsIdentity";
+import FeedbackButtons from "@/components/FeedbackButtons";
 
 function liveTraceNeedsRefresh(snapshot: LiveTraceSnapshot | null): boolean {
   return snapshot === null || snapshot.status === "running";
@@ -1198,7 +1200,7 @@ export default function RAGPage() {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
       const res = await fetch(`${apiUrl}/api/v1/query`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...getLlmopsHeaders() },
         body: JSON.stringify({
           query: userQuery,
           top_k: 5,
@@ -1668,6 +1670,10 @@ export default function RAGPage() {
                               )
                             )}
                           </div>
+                        )}
+
+                        {msg.role === "assistant" && !msg.isError && msg.requestId && (
+                          <FeedbackButtons workflowType="rag" subjectId={msg.requestId} />
                         )}
                       </div>
                     </motion.div>

@@ -294,6 +294,47 @@ class LLMCostRecord(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
 
 
+class FeedbackEvent(Base):
+    """One row per human thumbs up/down on a specific LLM-produced result
+    (RAG answer, fraud scan, interview/screening report, telephonic call
+    evaluation). `subject_id` is that result's own id — request_id / scan_id
+    / report_id / session_id / call_id — the exact same value `trace_id_for()`
+    (services/llmops.py) hashes to derive the Langfuse trace this feedback is
+    also pushed to as a score, so a vote here and the underlying trace always
+    resolve to the same Langfuse record without a separate id mapping table."""
+
+    __tablename__ = "feedback_events"
+
+    id = Column(String, primary_key=True, index=True)
+    workflow_type = Column(String, nullable=False, index=True)  # "rag" | "fraud" | "interview" | "screening" | "telephonic"
+    subject_id = Column(String, nullable=False, index=True)
+    langfuse_trace_id = Column(String, nullable=True, index=True)
+    rating = Column(String, nullable=False)  # "up" | "down"
+    comment = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+
+class OnlineEvalResult(Base):
+    """One row per automated check run against a sampled *live* trace (see
+    services/online_eval.py) — distinct from scripts/evaluate_rag.py's
+    offline fixed-question-set evaluation. Also pushed to Langfuse as a score
+    on the same trace when Langfuse is configured; kept here too so there's a
+    pass-rate dashboard (GET /api/v1/evals/online/summary) even without
+    opening Langfuse, and so the job can dedupe against re-scoring the same
+    trace on overlapping lookback windows."""
+
+    __tablename__ = "online_eval_results"
+
+    id = Column(String, primary_key=True, index=True)
+    langfuse_trace_id = Column(String, nullable=False, index=True)
+    workflow_type = Column(String, nullable=False, index=True)
+    check_name = Column(String, nullable=False, index=True)  # "has_output" | "no_error" | "latency_ok" | "groundedness_judge"
+    passed = Column(String, nullable=False)  # "true" | "false" — SQLite has no native bool
+    score = Column(Float, nullable=True)
+    detail = Column(JSON, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+
 class WhatsAppMessage(Base):
     """One row per WhatsApp message this platform has sent or received via the
     Meta Cloud API. Needed because Meta's API is send-only — there is no GET

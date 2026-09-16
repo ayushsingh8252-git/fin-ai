@@ -8,6 +8,8 @@ import {
   MinusCircle, Loader2, RotateCcw, X, Sparkles, ShieldCheck, Zap, Radio, FileScan,
   Fingerprint, FileSearch, Camera, ScanFace, CreditCard, IdCard, Landmark,
 } from "lucide-react";
+import { getLlmopsHeaders, getLlmopsSessionId, getLlmopsUserId } from "@/lib/llmopsIdentity";
+import FeedbackButtons from "@/components/FeedbackButtons";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const ACCEPTED_EXTENSIONS = [".pdf", ".jpg", ".jpeg", ".png"];
@@ -201,7 +203,7 @@ export default function FraudDetectionPage() {
     try {
       const fd = new FormData();
       fd.append("file", file);
-      const res = await fetch(`${API_URL}/api/v1/fraud/upload`, { method: "POST", body: fd });
+      const res = await fetch(`${API_URL}/api/v1/fraud/upload`, { method: "POST", headers: getLlmopsHeaders(), body: fd });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.detail || `Upload failed (${res.status})`);
@@ -227,7 +229,15 @@ export default function FraudDetectionPage() {
     setScanError("");
     setStage("scanning");
 
-    const es = new EventSource(`${API_URL}/api/v1/fraud/scan/${scanId}/stream`);
+    // EventSource can't set custom request headers, so identity is passed as
+    // query params here instead (backend accepts both — see
+    // services/llmops_identity.py).
+    const identityParams = new URLSearchParams();
+    const sessionId = getLlmopsSessionId();
+    const userId = getLlmopsUserId();
+    if (sessionId) identityParams.set("session_id", sessionId);
+    if (userId) identityParams.set("user_id", userId);
+    const es = new EventSource(`${API_URL}/api/v1/fraud/scan/${scanId}/stream?${identityParams.toString()}`);
     esRef.current = es;
 
     es.onmessage = (ev) => {
@@ -309,7 +319,7 @@ export default function FraudDetectionPage() {
       {stage === "done" && overall && (
         <section className="pb-6">
           <div className="max-w-4xl mx-auto px-6">
-            <ResultSummary overall={overall} onReset={reset} />
+            <ResultSummary overall={overall} onReset={reset} scanId={scanId} />
           </div>
         </section>
       )}
@@ -803,7 +813,7 @@ function StepDetailChips({ stepKey, details }: { stepKey: string; details?: Reco
    RESULTS — verdict banner + per-step marks
    ═══════════════════════════════════════════════════════════ */
 
-function ResultSummary({ overall, onReset }: { overall: Overall; onReset: () => void }) {
+function ResultSummary({ overall, onReset, scanId }: { overall: Overall; onReset: () => void; scanId?: string }) {
   const verdictStyle = VERDICT_STYLES[overall.verdict] || VERDICT_STYLES.needs_review;
 
   return (
@@ -832,6 +842,7 @@ function ResultSummary({ overall, onReset }: { overall: Overall; onReset: () => 
               ))}
             </ul>
           )}
+          <FeedbackButtons workflowType="fraud" subjectId={scanId} className="mt-4" />
         </div>
       </div>
 

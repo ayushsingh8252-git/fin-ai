@@ -12,6 +12,7 @@ import type {
 } from "./types";
 import { Toast, type ToastState } from "./Toast";
 import InterviewReport from "./InterviewReport";
+import { getLlmopsHeaders } from "@/lib/llmopsIdentity";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const INTERVIEWER_NAME = "Ayush";
@@ -362,7 +363,7 @@ export default function InterviewRoom({
           `${API_URL}/api/v1/interview/evaluate`,
           {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: { "Content-Type": "application/json", ...getLlmopsHeaders() },
             body: JSON.stringify({
               history: history.map((t) => ({ role: t.role, text: t.text })),
               role_title: roleTitle || DEFAULT_ROLE,
@@ -918,7 +919,7 @@ export default function InterviewRoom({
           </div>
         </div>
 
-        <InterviewReport evaluation={evaluation} />
+        <InterviewReport evaluation={evaluation} sessionId={sessionId} />
       </div>
     );
   }
@@ -1069,7 +1070,7 @@ export default function InterviewRoom({
             {phase === "evaluating" && <ReportGeneratingSkeleton />}
             {phase === "complete" && evaluation && (
               <div className="mt-3">
-                <InterviewReport evaluation={evaluation} />
+                <InterviewReport evaluation={evaluation} sessionId={sessionId} />
               </div>
             )}
             {phase === "complete" && screenRecordingBlob && (

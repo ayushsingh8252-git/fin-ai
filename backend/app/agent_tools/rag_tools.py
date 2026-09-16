@@ -8,6 +8,7 @@ from fastapi import HTTPException
 
 from ..api.query import QueryRequest, process_query
 from ..mcp.base import BaseMCPConnector, MCPToolError
+from ..services.llmops_identity import LLMOpsIdentity
 
 
 class RAGConnector(BaseMCPConnector):
@@ -61,7 +62,13 @@ class RAGConnector(BaseMCPConnector):
             request_id=params.get("request_id"),
         )
         try:
-            result = process_query(request)
+            # process_query is called directly here (a plain Python call, not
+            # through FastAPI), so its identity param — normally resolved by
+            # Depends(get_llmops_identity) from request headers — needs an
+            # explicit value instead. No caller-supplied identity exists at
+            # this layer, so both fields are simply None (llmops_context()
+            # treats that as "nothing to tag", not an error).
+            result = process_query(request, identity=LLMOpsIdentity(user_id=None, session_id=None))
         except HTTPException as e:
             detail = e.detail if isinstance(e.detail, dict) else {"message": str(e.detail)}
             raise MCPToolError(

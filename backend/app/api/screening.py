@@ -16,6 +16,8 @@ from ..services.screening_service import (
     parse_resume_and_generate_questions,
     screen_call_transcript,
 )
+from ..services.llmops import llmops_context
+from ..services.llmops_identity import LLMOpsIdentity, get_llmops_identity
 
 router = APIRouter(prefix="/screening", tags=["screening"])
 
@@ -107,7 +109,12 @@ def invite_candidate(payload: InviteRequest, db: Session = Depends(get_db)):
 
 
 @router.post("/from-call/{call_id}")
-def screen_from_call(call_id: str, jd_text: Optional[str] = Form(None), db: Session = Depends(get_db)):
+def screen_from_call(
+    call_id: str,
+    jd_text: Optional[str] = Form(None),
+    identity: LLMOpsIdentity = Depends(get_llmops_identity),
+    db: Session = Depends(get_db),
+):
     """Screening Agent step of Candidate -> Telephonic Agent -> Conversation
     -> Response Storage -> Screening Agent -> Screening Result: runs a
     JD-aligned analysis over a finished Telephonic Agent call and persists
@@ -129,14 +136,15 @@ def screen_from_call(call_id: str, jd_text: Optional[str] = Form(None), db: Sess
         role = global_memory.get_role(call.role_title) if call.role_title else None
         resolved_jd_text = (role or {}).get("jd_text")
 
-    result = screen_call_transcript(
-        call_id=call.id,
-        candidate_name=call.candidate_name or "Unknown Candidate",
-        role_title=call.role_title or "the open role",
-        jd_text=resolved_jd_text,
-        transcript=call.transcript,
-        db=db,
-    )
+    with llmops_context(user_id=identity.user_id, session_id=identity.session_id, workflow_type="screening"):
+        result = screen_call_transcript(
+            call_id=call.id,
+            candidate_name=call.candidate_name or "Unknown Candidate",
+            role_title=call.role_title or "the open role",
+            jd_text=resolved_jd_text,
+            transcript=call.transcript,
+            db=db,
+        )
 
     # Enterprise Orchestration Layer: the JD-matched screening result is a
     # more meaningful "Telephonic Screening Score" than the raw call-demeanor

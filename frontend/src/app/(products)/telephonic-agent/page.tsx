@@ -11,6 +11,8 @@ import {
   Loader2, Bot, PhoneCall, AlertTriangle, PhoneOff, CalendarClock, Mail,
 } from "lucide-react";
 import { StatusPill, type StatusTone } from "@/components/ui/status-pill";
+import { getLlmopsHeaders } from "@/lib/llmopsIdentity";
+import FeedbackButtons from "@/components/FeedbackButtons";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -373,11 +375,15 @@ function RealCallSection() {
         if (candidateName.trim()) form.append("candidate_name", candidateName.trim());
         form.append("role_title", roleTitle.trim() || "the open role");
         if (jobRequirement.trim()) form.append("job_requirement", jobRequirement.trim());
-        res = await fetch(`${API_URL}/api/v1/telephonic/call-with-resume`, { method: "POST", body: form });
+        res = await fetch(`${API_URL}/api/v1/telephonic/call-with-resume`, {
+          method: "POST",
+          headers: getLlmopsHeaders(),
+          body: form,
+        });
       } else {
         res = await fetch(`${API_URL}/api/v1/telephonic/call`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", ...getLlmopsHeaders() },
           body: JSON.stringify({
             to: toNumber.trim(),
             candidate_name: candidateName.trim() || "there",
@@ -565,6 +571,8 @@ function RealCallSection() {
                     <p className="text-[12px] text-emerald-900/80 leading-relaxed">
                       Candidate demonstrated solid experience scaling FastAPI microservices, asynchronous event streams, and RAG retrieval pipelines. Recommended for next round.
                     </p>
+
+                    <FeedbackButtons workflowType="telephonic" subjectId={call.id} />
                   </div>
                 )}
 

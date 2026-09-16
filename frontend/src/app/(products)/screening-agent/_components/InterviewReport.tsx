@@ -2,6 +2,7 @@
 
 import { Award, AlertTriangle, Check, X, ShieldAlert } from "lucide-react";
 import type { EvaluationResult } from "./types";
+import FeedbackButtons from "@/components/FeedbackButtons";
 
 const RECOMMENDATION_STYLES: Record<string, { bg: string; text: string }> = {
   "Strong Hire": { bg: "bg-emerald-50 border-emerald-200", text: "text-emerald-700" },
@@ -52,7 +53,15 @@ function formatDuration(sec: number | null): string {
  * replaces the old 3-chip EvaluationCard and the fully-fake marketing
  * ReportsSection with one component fed by the actual /interview/evaluate
  * response (or a persisted GET /interview/report/{id} fetch on reload). */
-export default function InterviewReport({ evaluation }: { evaluation: EvaluationResult }) {
+export default function InterviewReport({
+  evaluation,
+  sessionId,
+}: {
+  evaluation: EvaluationResult;
+  /** Fallback subject id for feedback when this report has no persisted
+   * report_id (ad-hoc practice interviews with no invite-link session). */
+  sessionId?: string;
+}) {
   const rec = RECOMMENDATION_STYLES[evaluation.recommendation] ?? RECOMMENDATION_STYLES["Review Needed"];
   const isDegraded = evaluation.overall_score === null;
 
@@ -67,6 +76,8 @@ export default function InterviewReport({ evaluation }: { evaluation: Evaluation
           {evaluation.recommendation || "Review Needed"}
         </span>
       </div>
+
+      <FeedbackButtons workflowType="interview" subjectId={evaluation.report_id ?? sessionId} className="mb-4" />
 
       {isDegraded && (
         <div className="mb-4 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">

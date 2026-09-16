@@ -19,6 +19,7 @@ from ..api.telephonic import PlaceCallRequest, get_call, place_call
 from ..database import SessionLocal
 from ..mcp.base import BaseMCPConnector, MCPToolError
 from ..services import sarvam_service
+from ..services.llmops_identity import LLMOpsIdentity
 
 
 class TelephonicConnector(BaseMCPConnector):
@@ -94,7 +95,11 @@ class TelephonicConnector(BaseMCPConnector):
         db = SessionLocal()
         try:
             try:
-                return place_call(payload, db)
+                # place_call is called directly here (see module docstring),
+                # bypassing FastAPI's Depends resolution — pass identity
+                # explicitly by keyword (its new middle parameter would
+                # otherwise silently receive `db` positionally).
+                return place_call(payload, identity=LLMOpsIdentity(user_id=None, session_id=None), db=db)
             except HTTPException as e:
                 raise MCPToolError(str(e.detail), code="business_logic_error", status_code=e.status_code) from None
         finally:

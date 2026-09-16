@@ -38,6 +38,25 @@ class Settings(BaseSettings):
     LLM_COST_BUDGETS_JSON: str = "{}"
     LANGFUSE_PROMPT_LABEL: str = "production"
 
+    # Online evals (services/online_eval.py) — samples recent LIVE traces per
+    # workflow via the Langfuse API and scores them with cheap heuristics
+    # (plus a coarse LLM-judge groundedness check on a smaller RAG sample),
+    # distinct from scripts/evaluate_rag.py's offline fixed-question-set run.
+    # No-op unless Langfuse is configured — same "empty config = feature off"
+    # convention as the rest of this section.
+    ONLINE_EVAL_ENABLED: bool = True
+    ONLINE_EVAL_INTERVAL_SECONDS: int = 900
+    # Deliberately > interval so a slow tick never leaves a gap of
+    # unconsidered traces between runs; already-scored trace_ids are skipped
+    # via OnlineEvalResult, so the overlap is just a dedupe check, not
+    # wasted work.
+    ONLINE_EVAL_LOOKBACK_SECONDS: int = 1200
+    ONLINE_EVAL_SAMPLE_RATE: float = 0.3
+    # Applied on top of ONLINE_EVAL_SAMPLE_RATE, RAG traces only — the
+    # judge check makes a real LLM call, so it's sampled more conservatively.
+    ONLINE_EVAL_JUDGE_SAMPLE_RATE: float = 0.2
+    ONLINE_EVAL_LATENCY_THRESHOLD_MS: int = 15000
+
     # Retrieval — hybrid search (dense Pinecone/local-cosine + sparse BM25,
     # fused via Reciprocal Rank Fusion; see services/retrieval.py and
     # services/sparse_retrieval.py). Defaults on since it's additive on top

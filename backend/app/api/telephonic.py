@@ -12,7 +12,8 @@ from ..database import get_db
 from ..memory import global_memory, orchestrator
 from ..services import sarvam_service
 from ..services.hiring_service import match_candidate_to_requirement, parse_resume_pdf
-from ..services.llmops import trace_id_for
+from ..services.llmops import llmops_context, trace_id_for
+from ..services.llmops_identity import LLMOpsIdentity, get_llmops_identity
 from ..services.telephonic_service import generate_call_evaluation, generate_call_turn
 from ..services.guardrails import check_output
 
@@ -43,7 +44,14 @@ def _serialize(record: models.CallRecord) -> dict:
     }
 
 
-def _dial(to: str, candidate_name: str, role_title: str, variables: Dict[str, Any], db: Session) -> dict:
+def _dial(
+    to: str,
+    candidate_name: str,
+    role_title: str,
+    variables: Dict[str, Any],
+    db: Session,
+    identity: Optional[LLMOpsIdentity] = None,
+) -> dict:
     """Creates the CallRecord and places the outbound Sarvam call with the
     given agent_variables. Shared by /call (manually supplied or
     ScreeningResult-autofilled variables) and /call-with-resume (variables
@@ -85,7 +93,12 @@ def _dial(to: str, candidate_name: str, role_title: str, variables: Dict[str, An
 
     # Same opening line generator the agent uses turn-by-turn on other call
     # flows in this codebase, so the persona/greeting stays consistent.
-    opening = generate_call_turn([], candidate_name, role_title, MAX_TURNS, langfuse_trace_id=trace_id_for(record.id))
+    with llmops_context(
+        user_id=identity.user_id if identity else None,
+        session_id=identity.session_id if identity else None,
+        workflow_type="telephonic",
+    ):
+        opening = generate_call_turn([], candidate_name, role_title, MAX_TURNS, langfuse_trace_id=trace_id_for(record.id))
     opening_line = check_output(opening.get("question", "")).text
 
     try:
@@ -176,9 +189,13 @@ def _autofill_sarvam_variables(payload: PlaceCallRequest, db: Session) -> Dict[s
 
 
 @router.post("/call")
-def place_call(payload: PlaceCallRequest, db: Session = Depends(get_db)):
+def place_call(
+    payload: PlaceCallRequest,
+    identity: LLMOpsIdentity = Depends(get_llmops_identity),
+    db: Session = Depends(get_db),
+):
     variables = _autofill_sarvam_variables(payload, db)
-    return _dial(payload.to, payload.candidate_name, payload.role_title, variables, db)
+    return _dial(payload.to, payload.candidate_name, payload.role_title, variables, db, identity=identity)
 
 
 @router.post("/call-with-resume")
@@ -189,6 +206,7 @@ async def call_with_resume(
     role_title: str = Form("the open role"),
     job_requirement: Optional[str] = Form(None),
     gender: Optional[str] = Form(None),
+    identity: LLMOpsIdentity = Depends(get_llmops_identity),
     db: Session = Depends(get_db),
 ):
     """Places a Sarvam screening call whose agent_variables are extracted
@@ -239,7 +257,7 @@ async def call_with_resume(
     }
 
     resolved_name = (candidate_name or fields.get("name") or "there").strip() or "there"
-    result = _dial(to, resolved_name, role_title, variables, db)
+    result = _dial(to, resolved_name, role_title, variables, db, identity=identity)
     return {
         **result,
         "resume_extraction": {
@@ -383,9 +401,14 @@ async def sarvam_webhook(call_record_id: str, request: Request, db: Session = De
     if terminal and record.communication_score is None:
         current_transcript = record.transcript or []
         if any(t.get("role") == "candidate" for t in current_transcript):
-            evaluation = generate_call_evaluation(
-                current_transcript, record.role_title, langfuse_trace_id=trace_id_for(record.id)
-            )
+            # No frontend request here — Sarvam calls this webhook directly —
+            # so there's no X-User-Id/X-Session-Id to tag with, only the
+            # workflow_type tag (still enough for Phase-3 online eval to find
+            # these traces).
+            with llmops_context(workflow_type="telephonic"):
+                evaluation = generate_call_evaluation(
+                    current_transcript, record.role_title, langfuse_trace_id=trace_id_for(record.id)
+                )
             record.communication_score = evaluation.get("communication_score")
             record.relevance_score = evaluation.get("relevance_score")
             record.confidence_score = evaluation.get("confidence_score")

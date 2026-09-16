@@ -1,13 +1,35 @@
+import asyncio
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import os
 from .config import settings
-from .api import upload, query, rules, audio, fraud, interview, auth, telephonic, hiring, screening, orchestrator, mcp, observability, google_oauth, agent, whatsapp, voice, command_center, outcomes
+from .api import upload, query, rules, audio, fraud, interview, auth, telephonic, hiring, screening, orchestrator, mcp, observability, google_oauth, agent, whatsapp, voice, command_center, outcomes, feedback, evals
 from .database import engine
 from . import models
 
 from contextlib import asynccontextmanager
+
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+async def _online_eval_loop():
+    """Runs services/online_eval.py's sampling job on an interval, forever,
+    for as long as this process lives. A single bad iteration (a Langfuse API
+    hiccup, a DB blip) must never kill the loop — only a cancellation
+    (shutdown) should stop it, so every iteration's own errors are caught and
+    logged rather than left to propagate."""
+    from .services.online_eval import run_online_eval_once
+
+    while True:
+        try:
+            await asyncio.to_thread(run_online_eval_once)
+        except Exception as e:
+            logger.warning("[OnlineEval Loop] Iteration failed: %s", e)
+        await asyncio.sleep(settings.ONLINE_EVAL_INTERVAL_SECONDS)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -87,6 +109,7 @@ async def lifespan(app: FastAPI):
     #    Non-fatal either way — get_langfuse() already treats missing keys as
     #    "tracing off", and a failed auth_check just means traces silently
     #    won't show up upstream, never a reason to block startup.
+    lf = None
     try:
         from .services.llmops import get_langfuse
         lf = get_langfuse()
@@ -98,7 +121,26 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"[Lifespan Startup Warning] Langfuse init failed: {e}")
 
+    # 7. Start the online-eval background loop (services/online_eval.py) —
+    # only when Langfuse is actually reachable, since the loop's every
+    # iteration is a no-op otherwise. Single-process only: with multiple
+    # uvicorn workers this would run once per worker, sampling redundantly
+    # rather than incorrectly (dedupe in online_eval.py is per-process-safe
+    # via the shared DB), which is an acceptable gap for this app's current
+    # single-worker deployment (see docs on the missing --workers flag).
+    online_eval_task = None
+    if settings.ONLINE_EVAL_ENABLED and lf is not None:
+        online_eval_task = asyncio.create_task(_online_eval_loop())
+        print("[Lifespan Startup] Online eval background loop started.")
+
     yield
+
+    if online_eval_task is not None:
+        online_eval_task.cancel()
+        try:
+            await online_eval_task
+        except (asyncio.CancelledError, Exception):
+            pass
 
     # ── Shutdown ──
     # Flush any buffered Langfuse traces before the process exits, otherwise
@@ -161,6 +203,8 @@ app.include_router(orchestrator.router, prefix="/api/v1")
 app.include_router(mcp.router, prefix="/api/v1")
 app.include_router(observability.router, prefix="/api/v1")
 app.include_router(outcomes.router, prefix="/api/v1")
+app.include_router(feedback.router, prefix="/api/v1")
+app.include_router(evals.router, prefix="/api/v1")
 app.include_router(agent.router, prefix="/api/v1")
 app.include_router(voice.router, prefix="/api/v1")
 app.include_router(command_center.router, prefix="/api/v1")

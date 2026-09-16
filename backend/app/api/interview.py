@@ -1,4 +1,5 @@
 import uuid
+from contextlib import ExitStack
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -11,6 +12,8 @@ from ..database import get_db
 from ..memory import orchestrator
 from ..services.interview_service import generate_evaluation, generate_next_turn
 from ..services.guardrails import check_input, check_output
+from ..services.llmops import llmops_context
+from ..services.llmops_identity import LLMOpsIdentity, get_llmops_identity
 
 router = APIRouter()
 
@@ -117,13 +120,21 @@ async def interview_turn(request: InterviewTurnRequest):
 
 
 @router.post("/interview/evaluate")
-async def interview_evaluate(request: InterviewEvaluationRequest, db: Session = Depends(get_db)):
+async def interview_evaluate(
+    request: InterviewEvaluationRequest,
+    identity: LLMOpsIdentity = Depends(get_llmops_identity),
+    db: Session = Depends(get_db),
+):
     """Scores the full transcript once the interview has ended and returns a
     detailed, actionable report (sub-scores, recommendation, grounded
     strengths/gaps, matched/missing skills, a key takeaway and a concrete
     next step). When a session_id is present (invite-link interviews), the
     report is persisted so it survives a page reload and can be fetched
     again later via GET /interview/report/{session_id}."""
+    llmops_stack = ExitStack()
+    llmops_stack.enter_context(
+        llmops_context(user_id=identity.user_id, session_id=identity.session_id, workflow_type="interview")
+    )
     try:
         history = _sanitize_history([t.model_dump() for t in request.history])
         evaluation = await run_in_threadpool(
@@ -207,6 +218,8 @@ async def interview_evaluate(request: InterviewEvaluationRequest, db: Session = 
     except Exception as e:
         print(f"[Interview Evaluate API Error] {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        llmops_stack.close()
 
 
 @router.get("/interview/report/{session_id}")

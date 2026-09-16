@@ -14,9 +14,10 @@ from contextlib import contextmanager, nullcontext
 from typing import Any
 
 try:
-    from langfuse import Langfuse
+    from langfuse import Langfuse, propagate_attributes
 except ImportError:  # The app must keep serving when optional tracing is absent.
     Langfuse = None
+    propagate_attributes = None
 
 from ..config import settings
 
@@ -99,6 +100,46 @@ def new_trace_id() -> str | None:
     if get_langfuse() is None:
         return None
     return Langfuse.create_trace_id()
+
+
+_MAX_ATTR_LEN = 200
+
+
+def _clean_attr(value: str | None) -> str | None:
+    """Coerce a caller-supplied identity value to what Langfuse's
+    propagate_attributes() requires: US-ASCII, <=200 chars, non-empty."""
+    if not value:
+        return None
+    cleaned = value.encode("ascii", "ignore").decode("ascii").strip()[:_MAX_ATTR_LEN]
+    return cleaned or None
+
+
+def llmops_context(
+    *,
+    user_id: str | None = None,
+    session_id: str | None = None,
+    workflow_type: str | None = None,
+):
+    """Tags every Langfuse observation created within this `with` block —
+    including the root trace — with user_id/session_id/tags=[workflow_type].
+    Must wrap the outermost point of a request handler, before any Langfuse
+    observation for that request is created (Langfuse's own
+    propagate_attributes() only affects the active span and spans created
+    after it's entered; it can't retroactively tag earlier ones).
+
+    Fail-open like every other function here: returns nullcontext() when
+    Langfuse isn't configured, or when every field ends up empty (e.g. no
+    identity headers were sent) — safe to wrap around every request
+    unconditionally.
+    """
+    if get_langfuse() is None or propagate_attributes is None:
+        return nullcontext()
+    user_id = _clean_attr(user_id)
+    session_id = _clean_attr(session_id)
+    tags = [workflow_type] if workflow_type else None
+    if not user_id and not session_id and not tags:
+        return nullcontext()
+    return propagate_attributes(user_id=user_id, session_id=session_id, tags=tags)
 
 
 def normalize_openai_usage(usage: dict | None) -> dict[str, int] | None:

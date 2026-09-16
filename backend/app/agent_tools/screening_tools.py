@@ -17,6 +17,7 @@ from fastapi import HTTPException
 from ..api.screening import screen_from_call
 from ..database import SessionLocal
 from ..mcp.base import BaseMCPConnector, MCPToolError
+from ..services.llmops_identity import LLMOpsIdentity
 
 
 class ScreeningConnector(BaseMCPConnector):
@@ -58,7 +59,16 @@ class ScreeningConnector(BaseMCPConnector):
         db = SessionLocal()
         try:
             try:
-                result = screen_from_call(call_id, jd_text=params.get("jd_text"), db=db)
+                # Same direct-call situation as rag_tools.py — screen_from_call
+                # is invoked as a plain function here, not through FastAPI, so
+                # its identity param needs an explicit value rather than
+                # relying on Depends(get_llmops_identity) resolution.
+                result = screen_from_call(
+                    call_id,
+                    jd_text=params.get("jd_text"),
+                    identity=LLMOpsIdentity(user_id=None, session_id=None),
+                    db=db,
+                )
             except HTTPException as e:
                 raise MCPToolError(str(e.detail), code="business_logic_error", status_code=e.status_code) from None
         finally:

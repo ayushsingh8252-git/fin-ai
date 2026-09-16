@@ -1,12 +1,14 @@
 import time
+from contextlib import ExitStack
 from pydantic import BaseModel, Field
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from ..services.retrieval import retrieve_rules_and_chunks_parallel
 from ..services.reasoning import generate_answer_with_fallback
 from ..services.cache import get_cached_query, set_cached_query
 from ..services.guardrails import check_input, check_output
 from ..services.trace import new_trace, persist_trace
-from ..services.llmops import observe_operation, trace_id_for
+from ..services.llmops import observe_operation, trace_id_for, llmops_context
+from ..services.llmops_identity import LLMOpsIdentity, get_llmops_identity
 from ..services import live_status
 from ..database import SessionLocal
 from ..models import Document
@@ -32,7 +34,7 @@ class QueryRequest(BaseModel):
     request_id: str | None = Field(default=None, max_length=100)
 
 @router.post("/query")
-def process_query(request: QueryRequest):
+def process_query(request: QueryRequest, identity: LLMOpsIdentity = Depends(get_llmops_identity)):
     # Plain `def`, not `async def` — this function's body is entirely
     # synchronous (embedding model, Pinecone/HTTP calls, LLM calls), and
     # declaring it `async def` with no `await` inside pins the single event
@@ -55,6 +57,10 @@ def process_query(request: QueryRequest):
     )
     live_status.start(trace["request_id"])
     status = "ok"
+    llmops_stack = ExitStack()
+    llmops_stack.enter_context(
+        llmops_context(user_id=identity.user_id, session_id=identity.session_id, workflow_type="rag")
+    )
 
     try:
         raw_query = request.query.strip()
@@ -262,3 +268,4 @@ def process_query(request: QueryRequest):
         trace.setdefault("final", {}).setdefault("latency_ms", round((time.perf_counter() - _request_start) * 1000, 1))
         persist_trace(trace, status=status)
         live_status.finish(trace["request_id"], status, trace.get("final"))
+        llmops_stack.close()

@@ -9,6 +9,8 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models import FraudScan
 from ..services.fraud_orchestrator import run_scan
+from ..services.llmops import llmops_context
+from ..services.llmops_identity import LLMOpsIdentity, get_llmops_identity
 
 router = APIRouter(prefix="/fraud", tags=["fraud"])
 
@@ -77,7 +79,12 @@ async def upload_fraud_document(file: UploadFile = File(...), db: Session = Depe
 
 
 @router.get("/scan/{scan_id}/stream")
-async def stream_scan(scan_id: str, request: Request, db: Session = Depends(get_db)):
+async def stream_scan(
+    scan_id: str,
+    request: Request,
+    identity: LLMOpsIdentity = Depends(get_llmops_identity),
+    db: Session = Depends(get_db),
+):
     scan = db.query(FraudScan).filter(FraudScan.id == scan_id).first()
     if not scan:
         raise HTTPException(status_code=404, detail="Scan not found.")
@@ -107,7 +114,12 @@ async def stream_scan(scan_id: str, request: Request, db: Session = Depends(get_
         finally:
             await queue.put(None)
 
-    asyncio.create_task(_drive_scan())
+    # Entering llmops_context here (not inside _drive_scan) is intentional:
+    # asyncio.create_task() snapshots the current contextvars into the new
+    # task at creation time, so the tag applies for the task's whole
+    # lifetime even though this "with" block itself exits immediately.
+    with llmops_context(user_id=identity.user_id, session_id=identity.session_id, workflow_type="fraud"):
+        asyncio.create_task(_drive_scan())
 
     async def event_stream():
         while True:
