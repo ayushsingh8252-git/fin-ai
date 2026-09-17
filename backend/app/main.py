@@ -207,24 +207,24 @@ else:
 # AIAssistantWidget.tsx, mounted site-wide in layout.tsx — calls /query and
 # /transcribe unauthenticated; forcing sign-in there would break that public
 # feature). Both stay rate-limited (see the routers themselves) since they're
-# reachable by anonymous traffic. interview.router and fraud.router are each
-# handled specially inside their own files instead of via this blanket
-# dependency, because both have one route that can't use a header-based
-# Authorization check: interview.py's WebSocket route (browsers can't set
-# custom headers on a WS handshake) and fraud.py's SSE scan-progress stream
-# (browsers' EventSource API can't set custom headers on ANY request, not
-# just the handshake) — both instead read the JWT from a `?token=` query
-# param (api/deps.py::get_current_user_query), except interview.py's
-# candidate-facing routes, which intentionally stay open — see below.
+# reachable by anonymous traffic.
 #
-# screening.router is ALSO handled per-route rather than blanket-protected:
-# it's a mix of platform-user routes (HR sending an invite, viewing a result)
-# and candidate-facing routes reached via an invite link, where the candidate
-# has no platform account at all. For those, the long random session_id in
-# the URL — not a login — is the access control, same model as
-# interview.router's /turn, /evaluate, /report/{id} and its WS route (a
-# candidate taking an interview from an emailed link was never a signed-in
-# platform user and must not be forced to become one).
+# interview.router and screening.router are NOT blanket-protected either,
+# for a different reason: both mix platform-user routes (HR sending an
+# invite, viewing a result — protected individually via Depends(get_current_
+# user) inside screening.py) with candidate-facing routes reached via an
+# emailed invite link (interview turn/evaluate/report + its WS route,
+# screening start/session/proctor-telemetry). A candidate on that link was
+# never a signed-in platform user and must not be forced to become one — the
+# long random session_id already in every one of those calls is the real
+# access control there, not this dependency.
+#
+# fraud.router is handled per-route too, but purely for a header-mechanics
+# reason: its SSE scan-progress stream can't use a header-based Authorization
+# check at all (browsers' EventSource API can't set custom headers on ANY
+# request), so it reads the JWT from a `?token=` query param instead
+# (api/deps.py::get_current_user_query) while its other routes use the
+# normal header-based get_current_user directly.
 _auth_guard = [Depends(get_current_user)]
 
 app.include_router(upload.router, prefix="/api/v1", dependencies=_auth_guard)

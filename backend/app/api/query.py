@@ -36,7 +36,11 @@ class QueryRequest(BaseModel):
 
 @router.post("/query")
 @limiter.limit("20/minute")
-def process_query(http_request: Request, request: QueryRequest, identity: LLMOpsIdentity = Depends(get_llmops_identity)):
+def process_query(request: Request, payload: QueryRequest, identity: LLMOpsIdentity = Depends(get_llmops_identity)):
+    # slowapi's rate-limit decorator locates the real Starlette Request by
+    # inspecting the function signature for a parameter literally named
+    # `request` (see slowapi/extension.py) — so the request BODY below is
+    # named `payload` instead, freeing up `request` for that purpose.
     # Plain `def`, not `async def` — this function's body is entirely
     # synchronous (embedding model, Pinecone/HTTP calls, LLM calls), and
     # declaring it `async def` with no `await` inside pins the single event
@@ -54,8 +58,8 @@ def process_query(http_request: Request, request: QueryRequest, identity: LLMOps
     # new hazard.
     _request_start = time.perf_counter()
     trace = new_trace(
-        "/api/v1/query", request.query, request.document_id, request.top_k,
-        client_request_id=request.request_id,
+        "/api/v1/query", payload.query, payload.document_id, payload.top_k,
+        client_request_id=payload.request_id,
     )
     live_status.start(trace["request_id"])
     status = "ok"
@@ -65,7 +69,7 @@ def process_query(http_request: Request, request: QueryRequest, identity: LLMOps
     )
 
     try:
-        raw_query = request.query.strip()
+        raw_query = payload.query.strip()
         if not raw_query:
             raise HTTPException(status_code=400, detail="Query string cannot be empty.")
 
@@ -104,10 +108,10 @@ def process_query(http_request: Request, request: QueryRequest, identity: LLMOps
         # backend's own recorded status must gate this, not just the
         # frontend's UI state, since any API caller can hit this endpoint
         # directly.
-        if request.document_id:
+        if payload.document_id:
             db = SessionLocal()
             try:
-                doc = db.query(Document).filter(Document.id == request.document_id).first()
+                doc = db.query(Document).filter(Document.id == payload.document_id).first()
             finally:
                 db.close()
 
@@ -141,7 +145,7 @@ def process_query(http_request: Request, request: QueryRequest, identity: LLMOps
 
         # 0c. Redis Query Cache Check
         _cache_start = time.perf_counter()
-        cached_result = get_cached_query(request.document_id, raw_query, request.top_k)
+        cached_result = get_cached_query(payload.document_id, raw_query, payload.top_k)
         trace["cache"] = {
             "enabled": True,
             "hit": cached_result is not None,
@@ -180,18 +184,18 @@ def process_query(http_request: Request, request: QueryRequest, identity: LLMOps
             "rag.hybrid_retrieval",
             as_type="retriever",
             trace_id=trace_id_for(trace["request_id"]),
-            input={"query": search_query[:200], "top_k": request.top_k, "document_id": request.document_id},
+            input={"query": search_query[:200], "top_k": payload.top_k, "document_id": payload.document_id},
             metadata={"hybrid_search": True},
         ) as observation:
             retrieved_rules, retrieved_chunks = retrieve_rules_and_chunks_parallel(
-                search_query, request.top_k, request.document_id, trace=trace
+                search_query, payload.top_k, payload.document_id, trace=trace
             )
             if observation is not None:
                 observation.update(output={"rule_count": len(retrieved_rules), "chunk_count": len(retrieved_chunks)})
 
         # 4. Adaptive-Corrective Reasoning Layer (CRAG + HyDE + Step-Back + Reranking)
         answer_data = generate_answer_with_fallback(
-            search_query, retrieved_rules, retrieved_chunks, document_id=request.document_id, trace=trace
+            search_query, retrieved_rules, retrieved_chunks, document_id=payload.document_id, trace=trace
         )
 
         # 4b. Fold the adaptive pipeline's own audit trail into the request
@@ -245,7 +249,7 @@ def process_query(http_request: Request, request: QueryRequest, identity: LLMOps
             trace["guardrails"]["output"] = {"redactions": output_check.redactions}
 
         # 7. Write Result to Redis Cache
-        set_cached_query(request.document_id, raw_query, answer_data, request.top_k)
+        set_cached_query(payload.document_id, raw_query, answer_data, payload.top_k)
 
         answer_data["request_id"] = trace["request_id"]
         trace["final"] = {

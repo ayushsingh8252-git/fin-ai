@@ -106,20 +106,20 @@ def _serialize_interview_report(result: models.ScreeningResult) -> dict:
 
 @router.post("/interview/turn")
 @limiter.limit("30/minute")
-async def interview_turn(http_request: Request, request: InterviewTurnRequest):
+async def interview_turn(request: Request, payload: InterviewTurnRequest):
     """
     Given the conversation so far, returns the AI interviewer's next line
     (or a closing line + is_final=true once max_turns is reached).
     """
     try:
-        history = _sanitize_history([t.model_dump() for t in request.history])
+        history = _sanitize_history([t.model_dump() for t in payload.history])
         # generate_next_turn() makes a blocking network call to the LLM
         # provider (urllib, not httpx) — running it inline in this async def
         # would stall the whole event loop, delaying every other in-flight
         # request (other candidates' turns, transcribe, tts...) for as long
         # as the LLM call takes. run_in_threadpool moves it off the loop.
         result = await run_in_threadpool(
-            generate_next_turn, history, request.role_title, request.jd_text, request.max_turns, request.resume_context
+            generate_next_turn, history, payload.role_title, payload.jd_text, payload.max_turns, payload.resume_context
         )
         if result.get("question"):
             result["question"] = check_output(result["question"]).text
@@ -132,8 +132,8 @@ async def interview_turn(http_request: Request, request: InterviewTurnRequest):
 @router.post("/interview/evaluate")
 @limiter.limit("15/minute")
 async def interview_evaluate(
-    http_request: Request,
-    request: InterviewEvaluationRequest,
+    request: Request,
+    payload: InterviewEvaluationRequest,
     identity: LLMOpsIdentity = Depends(get_llmops_identity),
     db: Session = Depends(get_db),
 ):
@@ -148,9 +148,9 @@ async def interview_evaluate(
         llmops_context(user_id=identity.user_id, session_id=identity.session_id, workflow_type="interview")
     )
     try:
-        history = _sanitize_history([t.model_dump() for t in request.history])
+        history = _sanitize_history([t.model_dump() for t in payload.history])
         evaluation = await run_in_threadpool(
-            generate_evaluation, history, request.role_title, request.jd_text, request.resume_skills or None,
+            generate_evaluation, history, payload.role_title, payload.jd_text, payload.resume_skills or None,
         )
 
         if evaluation.get("summary"):
@@ -162,13 +162,13 @@ async def interview_evaluate(
         evaluation["strengths"] = [check_output(s).text for s in evaluation.get("strengths", [])]
         evaluation["areas_for_improvement"] = [check_output(s).text for s in evaluation.get("areas_for_improvement", [])]
 
-        evaluation["time_taken_sec"] = request.time_taken_sec
-        evaluation["question_count"] = request.question_count
-        evaluation["proctor_flags_count"] = request.proctor_flags_count
-        evaluation["integrity_score"] = request.integrity_score
+        evaluation["time_taken_sec"] = payload.time_taken_sec
+        evaluation["question_count"] = payload.question_count
+        evaluation["proctor_flags_count"] = payload.proctor_flags_count
+        evaluation["integrity_score"] = payload.integrity_score
 
-        if request.session_id:
-            session = db.query(models.ScreeningSession).filter(models.ScreeningSession.id == request.session_id).first()
+        if payload.session_id:
+            session = db.query(models.ScreeningSession).filter(models.ScreeningSession.id == payload.session_id).first()
 
             # Orchestration layer: fold the full transcript this endpoint
             # already received into episodic memory (Postgres) + semantic
@@ -180,7 +180,7 @@ async def interview_evaluate(
             transcript = [{"role": "agent" if t["role"] == "interviewer" else "candidate", "text": t["text"]} for t in history]
             await run_in_threadpool(
                 orchestrator.end_session,
-                request.session_id,
+                payload.session_id,
                 scores={
                     "communication_score": evaluation.get("communication_score"),
                     "relevance_score": evaluation.get("relevance_score"),
@@ -194,11 +194,11 @@ async def interview_evaluate(
             result = models.ScreeningResult(
                 id=str(uuid.uuid4()),
                 source="interview",
-                session_id=request.session_id,
+                session_id=payload.session_id,
                 call_id=None,
-                candidate_name=request.candidate_name or (session.email if session else "Candidate"),
-                role_title=request.role_title,
-                jd_text_used=request.jd_text,
+                candidate_name=payload.candidate_name or (session.email if session else "Candidate"),
+                role_title=payload.role_title,
+                jd_text_used=payload.jd_text,
                 jd_match_score=evaluation.get("overall_score"),
                 verdict=evaluation.get("recommendation"),
                 strengths=evaluation.get("strengths", []),
@@ -212,11 +212,11 @@ async def interview_evaluate(
                     "missing_skills": evaluation.get("missing_skills", []),
                     "key_takeaway": evaluation.get("key_takeaway"),
                     "suggested_next_step": evaluation.get("suggested_next_step"),
-                    "time_taken_sec": request.time_taken_sec,
-                    "question_count": request.question_count,
-                    "proctor_flags_count": request.proctor_flags_count,
-                    "integrity_score": request.integrity_score,
-                    "email": request.email or (session.email if session else None),
+                    "time_taken_sec": payload.time_taken_sec,
+                    "question_count": payload.question_count,
+                    "proctor_flags_count": payload.proctor_flags_count,
+                    "integrity_score": payload.integrity_score,
+                    "email": payload.email or (session.email if session else None),
                 },
             )
             db.add(result)

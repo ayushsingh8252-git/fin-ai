@@ -1,6 +1,7 @@
 "use client";
 
 import { motion } from "framer-motion";
+import { usePathname } from "next/navigation";
 import { Loader2, ShieldCheck, Users, Settings2 } from "lucide-react";
 import { AUTH_GATE_ENABLED, useAuth } from "@/contexts/AuthContext";
 import GoogleSignInButton from "./GoogleSignInButton";
@@ -15,11 +16,21 @@ import GoogleSignInButton from "./GoogleSignInButton";
  * Center calls real, now-backend-authenticated agent-tool APIs like every
  * other product, so it needs the same real sign-in wall as everything else —
  * its password modal is a second factor on top of this, not a replacement
- * for it. */
+ * for it.
+ *
+ * /screening-agent/session/[sessionId] keeps its own, narrower carve-out:
+ * that's the page an external candidate lands on from an emailed interview
+ * invite link. They were never a signed-in platform user and must not be
+ * forced through Google sign-in just to open their interview — the long
+ * random session_id in the URL is that page's real access control (see
+ * api/screening.py's module docstring on the backend side). */
 export default function ProductGate({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
   const { status, uniqueUserCount, errorMessage, notConfigured } = useAuth();
 
-  if (!AUTH_GATE_ENABLED || status === "signed-in") return <>{children}</>;
+  if (!AUTH_GATE_ENABLED || status === "signed-in" || pathname?.startsWith("/screening-agent/session/")) {
+    return <>{children}</>;
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-zinc-950 via-zinc-900 to-blue-950 flex items-center justify-center px-6 py-20">

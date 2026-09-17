@@ -11,6 +11,7 @@ import {
 import {
   getSyncedHiresSnapshot, getSyncedHiresServerSnapshot, subscribeSyncedHires, type SyncedHire,
 } from "@/lib/hiringSync";
+import { getAuthHeaders } from "@/lib/auth";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -328,7 +329,7 @@ function HRPortal({ employees, setEmployees, documents, setDocuments }: {
       try {
         const fd = new FormData();
         pdfFiles.forEach(f => fd.append("files", f));
-        const res = await fetch(`${API_URL}/api/v1/upload`, { method: "POST", body: fd });
+        const res = await fetch(`${API_URL}/api/v1/upload`, { method: "POST", headers: getAuthHeaders(), body: fd });
         if (res.ok) {
           const data = await res.json();
           for (const r of data.results || []) {
@@ -346,7 +347,7 @@ function HRPortal({ employees, setEmployees, documents, setDocuments }: {
         try {
           const res = await fetch(`${API_URL}/api/v1/upload-url`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: { "Content-Type": "application/json", ...getAuthHeaders() },
             body: JSON.stringify({ url }),
           });
           if (res.ok) {

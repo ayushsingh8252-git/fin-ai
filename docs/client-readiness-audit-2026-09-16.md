@@ -1,5 +1,30 @@
 # Client-Readiness Audit — AgenticFlow / AI-Policy-Rule-Engine
 
+> **2026-09-17 implementation update:** P0-1 (auth), P0-3 (Command Center password bypass),
+> P0-5 (upload path traversal), P0-7 (rate limiting), and P0-8 (README overclaim) below are
+> now **implemented and live-verified** (real JWT auth via `Depends(get_current_user)` on
+> every router except the 4 deliberately-open ones — see `main.py`'s `_auth_guard` comment
+> block for exactly which and why; `slowapi` rate limiting on every LLM/compute-calling
+> route; filename sanitization + size caps on all 4 upload endpoints; the hardcoded
+> `acceptedDemoPasswords` bypass and the "Default: admin123" hint removed from
+> `VoiceGateModal.tsx`; README's RBAC/"zero-trust" claim corrected). Verified via a live
+> `TestClient` suite (unauthenticated 401s on protected routes, 200 on open ones, 429 after
+> the configured rate-limit threshold) — not just read from code. One scope refinement made
+> during implementation, confirmed with the user: candidate-facing routes reached via an
+> emailed invite link (`screening.py`'s start/session/proctor-telemetry,
+> `interview.py`'s turn/evaluate/report + its WS route) are intentionally left open — the
+> long random `session_id` in the URL is that flow's access control, since an external
+> candidate was never a signed-in platform user. **Still open**: P0-2 (fabricated fallback
+> results in `fraud_tools.py`/`hiring_tools.py`/`verification_tools.py`/Command Center's
+> `DEMO_RESULTS`), P0-4 (covered by P0-1 now, but not re-verified live against the actual
+> EC2 deployment — this pass was local-only), P0-6 (TLS). All P1+ items below are unchanged.
+> Also found mid-implementation: multiple concurrent sessions/terminals are active on this
+> machine right now (`ListAgents` showed 2 idle peer sessions) and the user's own direct git
+> commits during this same window absorbed several of these fixes under unrelated commit
+> messages ("lanfuse implemented", "fixing small bug") — the code is confirmed correct and
+> live-tested regardless of which commit it landed in, but worth a `git log -p` skim before
+> writing release notes off commit messages alone.
+
 **Date:** 2026-09-16
 **Scope:** `apps/AI-Policy-Rule-Engine` (flagship platform: RAG, Hiring, Fraud Detection, Screening/Interview, Telephonic Agent, Command Center, MCP connectors, Onboarding). Verified against current code + the live EC2 deployment (`44.201.3.194:8000`), not just prior audit docs.
 **Method:** Direct code reads + 3 parallel verification passes today, cross-checked against this repo's own `docs/production-readiness-punchlist-2026-09-14.md`. Every claim below has a file:line citation. Nothing here is inferred from README/marketing copy.

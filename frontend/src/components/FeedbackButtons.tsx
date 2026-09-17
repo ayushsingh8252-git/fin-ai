@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { ThumbsUp, ThumbsDown } from "lucide-react";
 import { getLlmopsHeaders } from "@/lib/llmopsIdentity";
+import { getAuthHeaders } from "@/lib/auth";
 
 type Rating = "up" | "down";
 
@@ -28,7 +29,7 @@ export default function FeedbackButtons({ workflowType, subjectId, className = "
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
       await fetch(`${apiUrl}/api/v1/feedback/events`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...getLlmopsHeaders() },
+        headers: { "Content-Type": "application/json", ...getLlmopsHeaders(), ...getAuthHeaders() },
         body: JSON.stringify({ workflow_type: workflowType, subject_id: subjectId, rating }),
       });
     } catch {

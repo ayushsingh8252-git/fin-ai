@@ -50,14 +50,14 @@ async def transcribe_audio_endpoint(request: Request, file: UploadFile = File(..
 
 @router.post("/tts")
 @limiter.limit("20/minute")
-async def text_to_speech_endpoint(http_request: Request, request: TTSRequest):
+async def text_to_speech_endpoint(request: Request, payload: TTSRequest):
     """
     Converts text to speech MP3 audio stream for playback using neural voice.
     """
-    if not request.text.strip():
+    if not payload.text.strip():
         raise HTTPException(status_code=400, detail="Text cannot be empty")
-        
-    audio_bytes = await generate_tts_audio_async(request.text, voice=request.voice, lang=request.language)
+
+    audio_bytes = await generate_tts_audio_async(payload.text, voice=payload.voice, lang=payload.language)
     if not audio_bytes:
         raise HTTPException(status_code=500, detail="Failed to synthesize speech audio")
         

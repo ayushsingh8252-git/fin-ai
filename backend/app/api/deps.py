@@ -1,14 +1,21 @@
 """Auth dependency shared by every protected route. Applied at the
 `app.include_router(..., dependencies=[Depends(get_current_user)])` call site
-in main.py for most routers (one line per router, no per-route edits), except
-interview.py's WebSocket route, which can't use the header-based dependency
-below (browsers can't set custom headers on a WS handshake) and uses
-get_current_user_ws instead.
+in main.py for most routers (one line per router, no per-route edits).
+
+interview.py and screening.py are each handled per-route instead of via that
+blanket dependency: both mix platform-user routes with candidate-facing
+routes reached via an emailed invite link, where the candidate was never a
+signed-in platform user — the long random session_id in the URL is that
+flow's real access control, not this dependency. get_current_user_query below
+exists for the one case that's neither a plain header check nor session-id-
+scoped: fraud.py's SSE scan stream, which needs a real logged-in user but
+can't use an Authorization header because browsers' EventSource API can't
+set custom headers on any request.
 """
 import logging
 
 import jwt
-from fastapi import Depends, HTTPException, WebSocket, status
+from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
@@ -57,24 +64,4 @@ def get_current_user_query(token: str, db: Session = Depends(get_db)) -> "models
     user = db.query(models.User).filter(models.User.id == claims.get("sub")).first()
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User account no longer exists.")
-    return user
-
-
-async def get_current_user_ws(websocket: WebSocket, token: str, db: Session) -> "models.User | None":
-    """WebSocket variant — the JWT arrives as a `?token=` query param (not an
-    Authorization header, which browsers cannot set on a WS handshake). Closes
-    the socket with code 4401 and returns None on any auth failure; callers
-    must check for None and stop instead of proceeding."""
-    if not token:
-        await websocket.close(code=4401, reason="Not authenticated.")
-        return None
-    try:
-        claims = _decode_token(token)
-    except HTTPException as exc:
-        await websocket.close(code=4401, reason=str(exc.detail))
-        return None
-    user = db.query(models.User).filter(models.User.id == claims.get("sub")).first()
-    if user is None:
-        await websocket.close(code=4401, reason="User account no longer exists.")
-        return None
     return user
