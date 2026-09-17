@@ -210,6 +210,10 @@ def _process_text_blocks(document_id: str, blocks_data: list[dict], db) -> dict:
     if doc:
         meta = dict(doc.metadata_ or {})
         meta["status"] = "completed"
+        # Found live during verification: a document that fails, retries,
+        # then succeeds kept the *previous* attempt's error message forever
+        # — genuinely confusing (a "completed" doc showing a stale error).
+        meta.pop("error", None)
         doc.metadata_ = meta
         db.commit()
 

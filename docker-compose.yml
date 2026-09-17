@@ -52,6 +52,13 @@ services:
       TESSERACT_CMD: /usr/bin/tesseract
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+      # Without this, api/auth.py generates a random per-process JWT signing
+      # key (see its own startup warning) — breaks token verification the
+      # moment a second process needs to agree on the same key (found live
+      # during this task's own verification). Override with your own
+      # JWT_SECRET_KEY in production; this default is a fixed dev value, not
+      # a secret worth protecting.
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-4d72c13d60d2a74f2282ef2c5d8e92161b88bc14e26cb0e4efe4a8463877fbad}
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     volumes:
@@ -64,7 +71,11 @@ services:
       postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      # /health/ready (not the old bare /health, which is cosmetic — see
+      # backend/app/api/health.py) actually verifies the primary DB and
+      # Redis are reachable, so "service_healthy" means "can genuinely serve
+      # requests," not just "the process started".
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready')"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -110,6 +121,17 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
+    healthcheck:
+      # `celery inspect ping` round-trips through the actual broker (Redis)
+      # to the worker process and back — a real signal this worker can
+      # communicate with Redis, not just that the container/Python process
+      # started. Uses the `celery` console script already installed via
+      # requirements.txt — no new dependency.
+      test: ["CMD", "celery", "-A", "app.worker:celery_app", "inspect", "ping", "--timeout", "5"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
 
   frontend:
     build:

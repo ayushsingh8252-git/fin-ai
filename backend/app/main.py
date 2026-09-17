@@ -7,7 +7,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 import os
 from .config import settings
-from .api import upload, query, rules, audio, fraud, interview, auth, telephonic, hiring, screening, orchestrator, mcp, observability, google_oauth, agent, whatsapp, voice, command_center, outcomes, feedback, evals
+from .api import upload, query, rules, audio, fraud, interview, auth, telephonic, hiring, screening, orchestrator, mcp, observability, google_oauth, agent, whatsapp, voice, command_center, outcomes, feedback, evals, health
 from .api.deps import get_current_user
 from .database import engine
 from .rate_limit import limiter
@@ -254,6 +254,12 @@ app.include_router(google_oauth.router)
 # Mounted at the root so the path matches exactly what's registered in the
 # Meta App Dashboard's webhook config: /webhooks/whatsapp (not /api/v1/...).
 app.include_router(whatsapp.router)
+
+# Real liveness/readiness checks (api/health.py) — mounted at root, not
+# /api/v1, matching the existing GET /health below. No auth: a load
+# balancer/orchestrator probes these without credentials, same as /health
+# already does today.
+app.include_router(health.router)
 
 UPLOADS_ROOT = os.path.abspath("uploads")
 os.makedirs(UPLOADS_ROOT, exist_ok=True)
