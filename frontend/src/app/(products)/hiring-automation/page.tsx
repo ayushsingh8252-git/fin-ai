@@ -24,14 +24,22 @@ import { StatusPill, type StatusTone } from "@/components/ui/status-pill";
    → Assignment Generator all call the real backend (/api/v1/hiring/*): actual
    PDF text extraction (PyMuPDF) plus LLM-based structured extraction/scoring
    (Groq-primary, Gemini-fallback — see backend/app/services/hiring_service.py).
-   Bulk-send (MCP email), Interview Scheduling, Onboarding, and Knowledge
-   Transfer stay simulated — there's no SMTP/MCP/calendar/Okta/Slack
-   integration wired into this project — but they run on the real parsed
-   candidates, which then hand off via sessionStorage to the existing
-   Onboarding / Knowledge Transfer pages. Onboarding and Knowledge Transfer
-   are human-triggered (a "Run Agent" click) rather than auto-chaining, same
-   as the Interview Scheduling step in between — nothing downstream of HR
-   approval fires without an explicit click. */
+   Bulk-send is now real too: POST /api/v1/hiring/bulk-send dispatches a real
+   SMTP send per candidate (backend/app/services/email_service.py) and
+   persists a real per-candidate CandidateDeliveryStatus row that this page
+   polls — no email is ever reported "Sent" without send_assignment_email()
+   actually having returned ok=True. Interview Scheduling's calendar picker
+   is also real: it calls the Google Calendar MCP connector's
+   check_availability tool for genuine free/busy data (falls back to an
+   honest "couldn't check" disclosure, never a fabricated always-free grid,
+   if Calendar isn't configured for this deployment). Onboarding and
+   Knowledge Transfer still stay simulated — there's no Okta/Slack
+   provisioning integration wired into this project — but they run on the
+   real parsed candidates, which then hand off via sessionStorage to the
+   existing Onboarding / Knowledge Transfer pages. Onboarding and Knowledge
+   Transfer are human-triggered (a "Run Agent" click) rather than
+   auto-chaining — nothing downstream of HR approval fires without an
+   explicit click. */
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -64,8 +72,11 @@ interface Candidate {
   matchedSkills: string[];
   missingSkills: string[];
   recommendation: "Strong Hire" | "Hire" | "Consider" | "Not a Fit" | null;
-  emailStatus: string;
-  mcpStatus: string;
+  // Real status from CandidateDeliveryStatus (backend/app/models.py), polled
+  // from GET /api/v1/hiring/bulk-send/status — not animated client state.
+  deliveryId: string | null;
+  deliveryStatus: "NOT_SENT" | "PENDING" | "SENDING" | "SENT" | "FAILED" | "REPLIED";
+  deliveryError: string | null;
   avatarBg: string;
   avatarText: string;
   telephonicInterview: InterviewSlot | null;
@@ -97,8 +108,9 @@ function candidateFromParsed(raw: Record<string, unknown>, index: number): Candi
     matchedSkills: [],
     missingSkills: [],
     recommendation: null,
-    emailStatus: "Pending",
-    mcpStatus: "Pending",
+    deliveryId: null,
+    deliveryStatus: "NOT_SENT",
+    deliveryError: null,
     avatarBg: palette.bg,
     avatarText: palette.text,
     telephonicInterview: null,
@@ -124,7 +136,7 @@ const PIPELINE_NODES = [
   { key: "assignment", title: "Assignment Generator", shortTitle: "Assignment Gen", desc: "Drafts a personalized take-home task", icon: ClipboardList, live: true },
   { key: "evaluation", title: "Candidate Evaluation", shortTitle: "Candidate Eval", desc: "Scores submissions & ranks candidates", icon: Award, live: false },
   { key: "review", title: "HR & Hiring Manager Review", shortTitle: "HR Review", desc: "Human approval gate before onboarding", icon: ShieldCheck, live: false },
-  { key: "scheduling", title: "Interview Scheduling", shortTitle: "Interview Schedule", desc: "Books telephonic & AI interview slots", icon: CalendarDays, live: false },
+  { key: "scheduling", title: "Interview Scheduling", shortTitle: "Interview Schedule", desc: "Checks real Google Calendar availability and books telephonic & AI interview slots", icon: CalendarDays, live: true },
   { key: "onboarding", title: "Onboarding Agent", shortTitle: "Onboarding Agent", desc: "Provisions accounts & equipment", icon: UserPlus, live: false },
   { key: "knowledge", title: "Knowledge Transfer Agent", shortTitle: "Knowledge Transfer", desc: "Assigns docs, videos & training", icon: BookOpen, live: false },
 ] as const;
@@ -243,16 +255,104 @@ function formatDateLabel(d: Date): string {
   return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
 }
 
-function seededHash(input: string): number {
-  let h = 0;
-  for (let i = 0; i < input.length; i++) h = (h * 31 + input.charCodeAt(i)) >>> 0;
-  return h;
+function emailLabel(status: Candidate["deliveryStatus"]): string {
+  switch (status) {
+    case "NOT_SENT": return "Not sent";
+    case "PENDING": return "Queued";
+    case "SENDING": return "Sending…";
+    case "SENT": return "Sent";
+    case "FAILED": return "Failed";
+    case "REPLIED": return "Sent";
+    default: return status;
+  }
 }
 
-/* ~30% of slots read as already booked on someone else's calendar — makes
-   the picker feel like a real shared enterprise calendar, not an empty grid. */
-function isSlotTaken(candidateId: string, dateISO: string, time: string): boolean {
-  return seededHash(`${candidateId}|${dateISO}|${time}`) % 10 < 3;
+function emailTone(status: Candidate["deliveryStatus"]): StatusTone {
+  switch (status) {
+    case "SENT":
+    case "REPLIED": return "success";
+    case "FAILED": return "danger";
+    case "PENDING":
+    case "SENDING": return "warning";
+    default: return "neutral";
+  }
+}
+
+interface BusyInterval {
+  start: string;
+  end: string;
+}
+
+const SLOT_DURATION_MINUTES = 30;
+
+/** Parses "09:00 AM"/"01:30 PM" against a given day into a local Date. */
+function parseSlotDateTime(day: Date, timeLabel: string): Date {
+  const match = timeLabel.match(/^(\d{1,2}):(\d{2})\s?(AM|PM)$/i);
+  const d = new Date(day);
+  if (!match) return d;
+  let hours = parseInt(match[1], 10);
+  const minutes = parseInt(match[2], 10);
+  const isPM = match[3].toUpperCase() === "PM";
+  if (isPM && hours !== 12) hours += 12;
+  if (!isPM && hours === 12) hours = 0;
+  d.setHours(hours, minutes, 0, 0);
+  return d;
+}
+
+function slotOverlapsBusy(slotStart: Date, busy: BusyInterval[]): boolean {
+  const slotEnd = new Date(slotStart.getTime() + SLOT_DURATION_MINUTES * 60000);
+  return busy.some((b) => {
+    const bStart = new Date(b.start);
+    const bEnd = new Date(b.end);
+    return slotStart < bEnd && slotEnd > bStart;
+  });
+}
+
+/* Retries a flaky call with backoff — a genuine transient failure (network
+   blip, cold backend) gets a real second try; a 4xx (bad request, or
+   not_configured because Google Calendar isn't wired up for this deployment)
+   is a real rejection that retrying can't change, so it returns immediately. */
+async function fetchWithRetry(url: string, init: RequestInit, maxAttempts = 3): Promise<Response> {
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const res = await fetch(url, init);
+      if (res.ok || (res.status >= 400 && res.status < 500)) return res;
+      lastErr = new Error(`HTTP ${res.status}`);
+    } catch (err) {
+      lastErr = err;
+    }
+    if (attempt < maxAttempts) await sleep(Math.min(2000, 400 * 2 ** (attempt - 1)));
+  }
+  throw lastErr instanceof Error ? lastErr : new Error("Request failed after retries");
+}
+
+/** Real free/busy check via the existing Google Calendar MCP connector
+ * (backend/app/mcp/connectors/google/calendar.py::_check_availability) —
+ * the same generic tool-call endpoint the Command Center uses. Returns
+ * `null` (not an empty array) when the check genuinely couldn't be
+ * completed — e.g. Google Calendar isn't configured for this deployment, or
+ * the request failed after retries — so the caller can distinguish "we know
+ * this slot is free" from "we don't know," rather than defaulting to a
+ * fabricated always-free grid. */
+async function fetchDayAvailability(dayStart: Date, dayEnd: Date): Promise<BusyInterval[] | null> {
+  try {
+    const res = await fetchWithRetry(`${API_URL}/api/v1/agent/tools/google_calendar/check_availability/call`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+      body: JSON.stringify({
+        calendar_ids: ["primary"],
+        time_min_iso: dayStart.toISOString(),
+        time_max_iso: dayEnd.toISOString(),
+      }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const primary = data?.calendars?.primary;
+    return Array.isArray(primary?.busy) ? primary.busy : [];
+  } catch {
+    return null;
+  }
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -449,19 +549,111 @@ export default function HiringAutomationPage() {
     setStage("assignment");
   };
 
+  /* Real bulk send: POSTs to /hiring/bulk-send (creates one
+     CandidateDeliveryStatus row per candidate and dispatches a real SMTP
+     send for each, see backend/app/api/hiring.py), then polls
+     /hiring/bulk-send/status until every candidate reaches a terminal
+     SENT/FAILED state. The MCP_STEPS progress bar below is now purely a
+     "something is happening" indicator running alongside the real send —
+     it is never what marks a candidate as delivered; only a real polled
+     status does that. */
   const handleBulkSend = async () => {
     if (stage !== "assignment") return;
     const myRun = runId.current;
     setStage("sending");
-    for (let s = 0; s < MCP_STEPS.length; s++) {
-      setMcpStep(s);
-      await sleep(700);
+    setApiError(null);
+
+    const animation = (async () => {
+      for (let s = 0; s < MCP_STEPS.length - 1; s++) {
+        setMcpStep(s);
+        await sleep(700);
+        if (myRun !== runId.current) return;
+      }
+    })();
+
+    let deliveryIds: Record<string, string> = {};
+    try {
+      const res = await fetch(`${API_URL}/api/v1/hiring/bulk-send`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({
+          candidates: candidates.map((c) => ({ id: c.id, name: c.name, email: c.email })),
+          role_title: "the open role",
+          assignment: {
+            title: assignment.title,
+            duration: assignment.duration,
+            requirements: assignment.requirements,
+            submission: assignment.submission,
+          },
+        }),
+      });
       if (myRun !== runId.current) return;
+      if (!res.ok) throw new Error(`Bulk send failed (${res.status})`);
+      const data = await res.json();
+      deliveryIds = data.delivery_ids || {};
+    } catch (err) {
+      if (myRun !== runId.current) return;
+      setApiError(err instanceof Error ? err.message : "Could not reach the email delivery backend.");
+      setStage("assignment");
+      return;
     }
-    setCandidates((prev) => prev.map((c) => ({ ...c, emailStatus: "Delivered", mcpStatus: "Reply Received" })));
-    await runNode(5, 900);
+
+    setCandidates((prev) => prev.map((c) => (
+      deliveryIds[c.id]
+        ? { ...c, deliveryId: deliveryIds[c.id], deliveryStatus: "PENDING", deliveryError: null }
+        : c
+    )));
+
+    await animation;
+    if (myRun !== runId.current) return;
+    setMcpStep(MCP_STEPS.length - 1);
+
+    const ids = candidates.map((c) => c.id);
+    const deadline = Date.now() + 30000;
+    while (Date.now() < deadline) {
+      if (myRun !== runId.current) return;
+      try {
+        const res = await fetch(
+          `${API_URL}/api/v1/hiring/bulk-send/status?candidate_ids=${encodeURIComponent(ids.join(","))}`,
+          { headers: getAuthHeaders() }
+        );
+        if (myRun !== runId.current) return;
+        if (res.ok) {
+          const data = await res.json();
+          const statuses: Array<{ candidate_id: string; status: Candidate["deliveryStatus"]; error: string | null }> = data.statuses || [];
+          setCandidates((prev) => prev.map((c) => {
+            const s = statuses.find((x) => x.candidate_id === c.id);
+            return s ? { ...c, deliveryStatus: s.status, deliveryError: s.error } : c;
+          }));
+          const allTerminal = ids.every((id) => {
+            const s = statuses.find((x) => x.candidate_id === id);
+            return s && (s.status === "SENT" || s.status === "FAILED");
+          });
+          if (allTerminal) break;
+        }
+      } catch {
+        // Transient poll failure — the loop itself is the retry; just try again next tick.
+      }
+      await sleep(1500);
+    }
+    if (myRun !== runId.current) return;
+
+    await runNode(5, 300);
     if (myRun !== runId.current) return;
     setStage("evaluation");
+  };
+
+  const handleMarkReplied = async (candidateId: string, deliveryId: string) => {
+    try {
+      const res = await fetch(`${API_URL}/api/v1/hiring/bulk-send/${deliveryId}/mark-replied`, {
+        method: "POST",
+        headers: getAuthHeaders(),
+      });
+      if (!res.ok) return;
+      setCandidates((prev) => prev.map((c) => (c.id === candidateId ? { ...c, deliveryStatus: "REPLIED" } : c)));
+    } catch {
+      // Best-effort — the pill just stays at "Sent" if this fails; nothing is fabricated on the frontend.
+    }
   };
 
   /* Evaluation → Scheduling used to advance automatically the instant every
@@ -779,7 +971,7 @@ export default function HiringAutomationPage() {
         <AnimatePresence>
           {reached("evaluation") && (
             <motion.div id="evaluation" className="scroll-mt-[220px]" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
-              <EvaluationTable candidates={candidates} approvals={approvals} onSend={handleSendForApproval} />
+              <EvaluationTable candidates={candidates} approvals={approvals} onSend={handleSendForApproval} onMarkReplied={handleMarkReplied} />
             </motion.div>
           )}
         </AnimatePresence>
@@ -1514,23 +1706,23 @@ function AssignmentCard({
    ═══════════════════════════════════════════════════════════ */
 
 function McpSendPanel({ step, candidates }: { step: number; candidates: Candidate[] }) {
-  const sending = step >= 2 && step < 3;
-  const completed = step >= 3;
+  const inFlight = step >= 2 && step < MCP_STEPS.length - 1;
+  const allTerminal = candidates.every((c) => c.deliveryStatus === "SENT" || c.deliveryStatus === "FAILED" || c.deliveryStatus === "REPLIED");
   return (
     <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
       <div className="rounded-2xl bg-white border border-zinc-200 p-6 shadow-sm">
         <div className="flex items-center gap-2 mb-4">
           <Plug className="w-4 h-4 text-amber-600" />
-          <h3 className="text-sm font-bold text-zinc-900">MCP Email Tool</h3>
+          <h3 className="text-sm font-bold text-zinc-900">Email Delivery</h3>
           <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-700 flex items-center gap-1">
             <Radio className="w-2.5 h-2.5 animate-pulse" /> {MCP_STEPS[step]}
           </span>
-          <span className="text-[10px] font-mono text-zinc-400 ml-auto">Simulated — no SMTP/MCP email tool is wired up yet</span>
+          <span className="text-[10px] font-mono text-zinc-400 ml-auto">Real SMTP send per candidate — status below reflects the actual backend result</span>
         </div>
 
         <div className="flex flex-col sm:flex-row items-center gap-4">
           <div className="relative w-24 h-20 rounded-xl bg-zinc-900 border border-zinc-800 flex flex-col items-center justify-center gap-1 shrink-0 overflow-hidden">
-            {sending && (
+            {inFlight && !allTerminal && (
               <motion.div
                 className="absolute inset-0 bg-amber-400/10"
                 animate={{ opacity: [0.2, 0.6, 0.2] }}
@@ -1538,31 +1730,37 @@ function McpSendPanel({ step, candidates }: { step: number; candidates: Candidat
               />
             )}
             <Mail className="w-5 h-5 text-amber-400 relative" />
-            <span className="text-[9px] font-mono text-zinc-400 relative">MCP Server</span>
+            <span className="text-[9px] font-mono text-zinc-400 relative">SMTP</span>
           </div>
 
           <div className="flex-1 grid sm:grid-cols-2 gap-3">
-            {candidates.map((c, ci) => (
-              <div key={c.id} className="relative rounded-xl border border-zinc-200 bg-zinc-50 p-3 flex items-center gap-2.5 overflow-hidden">
-                {sending && [0, 1].map((k) => (
-                  <motion.div
-                    key={k}
-                    className="absolute top-1/2 -translate-y-1/2"
-                    initial={{ left: "-10%", opacity: 0 }}
-                    animate={{ left: "90%", opacity: [0, 1, 1, 0] }}
-                    transition={{ duration: 1.1, repeat: Infinity, ease: "linear", delay: k * 0.55 + ci * 0.15 }}
-                  >
-                    <Mail className="w-3.5 h-3.5 text-amber-500" />
-                  </motion.div>
-                ))}
-                <div className={`w-7 h-7 rounded-full border flex items-center justify-center text-[10px] font-bold shrink-0 ${c.avatarBg} ${c.avatarText}`}>{c.name[0]}</div>
-                <div className="min-w-0 flex-1">
-                  <div className="text-xs font-bold text-zinc-900 truncate">{c.name}</div>
-                  <div className="text-[10px] text-zinc-500 font-mono truncate">{c.email || "no email extracted"}</div>
+            {candidates.map((c, ci) => {
+              const done = c.deliveryStatus === "SENT" || c.deliveryStatus === "REPLIED";
+              const failed = c.deliveryStatus === "FAILED";
+              const stillGoing = !done && !failed;
+              return (
+                <div key={c.id} className="relative rounded-xl border border-zinc-200 bg-zinc-50 p-3 flex items-center gap-2.5 overflow-hidden" title={failed ? c.deliveryError || "Delivery failed" : undefined}>
+                  {inFlight && stillGoing && [0, 1].map((k) => (
+                    <motion.div
+                      key={k}
+                      className="absolute top-1/2 -translate-y-1/2"
+                      initial={{ left: "-10%", opacity: 0 }}
+                      animate={{ left: "90%", opacity: [0, 1, 1, 0] }}
+                      transition={{ duration: 1.1, repeat: Infinity, ease: "linear", delay: k * 0.55 + ci * 0.15 }}
+                    >
+                      <Mail className="w-3.5 h-3.5 text-amber-500" />
+                    </motion.div>
+                  ))}
+                  <div className={`w-7 h-7 rounded-full border flex items-center justify-center text-[10px] font-bold shrink-0 ${c.avatarBg} ${c.avatarText}`}>{c.name[0]}</div>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-xs font-bold text-zinc-900 truncate">{c.name}</div>
+                    <div className="text-[10px] text-zinc-500 font-mono truncate">{c.email || "no email extracted"}</div>
+                  </div>
+                  {done && <MailCheck className="w-4 h-4 text-emerald-600 shrink-0" />}
+                  {failed && <AlertTriangle className="w-4 h-4 text-rose-500 shrink-0" />}
                 </div>
-                {completed && <MailCheck className="w-4 h-4 text-emerald-600 shrink-0" />}
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
 
@@ -1581,8 +1779,8 @@ function McpSendPanel({ step, candidates }: { step: number; candidates: Candidat
    ═══════════════════════════════════════════════════════════ */
 
 function EvaluationTable({
-  candidates, approvals, onSend,
-}: { candidates: Candidate[]; approvals: Record<string, boolean>; onSend: (ids: string[]) => void }) {
+  candidates, approvals, onSend, onMarkReplied,
+}: { candidates: Candidate[]; approvals: Record<string, boolean>; onSend: (ids: string[]) => void; onMarkReplied: (candidateId: string, deliveryId: string) => void }) {
   const [selected, setSelected] = useState<string[]>([]);
   const pendingIds = candidates.filter((c) => !approvals[c.id]).map((c) => c.id);
   const allPendingSelected = pendingIds.length > 0 && pendingIds.every((id) => selected.includes(id));
@@ -1629,7 +1827,7 @@ function EvaluationTable({
               <TableHead className="px-3 py-2.5 h-auto font-bold">ATS</TableHead>
               <TableHead className="px-3 py-2.5 h-auto font-bold">Match Score</TableHead>
               <TableHead className="px-3 py-2.5 h-auto font-bold">Email Status</TableHead>
-              <TableHead className="px-3 py-2.5 h-auto font-bold">MCP Status</TableHead>
+              <TableHead className="px-3 py-2.5 h-auto font-bold">Reply</TableHead>
               <TableHead className="px-3 py-2.5 h-auto font-bold">Recommendation</TableHead>
               <TableHead className="px-3 py-2.5 h-auto font-bold">HR Approval</TableHead>
             </TableRow>
@@ -1665,10 +1863,26 @@ function EvaluationTable({
                     <span className="font-mono font-bold px-2 py-0.5 rounded-full border bg-blue-50 border-blue-200 text-blue-700">{c.matchScore ?? "—"}%</span>
                   </TableCell>
                   <TableCell className="px-3 py-3">
-                    <StatusPill tone="success"><MailCheck className="w-3 h-3" />{c.emailStatus}</StatusPill>
+                    <span title={c.deliveryError || undefined}>
+                      <StatusPill tone={emailTone(c.deliveryStatus)}>
+                        <MailCheck className="w-3 h-3" />{emailLabel(c.deliveryStatus)}
+                      </StatusPill>
+                    </span>
                   </TableCell>
                   <TableCell className="px-3 py-3">
-                    <StatusPill tone="warning"><Plug className="w-3 h-3" />{c.mcpStatus}</StatusPill>
+                    {c.deliveryStatus === "SENT" && c.deliveryId ? (
+                      <button
+                        onClick={() => onMarkReplied(c.id, c.deliveryId as string)}
+                        className="text-[10px] font-mono font-bold px-2 py-1 rounded-full border border-zinc-200 text-zinc-600 hover:border-blue-300 hover:text-blue-700 hover:bg-blue-50/50 transition-colors inline-flex items-center gap-1"
+                        title="Record that you've actually seen a reply from this candidate — there's no automatic inbox integration, so this is a manual confirmation."
+                      >
+                        <Plug className="w-3 h-3" /> Mark Replied
+                      </button>
+                    ) : (
+                      <StatusPill tone={c.deliveryStatus === "REPLIED" ? "success" : "neutral"}>
+                        <Plug className="w-3 h-3" />{c.deliveryStatus === "REPLIED" ? "Replied" : "—"}
+                      </StatusPill>
+                    )}
                   </TableCell>
                   <TableCell className="px-3 py-3">
                     <StatusPill tone={recTone}><Star className="w-3 h-3" />{c.recommendation || "Pending"}</StatusPill>
@@ -1865,21 +2079,50 @@ function InterviewSlotTile({
   );
 }
 
-/* ── Calendar/time-slot picker modal — fully client-side and interactive
-   (real Date arithmetic, deterministic "taken" slots), no backend involved.
-   Shared by both interview types via the `type` prop. ── */
+/* ── Calendar/time-slot picker modal — real Date arithmetic, and a real
+   free/busy check against Google Calendar (via fetchDayAvailability) for
+   whichever calendar this deployment's Google Workspace connector is
+   configured against. Shared by both interview types via the `type` prop. ── */
 function InterviewCalendarModal({
   candidate, type, onClose, onConfirm,
 }: { candidate: Candidate; type: InterviewType; onClose: () => void; onConfirm: (slot: InterviewSlot) => void }) {
   const dates = useMemo(() => nextWeekdays(10), []);
   const [selectedDate, setSelectedDate] = useState<Date>(dates[0]);
   const [selectedTime, setSelectedTime] = useState<string | null>(null);
+  const [busy, setBusy] = useState<BusyInterval[]>([]);
+  const [availabilityUnknown, setAvailabilityUnknown] = useState(false);
+  // `busy` above is only valid for this date once the fetch for it lands —
+  // derived (not a separate setState in the effect below) so a re-render
+  // never needs a synchronous setState call at the top of the effect body.
+  const [availabilityLoadedFor, setAvailabilityLoadedFor] = useState<string | null>(null);
+  const loadingAvailability = availabilityLoadedFor !== dateKey(selectedDate);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [onClose]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const dayStart = new Date(selectedDate); dayStart.setHours(0, 0, 0, 0);
+    const dayEnd = new Date(selectedDate); dayEnd.setHours(23, 59, 59, 999);
+    fetchDayAvailability(dayStart, dayEnd).then((result) => {
+      if (cancelled) return;
+      if (result === null) {
+        // Real check couldn't be completed (not configured for this
+        // deployment, or failed after retries) — disclosed to the user
+        // rather than silently presenting every slot as confirmed-free.
+        setAvailabilityUnknown(true);
+        setBusy([]);
+      } else {
+        setAvailabilityUnknown(false);
+        setBusy(result);
+      }
+      setAvailabilityLoadedFor(dateKey(selectedDate));
+    });
+    return () => { cancelled = true; };
+  }, [selectedDate]);
 
   const isTelephonic = type === "telephonic";
   const label = isTelephonic ? "Telephonic Interview" : "AI Interview";
@@ -1946,15 +2189,24 @@ function InterviewCalendarModal({
           </div>
 
           <div>
-            <div className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide mb-2 flex items-center gap-1.5"><Clock className="w-3 h-3" /> Select a time · {formatDateLabel(selectedDate)}</div>
+            <div className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide mb-2 flex items-center gap-1.5">
+              <Clock className="w-3 h-3" /> Select a time · {formatDateLabel(selectedDate)}
+              {loadingAvailability && <Loader2 className="w-3 h-3 animate-spin text-zinc-400" />}
+            </div>
+            {availabilityUnknown && !loadingAvailability && (
+              <div className="text-[11px] px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 flex items-start gap-1.5 mb-2">
+                <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-px" />
+                Live calendar availability couldn&apos;t be checked (Google Calendar isn&apos;t connected, or the check failed after retrying) — every slot is shown as bookable, but this isn&apos;t conflict-checked against a real calendar.
+              </div>
+            )}
             <div className="grid grid-cols-3 gap-1.5">
               {TIME_SLOTS.map((t) => {
-                const taken = isSlotTaken(candidate.id, dateKey(selectedDate), t);
+                const taken = !loadingAvailability && slotOverlapsBusy(parseSlotDateTime(selectedDate, t), busy);
                 const active = selectedTime === t;
                 return (
                   <button
                     key={t}
-                    disabled={taken}
+                    disabled={taken || loadingAvailability}
                     onClick={() => setSelectedTime(t)}
                     className={`text-[11px] font-mono font-bold py-2 rounded-lg border transition-all ${
                       taken ? "bg-zinc-50 border-zinc-100 text-zinc-300 cursor-not-allowed line-through"

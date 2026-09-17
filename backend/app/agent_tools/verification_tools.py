@@ -19,12 +19,16 @@ government/company registry lookup and not a paid background-check API.
   clearly-labeled best-effort match for a company-level HR/contact number
   from public web text, and is `null` with a `note` when nothing was found.
 """
+import logging
 import re
 from typing import Any, Dict, List, Optional
 
 from ..mcp.base import BaseMCPConnector, MCPToolError
 from ..config import settings
+from ..services.resilience import CircuitOpenError
 from ..services.web_service import tavily_search
+
+logger = logging.getLogger(__name__)
 
 _PHONE_RE = re.compile(r"(\+?\d[\d\-\s()]{7,}\d)")
 
@@ -131,20 +135,25 @@ class BackgroundVerificationConnector(BaseMCPConnector):
         company_name = (params.get("company_name") or params.get("company") or params.get("query") or "AgenticFlow AI").strip()
         location = (params.get("location") or "Global").strip()
 
-        try:
-            legitimacy = self._check_legitimacy(company_name, location)
-            hr_contacts = self._find_hr_linkedin(company_name, location)
-            hr_contact_number = self._find_company_contact_number(company_name, location)
-        except Exception:
-            legitimacy = {
-                "score": 92,
-                "confidence": "high",
-                "signals": ["Official Domain Active", "LinkedIn Verified", "Zero Negative Scam Reports"],
-            }
-            hr_contacts = [
-                {"name": "Talent Acquisition Team", "title": "Head of People", "channel": "LinkedIn / Corporate Portal"}
-            ]
-            hr_contact_number = "+1 (800) 555-0199"
+        # Each of these three already gets real retries + a circuit breaker
+        # inside tavily_search() (services/web_service.py -> resilience.py),
+        # so by the time an exception reaches this layer, retrying again
+        # here wouldn't help — the honest move is to report exactly which
+        # lookup couldn't complete rather than inventing data for it. Each is
+        # tried independently so one lookup failing (e.g. Tavily's breaker
+        # trips mid-request) doesn't discard the other two if they succeeded.
+        # Failures surface in `warnings` rather than inline on hr_contacts
+        # (a list) — an empty list there already legitimately means "no
+        # LinkedIn profiles found", so a failure needs its own signal to stay
+        # distinguishable from that normal zero-results case.
+        warnings: List[str] = []
+        legitimacy = self._safe_lookup("legitimacy", self._check_legitimacy, company_name, location, warnings, {
+            "verdict": "unknown", "score": 0, "positive_signals": 0, "negative_signals": 0, "evidence": [],
+        })
+        hr_contacts = self._safe_lookup("hr_contacts", self._find_hr_linkedin, company_name, location, warnings, [])
+        hr_contact_number = self._safe_lookup("hr_contact_number", self._find_company_contact_number, company_name, location, warnings, {
+            "number": None, "source_url": None, "source_title": None,
+        })
 
         return {
             "company": company_name,
@@ -152,7 +161,20 @@ class BackgroundVerificationConnector(BaseMCPConnector):
             "legitimacy": legitimacy,
             "hr_contacts": hr_contacts,
             "hr_contact_number": hr_contact_number,
+            "warnings": warnings or None,
         }
+
+    def _safe_lookup(self, label: str, fn, company_name: str, location: str, warnings: List[str], default: Any) -> Any:
+        try:
+            return fn(company_name, location)
+        except CircuitOpenError as e:
+            logger.warning("[verification_tools] %s lookup for %r: search circuit open (%s)", label, company_name, e)
+            warnings.append(f"{label}: web search temporarily unavailable after repeated failures — try again shortly.")
+            return default
+        except Exception as e:
+            logger.error("[verification_tools] %s lookup for %r failed after retries: %s", label, company_name, e)
+            warnings.append(f"{label}: web search failed — {e}")
+            return default
 
     # ---- 1. legitimacy ----------------------------------------------------
 

@@ -175,84 +175,9 @@ export const DEMO_PLAN: Plan = {
   ],
 };
 
-/** Demo execution results */
-export const DEMO_RESULTS: Record<number, Record<string, unknown>> = {
-  1: {
-    candidate: {
-      name: "Ayush Singh",
-      email: "ayushrajput8252@gmail.com",
-      phone: "+91 7209602122",
-      experience: "OpneEyes (AI Backend) • Logicmotive (AI & Cloud)",
-      education: "Parul University, B.Tech CS (2022–2026)",
-      skills: [
-        "RAG & Retrieval Pipelines",
-        "LangGraph & LangChain",
-        "FastAPI & Microservices",
-        "Python & PyTorch",
-        "AWS (EC2, S3, Bedrock)",
-        "Docker & Kubernetes",
-        "Terraform & CI/CD",
-        "Pinecone & Vector Search",
-      ],
-      summary:
-        "AI Backend Engineer with B.Tech in Computer Science building multimodal AI systems, RAG retrieval pipelines, and scalable cloud infrastructure using AWS, Docker, and Kubernetes.",
-      ats_score: 88,
-    },
-    scan_id: "scan_candidate_09a4f",
-    status: "parsed",
-  },
-  2: {
-    match_score: 89,
-    match_grade: "Strong Match",
-    strengths: [
-      "Extensive experience in multi-agent orchestration and FastAPI backends",
-      "Production Next.js 16 and TypeScript expertise",
-      "Direct experience building rule engines, RAG pipelines, and voice agents",
-      "Solid understanding of vector embeddings and cloud architecture",
-    ],
-    gaps: [
-      "Prioritize verifying production distributed tracing depth",
-    ],
-    recommendation: "PROCEED",
-    summary:
-      "Candidate profile shows 89% alignment with the Senior AI Systems Engineer JD. Demonstrates deep domain expertise in agentic workflows, API design, and modern UI engineering.",
-  },
-  3: {
-    risk_score: 8,
-    verdict: "likely_genuine",
-    explanation:
-      "Document metadata, text alignment, and PDF font metrics are consistent with standard compilation. Identity consistency check passed with 0 anomaly flags.",
-    key_concerns: [],
-    steps: [
-      { name: "Document Structure Analysis", status: "passed", score: 98 },
-      { name: "Font & Alignment Forensics", status: "passed", score: 94 },
-      { name: "Metadata Timestamp Triangulation", status: "passed", score: 96 },
-      { name: "Chronology & Employment Verification", status: "passed", score: 92 },
-    ],
-  },
-  4: {
-    scorecard_id: "sc_901928_eval",
-    candidate_name: "Ayush Singh",
-    overall_score: 89,
-    skills_score: 94,
-    experience_score: 90,
-    education_score: 84,
-    cultural_fit_score: 88,
-    recommendation: "PROCEED",
-    strengths: [
-      "Technical alignment exceeds benchmark criteria",
-      "Demonstrated ability to deploy complete agent products",
-      "Strong architectural decision-making",
-    ],
-    weaknesses: [
-      "Schedule follow-up on specific enterprise auth frameworks",
-    ],
-  },
-  5: {
-    message_id: "wamid.HBgLMTkwMzg2ODk1FQIAEhgg...",
-    status: "delivered",
-    recipient: "+91 98765 43210",
-    delivery_timestamp: new Date().toISOString(),
-    channel: "WhatsApp Business Cloud API",
-  },
-};
+// NOTE: a DEMO_RESULTS table used to live here and was silently substituted
+// into callRealTool() in CommandCenter.tsx whenever a real backend call
+// failed or timed out — a failure would render as an indistinguishable fake
+// success (fake match score, fake fraud verdict, fake WhatsApp delivery
+// receipt). Removed: callRealTool() now retries real failures with backoff
+// and, if retries are exhausted, returns a real, visible failure instead.

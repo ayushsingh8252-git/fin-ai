@@ -35,6 +35,7 @@ Inner tools -> composite:
     generate_candidate_scorecard    (memory/orchestrator.py::schedule_candidate_interview, persists)
     get_candidate_scorecard         (composite: orchestrates the above + fraud fold-in)
 """
+import logging
 from typing import Any, Dict, List, Optional
 
 from ..mcp.base import BaseMCPConnector, MCPToolError
@@ -44,6 +45,9 @@ from ..services.hiring_service import (
     match_candidate_to_requirement,
     parse_resume_pdf,
 )
+from ..services.resilience import call_with_resilience
+
+logger = logging.getLogger(__name__)
 
 
 class HiringConnector(BaseMCPConnector):
@@ -289,23 +293,27 @@ class HiringConnector(BaseMCPConnector):
         email = params.get("email") or params.get("candidate_email") or "ayush.singh@agenticflow.ai"
 
         try:
-            return schedule_candidate_interview(
+            return call_with_resilience(
+                "hiring_scorecard_db",
+                schedule_candidate_interview,
                 candidate_id, candidate_name, email, interview_type,
                 params.get("slot_date"), params.get("slot_time"),
+                max_attempts=3, base_delay=0.4, max_delay=2.0,
+                # A bad interview_type is a real caller bug, not a transient
+                # DB blip — retrying it can't help, so it skips straight to
+                # the honest error instead of burning 3 attempts on it.
+                non_retryable=(ValueError,),
             )
-        except Exception:
-            return {
-                "scorecard_id": f"sc_{candidate_id}_eval",
-                "candidate_name": candidate_name,
-                "candidate_id": candidate_id,
-                "overall_score": 89,
-                "skills_score": 94,
-                "experience_score": 90,
-                "education_score": 84,
-                "cultural_fit_score": 88,
-                "recommendation": "PROCEED",
-                "status": "generated",
-            }
+        except Exception as e:
+            logger.error(
+                "[hiring_tools] generate_candidate_scorecard failed for candidate_id=%s after retries: %s",
+                candidate_id, e,
+            )
+            raise MCPToolError(
+                f"Could not generate scorecard for candidate {candidate_id!r}: {e}",
+                code="business_logic_error",
+                status_code=502,
+            ) from None
 
     # -- composite ---------------------------------------------------------
 

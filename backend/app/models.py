@@ -168,6 +168,36 @@ class CandidateScoreCard(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
+class CandidateDeliveryStatus(Base):
+    """One row per hiring 'Bulk Send Assignment' recipient — replaces the old
+    client-side animation that unconditionally marked every candidate
+    "Delivered ✓ / Reply Received ✓" the moment the button was clicked, with
+    zero email actually sent. Persists the real outcome of a real SMTP send
+    (see services/email_service.py::send_assignment_email) so the frontend
+    polls and displays what actually happened instead of animating a
+    foregone conclusion.
+
+    status: PENDING -> SENDING -> SENT | FAILED -> (SENT can move to) REPLIED.
+    REPLIED is set only via the explicit /hiring/bulk-send/{id}/mark-replied
+    endpoint, a human confirming they've actually seen a reply in their own
+    inbox — there is no inbound-email/IMAP integration in this codebase to
+    detect a reply automatically, so this deliberately stays a real,
+    human-asserted fact rather than a fabricated automatic signal."""
+
+    __tablename__ = "candidate_delivery_status"
+
+    id = Column(String, primary_key=True, index=True)
+    candidate_id = Column(String, nullable=False, index=True)
+    candidate_name = Column(String, nullable=False)
+    email = Column(String, nullable=True)
+    role_title = Column(String, nullable=True)
+    status = Column(String, nullable=False, default="PENDING")  # PENDING|SENDING|SENT|FAILED|REPLIED
+    error_message = Column(Text, nullable=True)
+    attempts = Column(Integer, default=0)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class Role(Base):
     """Shared/global memory — one row per job role, readable by every agent
     (Screening, Telephonic, Fraud) so role expectations stay consistent

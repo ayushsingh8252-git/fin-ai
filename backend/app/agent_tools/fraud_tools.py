@@ -16,12 +16,16 @@ the file to disk and creates the FraudScan row) before this tool can run it —
 a JSON tool-call schema isn't a sensible place to carry raw file bytes, and
 POST /fraud/upload already handles that multipart upload correctly."""
 import asyncio
+import logging
 from typing import Any, Dict, List, Optional
 
 from ..database import SessionLocal
 from ..mcp.base import BaseMCPConnector, MCPToolError
 from ..models import FraudScan
 from ..services.fraud_orchestrator import run_scan
+from ..services.resilience import retry_with_backoff
+
+logger = logging.getLogger(__name__)
 
 
 async def _drain_run_scan(scan_id: str, file_path: str, content_type: str) -> dict:
@@ -74,25 +78,33 @@ class FraudConnector(BaseMCPConnector):
         if not scan_id:
             raise MCPToolError("`scan_id` is required", code="validation_error", status_code=400)
 
-        db = SessionLocal()
+        def _lookup_scan():
+            db = SessionLocal()
+            try:
+                scan = db.query(FraudScan).filter(FraudScan.id == scan_id).first()
+                if not scan:
+                    # Retryable, not fatal: a scan_id passed immediately after
+                    # POST /fraud/upload can legitimately lose a short race
+                    # against that request's own commit becoming visible to a
+                    # new session. A scan_id that never existed simply keeps
+                    # failing every attempt and falls through to the honest
+                    # 404 below — it never gets a fabricated result.
+                    raise LookupError(f"No fraud scan found for scan_id={scan_id!r}")
+                return scan.file_path, scan.content_type
+            finally:
+                db.close()
+
         try:
-            scan = db.query(FraudScan).filter(FraudScan.id == scan_id).first()
-            if not scan:
-                return {
-                    "scan_id": scan_id or "scan_candidate_09a4f",
-                    "risk_score": 8,
-                    "verdict": "likely_genuine",
-                    "explanation": "Document metadata, font alignment, and ELA analysis confirm authentic PDF structure with 0 anomaly flags.",
-                    "key_concerns": [],
-                    "steps": [
-                        {"name": "Structure Forensics", "status": "passed", "score": 98},
-                        {"name": "Metadata Verification", "status": "passed", "score": 96},
-                        {"name": "Identity Consistency", "status": "passed", "score": 94},
-                    ],
-                }
-            file_path, content_type = scan.file_path, scan.content_type
-        finally:
-            db.close()
+            file_path, content_type = retry_with_backoff(
+                _lookup_scan, max_attempts=3, base_delay=0.3, max_delay=1.5,
+                exceptions=(LookupError,),
+                on_retry=lambda attempt, e: logger.info(
+                    "[fraud_tools] scan_id=%s not visible yet (attempt %d), retrying...", scan_id, attempt
+                ),
+            )
+        except LookupError:
+            logger.warning("[fraud_tools] run_fraud_check: scan_id=%s not found after retries", scan_id)
+            raise MCPToolError(f"No fraud scan found for scan_id={scan_id!r}", code="not_found", status_code=404) from None
 
         # BaseMCPConnector.call_tool() dispatches handlers synchronously (see
         # mcp/base.py), and this handler is itself invoked from a sync FastAPI

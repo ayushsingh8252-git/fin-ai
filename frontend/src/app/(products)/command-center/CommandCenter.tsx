@@ -39,11 +39,20 @@ import type {
   ApprovalDialogState,
   WorkspaceViewMode,
 } from "./types";
-import { DEMO_PLAN as DemoPlan, DEMO_RESULTS } from "./types";
+import { DEMO_PLAN as DemoPlan } from "./types";
 import { getAuthHeaders } from "@/lib/auth";
 
 const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001").replace(/\/api\/v1$/, "");
 
+/**
+ * Calls a real backend tool. On a transient failure (timeout, network error,
+ * 5xx) it retries with backoff — real success on retry returns a real
+ * result; once retries are exhausted it returns a real, visible failure.
+ * It never substitutes canned demo data for a failed call: a failure here is
+ * always reported as a failure, logged to the console (and to the step's
+ * own `error` field, surfaced in the trace panel) so a bad run is
+ * diagnosable, not silently masked as a good one.
+ */
 async function callRealTool(
   connector: string,
   tool: string,
@@ -51,41 +60,63 @@ async function callRealTool(
   signal?: AbortSignal,
   stepIndex?: number
 ): Promise<{ ok: boolean; status: number; body: Record<string, unknown> }> {
-  try {
-    const timeoutController = new AbortController();
-    const timeoutId = setTimeout(() => timeoutController.abort(), 3500);
+  const maxAttempts = 3;
+  let lastFailure: { status: number; body: Record<string, unknown> } = {
+    status: 0,
+    body: { detail: "Tool call failed" },
+  };
 
-    const onAbort = () => timeoutController.abort();
-    if (signal) {
-      signal.addEventListener("abort", onAbort);
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    if (signal?.aborted) {
+      return { ok: false, status: 0, body: { detail: "Mission aborted" } };
     }
 
-    const res = await fetch(`${API_URL}/api/v1/agent/tools/${connector}/${tool}/call`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-      body: JSON.stringify(params),
-      signal: timeoutController.signal,
-    }).finally(() => {
+    const timeoutController = new AbortController();
+    const timeoutId = setTimeout(() => timeoutController.abort(), 8000);
+    const onAbort = () => timeoutController.abort();
+    if (signal) signal.addEventListener("abort", onAbort);
+
+    try {
+      const res = await fetch(`${API_URL}/api/v1/agent/tools/${connector}/${tool}/call`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify(params),
+        signal: timeoutController.signal,
+      });
+      const body = await res.json().catch(() => ({}));
+
+      if (res.ok) {
+        return { ok: true, status: res.status, body };
+      }
+      lastFailure = { status: res.status, body };
+      // A 4xx is the caller's/tool's own rejection of this input (bad
+      // params, not_found, not_configured) — retrying the identical request
+      // can't produce a different outcome, so only 5xx/network conditions
+      // are retried.
+      if (res.status >= 400 && res.status < 500) {
+        break;
+      }
+    } catch (err) {
+      lastFailure = { status: 0, body: { detail: (err as Error)?.message || "Service unreachable" } };
+    } finally {
       clearTimeout(timeoutId);
       if (signal) signal.removeEventListener("abort", onAbort);
-    });
+    }
 
-    const body = await res.json().catch(() => ({}));
-    if (res.ok) {
-      return { ok: true, status: res.status, body };
+    if (attempt < maxAttempts) {
+      console.warn(
+        `[CommandCenter] step ${stepIndex ?? "?"} (${connector}.${tool}) attempt ${attempt}/${maxAttempts} failed, retrying...`,
+        lastFailure
+      );
+      await sleep(Math.min(3000, 500 * 2 ** (attempt - 1)));
     }
-    // If backend returns error status but demo fallback is available
-    if (stepIndex && (DEMO_RESULTS as any)[stepIndex]) {
-      return { ok: true, status: 200, body: (DEMO_RESULTS as any)[stepIndex] };
-    }
-    return { ok: false, status: res.status, body };
-  } catch (err) {
-    // If backend is unreachable, timed out, or connection reset -> graceful fallback
-    if (stepIndex && (DEMO_RESULTS as any)[stepIndex]) {
-      return { ok: true, status: 200, body: (DEMO_RESULTS as any)[stepIndex] };
-    }
-    return { ok: false, status: 0, body: { detail: (err as Error)?.message || "Service unreachable" } };
   }
+
+  console.error(
+    `[CommandCenter] step ${stepIndex ?? "?"} (${connector}.${tool}) failed after ${maxAttempts} attempt(s) — reporting honest failure, no demo substitution.`,
+    lastFailure
+  );
+  return { ok: false, status: lastFailure.status, body: lastFailure.body };
 }
 
 // Extracts a real email address / E.164-ish phone number / free-text time
