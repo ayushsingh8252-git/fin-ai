@@ -1,7 +1,7 @@
+import logging
 import os
 import uuid
-from typing import List
-from concurrent.futures import ThreadPoolExecutor
+from typing import List, Optional
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -12,18 +12,40 @@ from ..services.canonicalization import delete_vectors_by_ids
 from ..services.cache import flush_query_cache
 from ..services.upload_safety import safe_filename, MAX_UPLOAD_BYTES
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
 UPLOAD_DIR = "uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-# BackgroundTasks runs its queued (sync) callables one at a time, in-process,
-# after the response is sent — so uploading N files in one request used to
-# process them strictly sequentially even though each document's ingestion
-# is fully independent. Submitting to this shared pool instead lets multiple
-# uploaded files actually ingest concurrently.
-_ingestion_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="ingestion")
-
 ALLOWED_EXTENSIONS = {".pdf", ".mp3", ".wav", ".m4a", ".ogg", ".flac", ".aac", ".webm", ".wma", ".md", ".txt"}
+
+
+def _dispatch_ingestion(db: Session, doc: Document, task, *task_args) -> Optional[str]:
+    """Real Celery dispatch (task.delay(...)) — replaces the old
+    ThreadPoolExecutor.submit(...) in-process execution. Returns the
+    dispatched task_id, or None if the broker itself couldn't be reached at
+    dispatch time (Redis down/unreachable). That failure is surfaced
+    honestly: the document is marked "failed" with a real reason rather than
+    silently reporting "uploaded"/"processing" for work that was never
+    actually queued — same fail-honestly convention as the task's own retry
+    logic in worker.py."""
+    try:
+        async_result = task.delay(*task_args)
+        logger.info("[ingestion] task_id=%s document_id=%s dispatched to Celery (%s)", async_result.id, doc.id, task.name)
+        meta = dict(doc.metadata_ or {})
+        meta["task_id"] = async_result.id
+        doc.metadata_ = meta
+        db.commit()
+        return async_result.id
+    except Exception as e:
+        logger.error("[ingestion] document_id=%s failed to dispatch to Celery broker: %s", doc.id, e)
+        meta = dict(doc.metadata_ or {})
+        meta["status"] = "failed"
+        meta["error"] = f"Could not queue for processing — task queue unavailable: {e}"
+        doc.metadata_ = meta
+        db.commit()
+        return None
 
 
 class UrlUploadRequest(BaseModel):
@@ -65,15 +87,16 @@ async def upload_documents(files: List[UploadFile] = File(...), db: Session = De
         db.commit()
         db.refresh(new_doc)
 
-        # Submitted to the shared ingestion pool (not BackgroundTasks) so
-        # multiple files in this same upload batch process concurrently
-        # instead of one blocking the next.
-        _ingestion_executor.submit(process_document_task, doc_id, file_path)
+        # Real Celery dispatch — the task runs on a separate worker process
+        # (see worker.py / docker-compose's celery-worker service), not
+        # in-process, and multiple files in this batch process concurrently
+        # via Redis/Celery rather than a local thread pool.
+        task_id = _dispatch_ingestion(db, new_doc, process_document_task, doc_id, file_path)
 
         results.append({
             "document_id": doc_id,
             "filename": file.filename,
-            "status": "uploaded"
+            "status": "uploaded" if task_id else "failed",
         })
         
     return {"message": "Files uploaded successfully and are processing", "results": results}
@@ -91,19 +114,22 @@ async def upload_url(payload: UrlUploadRequest, db: Session = Depends(get_db)):
     new_doc = Document(
         id=doc_id,
         name=url,
+        # "processing" here (not "uploaded") matches this route's pre-existing
+        # convention — there's no on-disk save step for a URL the way there is
+        # for a file upload, so it goes straight to "queued for the worker".
         metadata_={"status": "processing", "source": "url", "source_url": url}
     )
     db.add(new_doc)
     db.commit()
     db.refresh(new_doc)
 
-    _ingestion_executor.submit(process_url_task, doc_id, url)
+    task_id = _dispatch_ingestion(db, new_doc, process_url_task, doc_id, url)
 
     return {
-        "message": "URL queued for crawling and indexing",
+        "message": "URL queued for crawling and indexing" if task_id else "Could not queue this URL for processing — task queue unavailable.",
         "document_id": doc_id,
         "url": url,
-        "status": "processing"
+        "status": "processing" if task_id else "failed",
     }
 
 
@@ -153,12 +179,16 @@ async def reprocess_document(document_id: str, db: Session = Depends(get_db)):
 
     meta["status"] = "uploaded"
     meta.pop("error", None)
+    meta.pop("retry_count", None)
     doc.metadata_ = meta
     db.commit()
 
     if source == "url":
-        _ingestion_executor.submit(process_url_task, document_id, meta.get("source_url"))
+        task_id = _dispatch_ingestion(db, doc, process_url_task, document_id, meta.get("source_url"))
     else:
-        _ingestion_executor.submit(process_document_task, document_id, meta.get("file_path"))
+        task_id = _dispatch_ingestion(db, doc, process_document_task, document_id, meta.get("file_path"))
+
+    if not task_id:
+        raise HTTPException(status_code=503, detail="Could not queue reprocessing — task queue unavailable. Chunks/rules for this document have already been cleared; retry this request once the queue is reachable.")
 
     return {"document_id": document_id, "status": "uploaded", "message": "Reprocessing started"}

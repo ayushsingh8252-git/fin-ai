@@ -70,6 +70,47 @@ services:
       retries: 5
       start_period: 30s
 
+  # Real Celery worker for document/URL ingestion — same image as `backend`
+  # (identical requirements.txt, so parsing/embedding/audio deps are already
+  # present) and the same uploads/data volumes, so it can read files the
+  # backend saved and write to the same DB. Only `command` differs: no HTTP
+  # server, just `celery worker` consuming from the `redis` broker above.
+  # --pool=solo --concurrency=1: this pipeline lazy-loads two sizeable ML
+  # models as process-global singletons on first use — BAAI/bge-base-en-v1.5
+  # (services/detection.py, every document/URL ingestion) and faster-whisper
+  # "base" int8 (services/audio_service.py, audio ingestion only). Celery's
+  # default prefork pool forks a new OS process per concurrency slot, each
+  # loading its own copy of whichever model it first needs — concurrency=2
+  # would mean 2x that memory for no throughput benefit on a modest VPS.
+  # solo avoids forking entirely (also the only pool that works out of the
+  # box on Windows, useful for running this worker outside Docker during
+  # local dev) and guarantees exactly one resident copy of each model.
+  # Revisit only if ingestion throughput is actually measured to be a
+  # bottleneck at real usage volume — not before.
+  celery-worker:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: sqlite:////app/data/policy_engine.db
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      EPISODIC_DATABASE_URL: postgresql+psycopg2://policy:policy@postgres:5432/policy_episodic
+      TESSERACT_CMD: /usr/bin/tesseract
+    command: celery -A app.worker:celery_app worker --loglevel=info --pool=solo --concurrency=1
+    volumes:
+      - backend_uploads:/app/uploads
+      - backend_data:/app/data
+      - backend_hf_cache:/app/.cache/huggingface
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
   frontend:
     build:
       context: ./frontend

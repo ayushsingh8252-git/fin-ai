@@ -1,6 +1,10 @@
+import logging
 import os
+import random
 from celery import Celery
 from .config import settings
+
+logger = logging.getLogger(__name__)
 
 celery_app = Celery(
     "policy_worker",
@@ -15,7 +19,77 @@ celery_app.conf.update(
     timezone="UTC",
     enable_utc=True,
     task_always_eager=False,
+    # Conservative defaults for a single-worker POC (see docker-compose's
+    # --pool=solo --concurrency=1 and the memory rationale next to it):
+    # don't let one worker grab a pile of tasks it can't work on
+    # concurrently anyway, and don't let a wedged task (a hung network call
+    # not already covered by services/resilience.py's own timeouts) hold the
+    # only worker slot forever. task_acks_late is deliberately NOT enabled
+    # here — see NonRetryableIngestionError's docstring below for why.
+    worker_prefetch_multiplier=1,
+    task_soft_time_limit=780,   # 13 min — raises SoftTimeLimitExceeded inside the task, catchable below
+    task_time_limit=900,        # 15 min — hard kill if the soft limit is ignored/uncatchable
+    # Without this, a .delay() call from a FastAPI request against an
+    # unreachable broker hangs on kombu's default connect retry instead of
+    # failing fast — confirmed empirically (a bare redis://localhost:6379/0
+    # with nothing listening took well over a minute to raise). That would
+    # tie up the request thread far longer than the honest-error response
+    # api/upload.py's _dispatch_ingestion is meant to give.
+    broker_transport_options={"socket_connect_timeout": 5, "socket_timeout": 5},
+    broker_connection_timeout=5,
+    # Separate from the broker settings above: the redis *result backend*
+    # (same URL, different client/connection) has its own reconnect-retry
+    # policy, and Celery's default there is a much larger retry budget —
+    # confirmed empirically: task.delay() against an unreachable Redis
+    # eventually raised "Retry limit exceeded while trying to reconnect to
+    # the Celery result store backend" after roughly 90+ seconds, not the
+    # ~5s the broker_transport_options above would suggest. Capping it here
+    # keeps _dispatch_ingestion's honest-failure path actually fast.
+    result_backend_transport_options={"retry_policy": {"timeout": 5.0}},
 )
+
+
+class NonRetryableIngestionError(Exception):
+    """Raised for ingestion failures retrying can't fix: unsupported/empty
+    content, invalid audio, or the Document row no longer existing. Distinct
+    from a plain Exception (assumed transient — Pinecone/LLM/network hiccups,
+    the same category services/resilience.py already retries at the
+    individual-call level) so the task-level retry below only fires for
+    genuinely transient conditions, per the project's existing
+    fail-honestly-not-fake convention (never silently converts a real
+    failure into a fake success)."""
+
+
+# Mirrors services/resilience.py's own backoff shape (exponential + jitter,
+# capped) but as a literal here rather than importing that module's
+# retry_with_backoff/call_with_resilience — those block the calling thread
+# while sleeping, which is correct for retrying a single LLM/API call
+# *inside* one task attempt (and several services already do exactly that
+# internally), but wrong for a task-level retry: re-queuing via Celery's own
+# countdown releases the worker slot while waiting, instead of a solo-pool
+# worker sitting idle mid-sleep. Same backoff philosophy, right layer for
+# a background job that can wait minutes, not milliseconds.
+INGESTION_MAX_RETRIES = 3
+
+
+def _ingestion_retry_countdown(attempt: int) -> float:
+    base = min(300.0, 30.0 * (2 ** (attempt - 1)))  # 30s, 60s, 120s, capped at 5min
+    return base + random.uniform(0, base * 0.25)
+
+
+def _mark_status(db, document_id: str, **fields) -> None:
+    """Small shared helper around the existing Document.metadata_ status
+    convention (see api/upload.py) — not a new persistence mechanism, just
+    avoids repeating the read-merge-write dict dance at every call site."""
+    from .models import Document
+
+    doc = db.query(Document).filter(Document.id == document_id).first()
+    if not doc:
+        return
+    meta = dict(doc.metadata_ or {})
+    meta.update(fields)
+    doc.metadata_ = meta
+    db.commit()
 
 def _process_text_blocks(document_id: str, blocks_data: list[dict], db) -> dict:
     """
@@ -142,66 +216,106 @@ def _process_text_blocks(document_id: str, blocks_data: list[dict], db) -> dict:
     return {"status": "success", "chunks_count": len(chunks), "rules_extracted": valid_rules_count}
 
 
-@celery_app.task(name="process_url")
-def process_url_task(document_id: str, url: str):
+@celery_app.task(name="process_url", bind=True, max_retries=INGESTION_MAX_RETRIES)
+def process_url_task(self, document_id: str, url: str):
     from .services.web_service import crawl_url_to_blocks
     from .database import SessionLocal
     from .models import Document
 
-    print(f"[Worker] Crawling URL for {document_id}: {url}")
+    task_id = self.request.id
+    attempt = self.request.retries
+    logger.info("[ingestion] task_id=%s document_id=%s process_url started (attempt %d)", task_id, document_id, attempt + 1)
+
     db = SessionLocal()
     try:
         doc = db.query(Document).filter(Document.id == document_id).first()
-        if doc:
-            meta = dict(doc.metadata_ or {})
-            meta["status"] = "processing"
-            doc.metadata_ = meta
-            db.commit()
+        if not doc:
+            # The record this task_id was dispatched for no longer exists —
+            # retrying can't recreate it (matches Step 5's own example of a
+            # permanent, non-retryable condition).
+            raise NonRetryableIngestionError(f"Document {document_id!r} not found — nothing to process.")
+
+        # Idempotency guard: a redelivered/duplicate dispatch of a task whose
+        # document already finished successfully is skipped rather than
+        # re-run — the ingestion pipeline isn't idempotent (fresh chunk/rule
+        # ids every run; see api/upload.py's /reprocess endpoint, which has
+        # to explicitly delete old rows before a legitimate re-run). A real
+        # reprocess request resets status to "uploaded" before dispatching
+        # (see upload.py), so it is never blocked by this guard.
+        if (doc.metadata_ or {}).get("status") == "completed":
+            logger.info("[ingestion] task_id=%s document_id=%s already completed — skipping duplicate run", task_id, document_id)
+            return {"status": "success", "skipped": "already_completed"}
+
+        _mark_status(db, document_id, status="processing", task_id=task_id, retry_count=attempt)
 
         blocks_data, title = crawl_url_to_blocks(url)
         if not blocks_data:
-            raise ValueError("No content could be extracted from this URL.")
+            raise NonRetryableIngestionError("No content could be extracted from this URL.")
 
-        if doc and title:
+        if title:
             doc.name = title
             db.commit()
 
-        return _process_text_blocks(document_id, blocks_data, db)
-    except Exception as e:
-        print(f"Error crawling URL for {document_id}: {str(e)}")
+        result = _process_text_blocks(document_id, blocks_data, db)
+        logger.info("[ingestion] task_id=%s document_id=%s process_url COMPLETED", task_id, document_id)
+        return result
+    except NonRetryableIngestionError as e:
+        logger.error("[ingestion] task_id=%s document_id=%s permanent failure, not retrying: %s", task_id, document_id, e)
         db.rollback()
-
-        doc = db.query(Document).filter(Document.id == document_id).first()
-        if doc:
-            meta = dict(doc.metadata_ or {})
-            meta["status"] = "failed"
-            meta["error"] = str(e)
-            doc.metadata_ = meta
-            db.commit()
-
+        _mark_status(db, document_id, status="failed", error=str(e))
         return {"status": "error", "message": str(e)}
+    except Exception as e:
+        db.rollback()
+        # Checked explicitly rather than catching MaxRetriesExceededError:
+        # Celery's Task.retry(exc=e, ...) re-raises the *original* exception
+        # once retries are exhausted (not MaxRetriesExceededError) whenever
+        # an `exc` is passed — confirmed against celery/app/task.py's own
+        # retry() source, both in eager tests and by reading the real
+        # non-eager code path (same branch, no is_eager check on it). Pre-
+        # checking the retry budget here avoids depending on that exception-
+        # selection quirk and makes both outcomes explicit.
+        if self.request.retries >= self.max_retries:
+            logger.error(
+                "[ingestion] task_id=%s document_id=%s FAILED after %d attempts: %s",
+                task_id, document_id, self.max_retries, e,
+            )
+            _mark_status(db, document_id, status="failed", error=str(e))
+            return {"status": "error", "message": str(e)}
+        logger.warning(
+            "[ingestion] task_id=%s document_id=%s attempt %d failed, retrying: %s",
+            task_id, document_id, attempt + 1, e,
+        )
+        _mark_status(db, document_id, status="retrying", error=str(e), retry_count=attempt + 1)
+        raise self.retry(exc=e, countdown=_ingestion_retry_countdown(attempt + 1))
     finally:
         db.close()
 
 
-@celery_app.task(name="process_document")
-def process_document_task(document_id: str, file_path: str):
-    # This will be implemented in the pipeline phase
-    # For now, it will just call the parsing and chunking services
+@celery_app.task(name="process_document", bind=True, max_retries=INGESTION_MAX_RETRIES)
+def process_document_task(self, document_id: str, file_path: str):
     from .services.parsing import parse_pdf
     from .database import SessionLocal
     from .models import Chunk, Document
-    
-    print(f"Processing document {document_id} from {file_path}")
+
+    task_id = self.request.id
+    attempt = self.request.retries
+    logger.info("[ingestion] task_id=%s document_id=%s process_document started (attempt %d)", task_id, document_id, attempt + 1)
+
     db = SessionLocal()
     try:
-        # Update status to processing
         doc = db.query(Document).filter(Document.id == document_id).first()
-        if doc:
-            meta = dict(doc.metadata_ or {})
-            meta["status"] = "processing"
-            doc.metadata_ = meta
-            db.commit()
+        if not doc:
+            raise NonRetryableIngestionError(f"Document {document_id!r} not found — nothing to process.")
+
+        # Idempotency guard — see process_url_task's identical comment above.
+        if (doc.metadata_ or {}).get("status") == "completed":
+            logger.info("[ingestion] task_id=%s document_id=%s already completed — skipping duplicate run", task_id, document_id)
+            return {"status": "success", "skipped": "already_completed"}
+
+        if not os.path.exists(file_path):
+            raise NonRetryableIngestionError(f"Source file no longer exists on disk: {file_path!r}")
+
+        _mark_status(db, document_id, status="processing", task_id=task_id, retry_count=attempt)
 
         ext = os.path.splitext(file_path)[1].lower()
         AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".ogg", ".flac", ".aac", ".webm", ".wma"}
@@ -211,7 +325,9 @@ def process_document_task(document_id: str, file_path: str):
             from .services.parsing import parse_text_file
 
             blocks_data = parse_text_file(file_path)
-            return _process_text_blocks(document_id, blocks_data, db)
+            result = _process_text_blocks(document_id, blocks_data, db)
+            logger.info("[ingestion] task_id=%s document_id=%s process_document (text) COMPLETED", task_id, document_id)
+            return result
 
         if ext in AUDIO_EXTS:
             from .services.audio_service import (
@@ -225,7 +341,7 @@ def process_document_task(document_id: str, file_path: str):
             print(f"[Worker] Starting Audio Processing Pipeline for {document_id} ({ext})...")
             validation = validate_audio_format(file_path)
             if not validation.get("is_valid", True):
-                raise ValueError(validation.get("reason", "Invalid audio file"))
+                raise NonRetryableIngestionError(validation.get("reason", "Invalid audio file"))
                 
             raw_segments = transcribe_audio(file_path)
             merged_segments = merge_small_segments(raw_segments)
@@ -257,24 +373,36 @@ def process_document_task(document_id: str, file_path: str):
                 meta["audio_segments_count"] = len(merged_segments)
                 doc.metadata_ = meta
                 db.commit()
-                
+
+            logger.info("[ingestion] task_id=%s document_id=%s process_document (audio) COMPLETED", task_id, document_id)
             return {"status": "success", "chunks_count": len(chunks), "type": "audio"}
 
         md_content = parse_pdf(file_path)
-        return _process_text_blocks(document_id, md_content, db)
-    except Exception as e:
-        print(f"Error processing document {document_id}: {str(e)}")
+        result = _process_text_blocks(document_id, md_content, db)
+        logger.info("[ingestion] task_id=%s document_id=%s process_document COMPLETED", task_id, document_id)
+        return result
+    except (NonRetryableIngestionError, FileNotFoundError) as e:
+        # FileNotFoundError is treated the same as the explicit check above —
+        # belt-and-suspenders for a file that vanishes between the exists()
+        # check and a parser actually opening it (e.g. a concurrent cleanup).
+        logger.error("[ingestion] task_id=%s document_id=%s permanent failure, not retrying: %s", task_id, document_id, e)
         db.rollback()
-        
-        # Mark as error
-        doc = db.query(Document).filter(Document.id == document_id).first()
-        if doc:
-            meta = dict(doc.metadata_ or {})
-            meta["status"] = "failed"
-            meta["error"] = str(e)
-            doc.metadata_ = meta
-            db.commit()
-
+        _mark_status(db, document_id, status="failed", error=str(e))
         return {"status": "error", "message": str(e)}
+    except Exception as e:
+        db.rollback()
+        if self.request.retries >= self.max_retries:
+            logger.error(
+                "[ingestion] task_id=%s document_id=%s FAILED after %d attempts: %s",
+                task_id, document_id, self.max_retries, e,
+            )
+            _mark_status(db, document_id, status="failed", error=str(e))
+            return {"status": "error", "message": str(e)}
+        logger.warning(
+            "[ingestion] task_id=%s document_id=%s attempt %d failed, retrying: %s",
+            task_id, document_id, attempt + 1, e,
+        )
+        _mark_status(db, document_id, status="retrying", error=str(e), retry_count=attempt + 1)
+        raise self.retry(exc=e, countdown=_ingestion_retry_countdown(attempt + 1))
     finally:
         db.close()
