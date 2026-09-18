@@ -79,7 +79,12 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 30s
+      # 60s, not 30s: observed live — this container's real startup (embedding
+      # model warmup, Pinecone connection pool, ECAPA-TDNN speaker encoder, a
+      # Langfuse connection attempt that can itself stall) routinely takes
+      # longer than 30s, flipping the container "unhealthy" before it ever
+      # got a chance to serve a request.
+      start_period: 60s
 
   # Real Celery worker for document/URL ingestion — same image as `backend`
   # (identical requirements.txt, so parsing/embedding/audio deps are already

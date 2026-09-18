@@ -373,6 +373,7 @@ def process_document_task(self, document_id: str, file_path: str):
             if doc:
                 meta = dict(doc.metadata_ or {})
                 meta["status"] = "completed"
+                meta.pop("error", None)  # see _process_text_blocks's identical fix above
                 meta["is_audio"] = True
                 meta["audio_segments_count"] = len(merged_segments)
                 doc.metadata_ = meta

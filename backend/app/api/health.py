@@ -52,15 +52,18 @@ _health_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="health-
 CHECK_TIMEOUT_SECONDS = 3.0
 
 
-def _run_with_timeout(fn) -> bool:
+def _run_with_timeout(name: str, fn) -> bool:
+    # `name` is passed explicitly rather than read off fn.__name__ — keeps
+    # this usable with anything callable (found via a test that patched the
+    # check itself with a Mock, which has no real __name__).
     future = _health_executor.submit(fn)
     try:
         return bool(future.result(timeout=CHECK_TIMEOUT_SECONDS))
     except FutureTimeoutError:
-        logger.warning("[health] %s exceeded %.1fs timeout", fn.__name__, CHECK_TIMEOUT_SECONDS)
+        logger.warning("[health] %s exceeded %.1fs timeout", name, CHECK_TIMEOUT_SECONDS)
         return False
     except Exception as e:
-        logger.warning("[health] %s raised: %s", fn.__name__, e)
+        logger.warning("[health] %s raised: %s", name, e)
         return False
 
 
@@ -98,8 +101,8 @@ def _check_redis() -> bool:
 @router.get("/ready")
 def readiness():
     started = time.monotonic()
-    db_ok = _run_with_timeout(_check_database)
-    redis_ok = _run_with_timeout(_check_redis)
+    db_ok = _run_with_timeout("database", _check_database)
+    redis_ok = _run_with_timeout("redis", _check_redis)
     elapsed_ms = round((time.monotonic() - started) * 1000, 1)
 
     checks = {
