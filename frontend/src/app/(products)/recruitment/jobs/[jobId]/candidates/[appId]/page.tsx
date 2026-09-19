@@ -21,7 +21,7 @@ import {
   type Application360, type Score, type Stage, type ActivityEvent,
   type OfferInfo, type InterviewInfo,
 } from "@/lib/recruitmentApi";
-import { ScoreCell, StageBadge } from "@/app/(products)/recruitment/_components/indicators";
+import { ScoreCell, StageBadge, SkillMatchSvg } from "@/app/(products)/recruitment/_components/indicators";
 import { NEXT_STAGES, STAGE_LABEL } from "@/app/(products)/recruitment/_components/stages";
 import { useRecruitment } from "@/app/(products)/recruitment/_components/RecruitmentShell";
 import { cn } from "@/lib/utils";
@@ -306,35 +306,44 @@ function OverviewTab({
           )}
         </div>
 
-        {/* MATCH ANALYSIS MATRIX */}
-        <div className="rounded-lg border border-[#E4E7EC] bg-white p-4 sm:p-5">
-          <h3 className="text-xs font-semibold uppercase tracking-wider text-[#667085] mb-3">
-            Match Analysis
-          </h3>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <div className="rounded-md bg-[#F7F8FA] p-3 border border-[#E4E7EC]">
-              <p className="text-[11px] text-[#667085] font-medium">Hard Requirements</p>
-              <p className="mt-1 text-xl font-semibold text-[#171717] tabular-nums">
-                {atsScore !== null ? `${atsScore}%` : "—"}
-              </p>
-            </div>
-            <div className="rounded-md bg-[#F7F8FA] p-3 border border-[#E4E7EC]">
-              <p className="text-[11px] text-[#667085] font-medium">Semantic Relevance</p>
-              <p className="mt-1 text-xl font-semibold text-[#171717] tabular-nums">
-                {matchScore !== null ? `${matchScore}%` : "—"}
-              </p>
-            </div>
-            <div className="rounded-md bg-[#F7F8FA] p-3 border border-[#E4E7EC]">
-              <p className="text-[11px] text-[#667085] font-medium">Experience Fit</p>
-              <p className="mt-1 text-xl font-semibold text-[#171717]">
-                {matchScore !== null && matchScore >= 80 ? "Strong" : matchScore !== null && matchScore >= 65 ? "Good" : "Moderate"}
-              </p>
-            </div>
-            <div className="rounded-md bg-[#F7F8FA] p-3 border border-[#E4E7EC]">
-              <p className="text-[11px] text-[#667085] font-medium">Skill Coverage</p>
-              <p className="mt-1 text-xl font-semibold text-[#171717] tabular-nums">
-                {matched.length} / {matched.length + missing.length || "—"}
-              </p>
+        {/* MATCH ANALYSIS MATRIX WITH GEOMETRIC SVG GAUGE */}
+        <div className="rounded-lg border border-[#E4E7EC] bg-white p-4 sm:p-5 space-y-4">
+          <div className="flex items-center justify-between border-b border-[#E4E7EC] pb-2.5">
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-[#667085]">
+              Match Analysis
+            </h3>
+            <span className="text-[11px] text-[#667085] font-medium">
+              Autonomous Competency Matrix
+            </span>
+          </div>
+
+          <div className="flex flex-col sm:flex-row items-center gap-4">
+            <SkillMatchSvg
+              matchedCount={matched.length}
+              totalCount={matched.length + missing.length || 1}
+              score={matchScore}
+              size={76}
+            />
+
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 flex-1 w-full">
+              <div className="rounded-md bg-[#F7F8FA] p-2.5 border border-[#E4E7EC]">
+                <p className="text-[10px] text-[#667085] font-medium uppercase tracking-wider">Hard Requirements</p>
+                <p className="mt-1 text-lg font-semibold text-[#171717] tabular-nums">
+                  {atsScore !== null ? `${atsScore}%` : "—"}
+                </p>
+              </div>
+              <div className="rounded-md bg-[#F7F8FA] p-2.5 border border-[#E4E7EC]">
+                <p className="text-[10px] text-[#667085] font-medium uppercase tracking-wider">Semantic Fit</p>
+                <p className="mt-1 text-lg font-semibold text-[#171717] tabular-nums">
+                  {matchScore !== null ? `${matchScore}%` : "—"}
+                </p>
+              </div>
+              <div className="rounded-md bg-[#F7F8FA] p-2.5 border border-[#E4E7EC]">
+                <p className="text-[10px] text-[#667085] font-medium uppercase tracking-wider">Experience Fit</p>
+                <p className="mt-1 text-lg font-semibold text-[#171717]">
+                  {matchScore !== null && matchScore >= 80 ? "Strong" : matchScore !== null && matchScore >= 65 ? "Good" : "Moderate"}
+                </p>
+              </div>
             </div>
           </div>
         </div>

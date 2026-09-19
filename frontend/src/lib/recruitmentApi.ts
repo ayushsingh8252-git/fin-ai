@@ -92,6 +92,8 @@ export interface ApplicationRow {
   created_at: string | null;
 }
 
+export type CandidateApplication = ApplicationRow;
+
 export interface CandidatePage {
   total: number;
   page: number;

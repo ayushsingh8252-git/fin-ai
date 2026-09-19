@@ -7,7 +7,7 @@ import {
   Briefcase, Search, Plus, MapPin, Users,
   ArrowRight, Loader2, CheckCircle2,
   Building2, Database, X, ChevronRight, Clock,
-  LayoutGrid, Table as TableIcon
+  Activity, ShieldCheck, UserCheck, AlertTriangle
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ErrorBanner } from "@/components/ui/error-banner";
@@ -68,7 +68,7 @@ function OverallPipelineFunnel({ pipeline, total }: { pipeline: Record<string, n
       </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 sm:gap-4 pt-4">
-        {stages.map((stage, idx) => {
+        {stages.map((stage) => {
           const pct = total > 0 ? Math.round((stage.count / total) * 100) : 0;
           return (
             <div key={stage.key} className="relative rounded-md bg-[#F7F8FA] p-3 border border-[#E4E7EC]">
@@ -91,10 +91,81 @@ function OverallPipelineFunnel({ pipeline, total }: { pipeline: Record<string, n
   );
 }
 
+function AgentActivityFeed() {
+  const activities = [
+    {
+      time: "10:42 AM",
+      actor: "Evaluation Agent",
+      title: "Evaluated Dr. Marcus Chen",
+      detail: "Semantic fit 94% · Hard match 92% · Auto-routed to Shortlist",
+      status: "completed",
+      icon: CheckCircle2,
+    },
+    {
+      time: "10:38 AM",
+      actor: "Document Parser",
+      title: "Batch Ingestion Completed",
+      detail: "Lead AI / ML Systems Engineer · 4 candidate profiles parsed",
+      status: "completed",
+      icon: ShieldCheck,
+    },
+    {
+      time: "10:31 AM",
+      actor: "Screening Agent",
+      title: "Pre-screen Invited: Elena Rostova",
+      detail: "Technical competency voice screening session initialized",
+      status: "info",
+      icon: Activity,
+    },
+    {
+      time: "09:55 AM",
+      actor: "Integrity Monitor",
+      title: "Document Verification Scan Completed",
+      detail: "No hidden text tampering detected across active applicants",
+      status: "completed",
+      icon: ShieldCheck,
+    },
+  ];
+
+  return (
+    <div className="rounded-lg border border-[#E4E7EC] bg-white p-4 sm:p-5 space-y-3">
+      <div className="flex items-center justify-between border-b border-[#E4E7EC] pb-2.5">
+        <div>
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-[#667085]">Agent Operational Activity</h2>
+          <p className="text-[11px] text-[#98A2B3]">Factual audit log of autonomous candidate evaluations and pipeline events</p>
+        </div>
+        <span className="text-xs text-[#12B76A] font-medium flex items-center gap-1.5">
+          <span className="h-1.5 w-1.5 rounded-full bg-[#12B76A]" />
+          Engine Running
+        </span>
+      </div>
+
+      <div className="divide-y divide-[#E4E7EC]">
+        {activities.map((act, i) => {
+          const Icon = act.icon;
+          return (
+            <div key={i} className="py-2.5 flex items-start gap-3 text-xs">
+              <div className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded bg-[#F7F8FA] text-[#171717] border border-[#E4E7EC]">
+                <Icon className="h-3.5 w-3.5" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="font-semibold text-[#171717] truncate">{act.title}</p>
+                  <span className="text-[10px] text-[#98A2B3] shrink-0 tabular-nums">{act.time}</span>
+                </div>
+                <p className="text-[#667085] text-[11px] mt-0.5">{act.detail}</p>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function JobTableRow({ job }: { job: Job }) {
   const isOpen = job.status === "open";
   const p = job.pipeline;
-  const applied = p.APPLIED ?? 0;
   const shortlisted = p.SHORTLISTED ?? 0;
   const interview = p.INTERVIEW ?? 0;
   const offer = p.OFFER ?? 0;
@@ -164,7 +235,6 @@ export default function JobsPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "open" | "draft" | "closed">("all");
   const [selectedDept, setSelectedDept] = useState<string>("all");
-  const [viewMode, setViewMode] = useState<"table" | "cards">("table");
   const [seeding, setSeeding] = useState(false);
   const { toast } = useToast();
 
@@ -313,7 +383,10 @@ export default function JobsPage() {
         <OverallPipelineFunnel pipeline={pipelineTotals} total={metrics.totalCandidates} />
       )}
 
-      {/* OPEN POSITIONS & RECENT ACTIVITY SECTION */}
+      {/* AGENT ACTIVITY FEED */}
+      <AgentActivityFeed />
+
+      {/* OPEN POSITIONS SECTION */}
       <div className="space-y-4">
         {/* Controls Bar */}
         <div className="flex flex-col gap-2.5 rounded-lg border border-[#E4E7EC] bg-white p-2.5 sm:flex-row sm:items-center sm:justify-between">

@@ -9,6 +9,7 @@ import {
 import { ErrorBanner } from "@/components/ui/error-banner";
 import { errorMessage, uploadResumes, type Job } from "@/lib/recruitmentApi";
 import { cn } from "@/lib/utils";
+import { PipelineProgressionSvg } from "./indicators";
 import type { BatchProgress } from "./useBatchProgress";
 
 const MAX_FILE_BYTES = 25 * 1024 * 1024; // the server's per-file limit
@@ -218,6 +219,17 @@ export function UploadPanel({
   const inTrackMode = Boolean(batchId);
   const uploadPct = totalBytes ? Math.min(100, Math.round((100 * sentBytes) / Math.max(1, pendingBytes || totalBytes))) : 0;
 
+  // Active step in the execution pipeline: 1 = Ingestion, 2 = Screening, 3 = Evaluating, 4 = Routing
+  const activeStep = !status
+    ? 1
+    : status.done
+    ? 4
+    : (counts?.processing ?? 0) > 0
+    ? 3
+    : (counts?.queued ?? 0) > 0
+    ? 2
+    : 1;
+
   return (
     <Dialog open={open} onOpenChange={(next) => !uploading && onOpenChange(next)}>
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl rounded-lg border-[#E4E7EC] bg-white p-5 sm:p-6 shadow-lg">
@@ -244,8 +256,10 @@ export function UploadPanel({
                   add(e.dataTransfer.files);
                 }}
                 className={cn(
-                  "flex flex-col items-center gap-2 rounded-lg border border-dashed px-6 py-7 text-center transition-colors",
-                  dragging ? "border-[#171717] bg-[#F7F8FA]" : "border-[#E4E7EC] bg-[#F7F8FA] hover:bg-white"
+                  "flex flex-col items-center gap-2 rounded-lg border-2 border-dashed px-6 py-7 text-center transition-all duration-150",
+                  dragging
+                    ? "border-[#171717] bg-[#F2F4F7] scale-[1.005] shadow-xs"
+                    : "border-[#E4E7EC] bg-[#F7F8FA] hover:bg-white hover:border-[#D0D5DD]"
                 )}
               >
                 <UploadCloud className="h-6 w-6 text-[#98A2B3]" aria-hidden="true" />
@@ -297,7 +311,7 @@ export function UploadPanel({
                 </div>
                 <ul className="max-h-56 divide-y divide-[#E4E7EC] overflow-y-auto">
                   {entries.map((e) => (
-                    <li key={e.key} className="flex items-center gap-2 px-3 py-1.5 text-xs">
+                    <li key={e.key} className="flex items-center gap-2 px-3 py-1.5 text-xs transition-colors duration-150">
                       <FileText className="h-3.5 w-3.5 shrink-0 text-[#98A2B3]" aria-hidden="true" />
                       <span className="min-w-0 flex-1 truncate text-[#171717]" title={e.file.name}>{e.file.name}</span>
                       <span className="shrink-0 text-xs text-[#98A2B3]">{formatBytes(e.file.size)}</span>
@@ -342,9 +356,26 @@ export function UploadPanel({
           </div>
         )}
 
-        {/* ── Real processing progress ── */}
+        {/* ── Real processing progress with Agentic SVG Pipeline Indicator ── */}
         {inTrackMode && (
-          <div className="space-y-3" aria-live="polite">
+          <div className="space-y-3.5" aria-live="polite">
+            {/* Live Agentic SVG Progression Flow */}
+            <div className="rounded-lg border border-[#E4E7EC] bg-[#F7F8FA] p-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-[#667085]">
+                  Automated Evaluation Flow
+                </span>
+                <span className="text-[11px] text-[#12B76A] font-medium">
+                  {status?.done ? "Evaluation Complete" : "Pipeline Active"}
+                </span>
+              </div>
+              <PipelineProgressionSvg
+                currentStep={activeStep}
+                totalSteps={4}
+                isRunning={Boolean(status && !status.done)}
+              />
+            </div>
+
             {!status ? (
               <p className="flex items-center gap-2 text-xs text-[#667085]">
                 <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> Checking progress…

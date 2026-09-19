@@ -4,7 +4,7 @@ import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  Briefcase, Inbox, Zap,
+  Briefcase, Inbox, Workflow,
   Loader2, RefreshCw, Database
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -173,7 +173,7 @@ function ShellContent({ children }: { children: React.ReactNode }) {
               <NavLink
                 href="/recruitment/workflows"
                 active={pathname === "/recruitment/workflows"}
-                icon={Zap}
+                icon={Workflow}
                 label="Workflows"
               />
             </nav>
