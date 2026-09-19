@@ -633,8 +633,8 @@ export default function JobWorkspacePage() {
                     </th>
                     <th className="px-3 py-2.5 font-medium">Candidate</th>
                     <th className="px-3 py-2.5 font-medium">Experience</th>
-                    <th className="px-3 py-2.5 font-medium">Hard Requirements</th>
-                    <th className="px-3 py-2.5 font-medium">Semantic Fit</th>
+                    <th className="px-3 py-2.5 font-medium">Qualifications</th>
+                    <th className="px-3 py-2.5 font-medium">Role Fit</th>
                     <th className="px-3 py-2.5 font-medium">Stage</th>
                     <th className="px-3 py-2.5 text-right font-medium">Action</th>
                   </tr>
@@ -645,6 +645,13 @@ export default function JobWorkspacePage() {
                     const isBeingDragged = draggedApp?.id === app.id;
                     const matchVal = app.scores.match_score.value;
                     const expYears = app.candidate.experience_years;
+                    const name = app.candidate.name || "Candidate";
+                    const initials = name
+                      .split(/[\s@._-]+/)
+                      .filter(Boolean)
+                      .slice(0, 2)
+                      .map((p) => p[0].toUpperCase())
+                      .join("") || "C";
 
                     return (
                       <tr
@@ -654,7 +661,7 @@ export default function JobWorkspacePage() {
                         onDragEnd={() => setDraggedApp(null)}
                         onClick={() => router.push(`/recruitment/jobs/${jobId}/candidates/${app.id}`)}
                         className={cn(
-                          "group cursor-pointer transition-colors",
+                          "group cursor-pointer transition-colors duration-150",
                           isBeingDragged ? "opacity-40 bg-[#F2F4F7]" : isSelected ? "bg-[#F2F4F7]" : "hover:bg-[#F7F8FA]"
                         )}
                       >
@@ -670,36 +677,49 @@ export default function JobWorkspacePage() {
                           </button>
                         </td>
 
-                        {/* Candidate Name */}
+                        {/* Candidate Name & Avatar */}
                         <td className="px-3 py-3.5">
-                          <div className="min-w-0">
-                            <p className="font-semibold text-xs text-[#171717] group-hover:text-[#2563EB] transition-colors">
-                              {app.candidate.name || "Unnamed Candidate"}
-                            </p>
-                            <p className="truncate text-[11px] text-[#667085] font-normal">
-                              {app.candidate.current_role || app.candidate.email || "Applicant"}
-                            </p>
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#171717] text-white font-semibold text-[10px]">
+                              {initials}
+                            </div>
+                            <div className="min-w-0">
+                              <p className="font-semibold text-xs text-[#171717] group-hover:text-[#2563EB] transition-colors truncate">
+                                {name}
+                              </p>
+                              <p className="truncate text-[11px] text-[#667085] font-normal">
+                                {app.candidate.current_role || app.candidate.email || "Applicant"}
+                              </p>
+                            </div>
                           </div>
                         </td>
 
                         {/* Experience */}
                         <td className="px-3 py-3.5 text-xs text-[#667085]">
-                          {expYears !== null && expYears !== undefined ? `${expYears} yrs` : "—"}
+                          {expYears !== null && expYears !== undefined ? (
+                            <span className="font-medium text-[#171717]">{expYears} yrs</span>
+                          ) : (
+                            <span className="text-[#98A2B3]">—</span>
+                          )}
                         </td>
 
-                        {/* Hard Requirements */}
+                        {/* Qualifications / Hard Requirements */}
                         <td className="px-3 py-3.5">
                           <ScoreCell score={app.scores.ats_score} />
                         </td>
 
-                        {/* Semantic Fit */}
+                        {/* Semantic Role Fit */}
                         <td className="px-3 py-3.5">
                           {matchVal !== null ? (
                             <span className={cn(
-                              "text-xs font-semibold tabular-nums",
-                              matchVal >= 80 ? "text-[#12B76A]" : matchVal >= 65 ? "text-[#171717]" : "text-[#667085]"
+                              "inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs font-semibold tabular-nums border",
+                              matchVal >= 80
+                                ? "bg-[#ECFDF3] text-[#12B76A] border-[#A6F4C5]"
+                                : matchVal >= 65
+                                ? "bg-[#F7F8FA] text-[#171717] border-[#E4E7EC]"
+                                : "bg-[#FFFAEB] text-[#B54708] border-[#FEDF89]"
                             )}>
-                              {matchVal >= 85 ? "Strong" : matchVal >= 70 ? "Good" : "Moderate"} · {matchVal}%
+                              {matchVal >= 85 ? "Strong Fit" : matchVal >= 70 ? "Good Fit" : "Moderate"} · {matchVal}%
                             </span>
                           ) : (
                             <span className="text-xs text-[#98A2B3]">—</span>
@@ -713,9 +733,9 @@ export default function JobWorkspacePage() {
 
                         {/* Action */}
                         <td className="px-3 py-3.5 text-right">
-                          <span className="inline-flex items-center gap-0.5 text-xs font-medium text-[#667085] group-hover:text-[#171717] transition-colors">
-                            View
-                            <ChevronRight className="h-3 w-3" />
+                          <span className="inline-flex items-center gap-1 text-xs font-medium text-[#171717] bg-white border border-[#E4E7EC] hover:bg-[#F2F4F7] px-2 py-0.5 rounded transition-colors">
+                            Profile
+                            <ChevronRight className="h-3 w-3 text-[#667085]" />
                           </span>
                         </td>
                       </tr>
@@ -771,6 +791,13 @@ export default function JobWorkspacePage() {
                   {list.map((app) => {
                     const matchVal = app.scores.match_score.value;
                     const isBeingDragged = draggedApp?.id === app.id;
+                    const name = app.candidate.name || "Candidate";
+                    const initials = name
+                      .split(/[\s@._-]+/)
+                      .filter(Boolean)
+                      .slice(0, 2)
+                      .map((p) => p[0].toUpperCase())
+                      .join("") || "C";
 
                     return (
                       <div
@@ -784,14 +811,19 @@ export default function JobWorkspacePage() {
                           isBeingDragged ? "opacity-30 border-dashed border-[#171717]" : "border-[#E4E7EC]"
                         )}
                       >
-                        <div className="flex items-start justify-between gap-1">
-                          <p className="text-xs font-semibold text-[#171717] truncate">
-                            {app.candidate.name || "Candidate"}
-                          </p>
-                          <GripVertical className="h-3 w-3 text-[#98A2B3] shrink-0 mt-0.5" />
+                        <div className="flex items-center justify-between gap-1.5">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#171717] text-white font-semibold text-[9px]">
+                              {initials}
+                            </div>
+                            <p className="text-xs font-semibold text-[#171717] truncate">
+                              {name}
+                            </p>
+                          </div>
+                          <GripVertical className="h-3 w-3 text-[#98A2B3] shrink-0" />
                         </div>
 
-                        <p className="text-[10px] text-[#667085] truncate mt-0.5">
+                        <p className="text-[10px] text-[#667085] truncate mt-1">
                           {app.candidate.current_role || "Applicant"}
                         </p>
 
@@ -801,8 +833,8 @@ export default function JobWorkspacePage() {
                           </span>
                           {matchVal !== null && (
                             <span className={cn(
-                              "font-semibold tabular-nums",
-                              matchVal >= 80 ? "text-[#12B76A]" : "text-[#171717]"
+                              "font-semibold tabular-nums px-1.5 py-0.2 rounded",
+                              matchVal >= 80 ? "bg-[#ECFDF3] text-[#12B76A]" : "bg-[#F2F4F7] text-[#171717]"
                             )}>
                               {matchVal}% Fit
                             </span>

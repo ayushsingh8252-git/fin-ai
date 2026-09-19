@@ -731,34 +731,57 @@ export default function CandidateDetailPage() {
       {/* Candidate Profile Header */}
       <div className="rounded-lg border border-[#E4E7EC] bg-white p-4 sm:p-5">
         <div className="flex flex-wrap items-center justify-between gap-4">
-          <div className="space-y-1">
-            <div className="flex flex-wrap items-center gap-2.5">
-              <h1 className="text-xl font-semibold tracking-tight text-[#171717]">
-                {candidateName}
-              </h1>
-              <StageBadge stage={data.application.stage} />
+          <div className="flex items-center gap-3.5 min-w-0">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#171717] text-white font-semibold text-sm shadow-2xs">
+              {candidateName
+                .split(/[\s@._-]+/)
+                .filter(Boolean)
+                .slice(0, 2)
+                .map((p) => p[0].toUpperCase())
+                .join("") || "C"}
             </div>
+            <div className="space-y-1 min-w-0">
+              <div className="flex flex-wrap items-center gap-2.5">
+                <h1 className="text-xl font-semibold tracking-tight text-[#171717] truncate">
+                  {candidateName}
+                </h1>
+                <StageBadge stage={data.application.stage} />
+              </div>
 
-            <div className="flex flex-wrap items-center gap-2 text-xs text-[#667085]">
-              {data.candidate.current_role && (
-                <span>{data.candidate.current_role}</span>
-              )}
-              {data.candidate.location && (
-                <>
-                  <span className="text-[#E4E7EC]">·</span>
-                  <span>{data.candidate.location}</span>
-                </>
-              )}
-              {data.candidate.experience_years !== null && data.candidate.experience_years !== undefined && (
-                <>
-                  <span className="text-[#E4E7EC]">·</span>
-                  <span>{data.candidate.experience_years} years experience</span>
-                </>
-              )}
+              <div className="flex flex-wrap items-center gap-2 text-xs text-[#667085]">
+                {data.candidate.current_role && (
+                  <span className="font-medium text-[#171717]">{data.candidate.current_role}</span>
+                )}
+                {data.candidate.location && (
+                  <>
+                    <span className="text-[#E4E7EC]">·</span>
+                    <span className="flex items-center gap-1">
+                      <MapPin className="h-3 w-3 text-[#98A2B3]" />
+                      {data.candidate.location}
+                    </span>
+                  </>
+                )}
+                {data.candidate.experience_years !== null && data.candidate.experience_years !== undefined && (
+                  <>
+                    <span className="text-[#E4E7EC]">·</span>
+                    <span>{data.candidate.experience_years} years experience</span>
+                  </>
+                )}
+              </div>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
+            {data.candidate.has_resume && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => openResume(data.candidate.id)}
+                className="h-8 rounded-md border-[#E4E7EC] text-xs font-medium text-[#171717] hover:bg-[#F2F4F7]"
+              >
+                <Download className="h-3.5 w-3.5 mr-1.5 text-[#667085]" /> Resume PDF
+              </Button>
+            )}
             <Button
               variant="outline"
               size="sm"

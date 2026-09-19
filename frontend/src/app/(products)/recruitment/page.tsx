@@ -48,36 +48,36 @@ function MetricCard({ label, value, subtext, badge }: MetricCardProps) {
 
 function OverallPipelineFunnel({ pipeline, total }: { pipeline: Record<string, number>; total: number }) {
   const stages = [
-    { key: "APPLIED", label: "Applied", count: pipeline.APPLIED || 0 },
-    { key: "SHORTLISTED", label: "Shortlisted", count: pipeline.SHORTLISTED || 0 },
-    { key: "INTERVIEW", label: "Interview", count: pipeline.INTERVIEW || 0 },
-    { key: "OFFER", label: "Offer", count: pipeline.OFFER || 0 },
-    { key: "HIRED", label: "Hired", count: pipeline.HIRED || 0 },
+    { key: "APPLIED", label: "1. Applied", count: pipeline.APPLIED || 0 },
+    { key: "SHORTLISTED", label: "2. Shortlisted", count: pipeline.SHORTLISTED || 0 },
+    { key: "INTERVIEW", label: "3. Interview", count: pipeline.INTERVIEW || 0 },
+    { key: "OFFER", label: "4. Offer", count: pipeline.OFFER || 0 },
+    { key: "HIRED", label: "5. Hired", count: pipeline.HIRED || 0 },
   ];
 
   return (
     <div className="rounded-lg border border-[#E4E7EC] bg-white p-4 sm:p-5">
-      <div className="flex items-center justify-between pb-3 border-b border-[#E4E7EC]">
+      <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-[#E4E7EC]">
         <div>
-          <h2 className="text-xs font-semibold text-[#171717] uppercase tracking-wider">Hiring Pipeline Funnel</h2>
-          <p className="text-[11px] text-[#667085] mt-0.5">Live candidate progression across all active requisitions</p>
+          <h2 className="text-xs font-semibold text-[#171717] uppercase tracking-wider">Candidate Progression Funnel</h2>
+          <p className="text-[11px] text-[#667085] mt-0.5">Live conversion rates across all open requisitions</p>
         </div>
-        <span className="text-xs font-semibold text-[#171717] tabular-nums">
-          {total} Candidates Total
+        <span className="text-xs font-semibold text-[#171717] tabular-nums bg-[#F7F8FA] border border-[#E4E7EC] rounded px-2.5 py-1">
+          {total} Total Applicants
         </span>
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 sm:gap-4 pt-4">
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 sm:gap-3 pt-4">
         {stages.map((stage) => {
           const pct = total > 0 ? Math.round((stage.count / total) * 100) : 0;
           return (
-            <div key={stage.key} className="relative rounded-md bg-[#F7F8FA] p-3 border border-[#E4E7EC]">
+            <div key={stage.key} className="relative rounded-lg bg-[#F7F8FA] p-3 border border-[#E4E7EC] transition-all duration-150 hover:border-[#D0D5DD]">
               <div className="text-[11px] font-medium text-[#667085] uppercase tracking-wider">{stage.label}</div>
-              <div className="mt-1 flex items-baseline gap-2">
-                <span className="text-xl font-semibold text-[#171717] tabular-nums">{stage.count}</span>
-                <span className="text-[10px] text-[#98A2B3] font-normal tabular-nums">{pct}%</span>
+              <div className="mt-1.5 flex items-baseline gap-2">
+                <span className="text-2xl font-semibold text-[#171717] tabular-nums">{stage.count}</span>
+                <span className="text-[11px] text-[#98A2B3] font-medium tabular-nums">{pct}%</span>
               </div>
-              <div className="mt-2 h-1 w-full rounded-full bg-[#E4E7EC] overflow-hidden">
+              <div className="mt-2.5 h-1.5 w-full rounded-full bg-[#E4E7EC] overflow-hidden">
                 <div
                   className="h-full rounded-full bg-[#171717] transition-all duration-300"
                   style={{ width: `${pct}%` }}
@@ -166,9 +166,10 @@ function AgentActivityFeed() {
 function JobTableRow({ job }: { job: Job }) {
   const isOpen = job.status === "open";
   const p = job.pipeline;
+  const applied = p.APPLIED ?? 0;
   const shortlisted = p.SHORTLISTED ?? 0;
   const interview = p.INTERVIEW ?? 0;
-  const offer = p.OFFER ?? 0;
+  const offer = (p.OFFER ?? 0) + (p.HIRED ?? 0);
 
   return (
     <tr className="group hover:bg-[#F7F8FA] transition-colors">
@@ -177,26 +178,48 @@ function JobTableRow({ job }: { job: Job }) {
           <p className="font-semibold text-xs text-[#171717] group-hover:text-[#2563EB] transition-colors">
             {job.title}
           </p>
-          <div className="flex items-center gap-2 text-[11px] text-[#667085] mt-0.5">
-            {job.department && <span>{job.department}</span>}
+          <div className="flex items-center gap-2 text-[11px] text-[#667085] mt-1">
+            {job.department && (
+              <span className="rounded bg-[#F2F4F7] px-1.5 py-0.2 font-medium text-[#171717]">
+                {job.department}
+              </span>
+            )}
             {job.location && (
-              <>
-                <span className="text-[#E4E7EC]">·</span>
-                <span>{job.location}</span>
-              </>
+              <span className="flex items-center gap-1 text-[#667085]">
+                <MapPin className="h-3 w-3 text-[#98A2B3]" />
+                {job.location}
+              </span>
             )}
           </div>
         </Link>
       </td>
       <td className="px-3 py-3.5 text-xs text-[#667085]">
-        {job.min_experience_years !== null ? `${job.min_experience_years}+ years` : "—"}
+        {job.min_experience_years !== null ? (
+          <span className="font-medium text-[#171717]">{job.min_experience_years}+ years</span>
+        ) : (
+          <span className="text-[#98A2B3]">Flexible</span>
+        )}
       </td>
       <td className="px-3 py-3.5">
-        <div className="flex items-center gap-1.5 text-xs">
-          <span className="font-semibold text-[#171717] tabular-nums">{job.total_candidates}</span>
-          <span className="text-[#98A2B3] text-[11px]">
-            ({shortlisted} short, {interview} intv, {offer} off)
+        <div className="flex flex-wrap items-center gap-1.5 text-xs">
+          <span className="rounded bg-[#171717] text-white px-2 py-0.5 text-[11px] font-semibold tabular-nums">
+            {job.total_candidates} total
           </span>
+          {shortlisted > 0 && (
+            <span className="rounded bg-[#F2F4F7] border border-[#E4E7EC] px-1.5 py-0.5 text-[10px] text-[#171717] font-medium">
+              {shortlisted} shortlisted
+            </span>
+          )}
+          {interview > 0 && (
+            <span className="rounded bg-[#FFFAEB] border border-[#FEDF89] px-1.5 py-0.5 text-[10px] text-[#B54708] font-medium">
+              {interview} in interview
+            </span>
+          )}
+          {offer > 0 && (
+            <span className="rounded bg-[#ECFDF3] border border-[#A6F4C5] px-1.5 py-0.5 text-[10px] text-[#027A48] font-medium">
+              {offer} offer/hired
+            </span>
+          )}
         </div>
       </td>
       <td className="px-3 py-3.5">
@@ -208,17 +231,17 @@ function JobTableRow({ job }: { job: Job }) {
             )}
           />
           <span className="text-xs font-medium text-[#171717] capitalize">
-            {job.status}
+            {isOpen ? "Active Role" : job.status}
           </span>
         </div>
       </td>
       <td className="px-3 py-3.5 text-right">
         <Link
           href={`/recruitment/jobs/${job.id}`}
-          className="inline-flex items-center gap-1 text-xs font-medium text-[#667085] hover:text-[#171717] transition-colors"
+          className="inline-flex items-center gap-1 text-xs font-medium text-[#171717] bg-white border border-[#E4E7EC] hover:bg-[#F2F4F7] px-2.5 py-1 rounded transition-colors"
         >
-          View pipeline
-          <ChevronRight className="h-3 w-3" />
+          View Pipeline
+          <ChevronRight className="h-3 w-3 text-[#667085]" />
         </Link>
       </td>
     </tr>
