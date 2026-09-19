@@ -22,9 +22,18 @@ def upsert_role(title: str, jd_text: str = "", department: Optional[str] = None,
         if role is None:
             role = Role(id=str(uuid.uuid4()), title=title)
             db.add(role)
-        role.jd_text = jd_text or role.jd_text
-        role.department = department if department is not None else role.department
-        role.must_have_skills = must_have_skills if must_have_skills is not None else (role.must_have_skills or [])
+        if role.created_by is None:
+            # Agent-owned row (auto-created by usage): the agents keep it fresh.
+            role.jd_text = jd_text or role.jd_text
+            role.department = department if department is not None else role.department
+            role.must_have_skills = must_have_skills if must_have_skills is not None else (role.must_have_skills or [])
+        else:
+            # A person owns this job in the HR recruitment panel. An agent that
+            # merely names the role (a screening session, a call) must never
+            # overwrite what that person wrote, so it may only fill blanks.
+            role.jd_text = role.jd_text or jd_text or None
+            role.department = role.department or department
+            role.must_have_skills = role.must_have_skills or must_have_skills or []
         db.commit()
         return {"id": role.id, "title": role.title, "jd_text": role.jd_text, "department": role.department, "must_have_skills": role.must_have_skills}
     finally:

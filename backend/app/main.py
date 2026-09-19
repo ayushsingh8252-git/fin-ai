@@ -7,7 +7,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 import os
 from .config import settings
-from .api import upload, query, rules, audio, fraud, interview, auth, telephonic, hiring, screening, orchestrator, mcp, observability, google_oauth, agent, whatsapp, voice, command_center, outcomes, feedback, evals, health
+from .api import upload, query, rules, audio, fraud, interview, auth, telephonic, hiring, screening, orchestrator, mcp, observability, google_oauth, agent, whatsapp, voice, command_center, outcomes, feedback, evals, health, recruitment
 from .api.deps import get_current_user
 from .database import engine
 from .rate_limit import limiter
@@ -246,6 +246,7 @@ app.include_router(evals.router, prefix="/api/v1", dependencies=_auth_guard)
 app.include_router(agent.router, prefix="/api/v1", dependencies=_auth_guard)
 app.include_router(voice.router, prefix="/api/v1", dependencies=_auth_guard)
 app.include_router(command_center.router, prefix="/api/v1", dependencies=_auth_guard)
+app.include_router(recruitment.router, prefix="/api/v1", dependencies=_auth_guard)
 
 # Mounted at the root (not /api/v1) so the callback path matches
 # GOOGLE_AUTH_REDIRECT_URL in .env exactly: /auth/google/callback.
@@ -274,6 +275,11 @@ def get_uploaded_file(file_path: str, user: models.User = Depends(get_current_us
     must still land inside UPLOADS_ROOT after normalization."""
     candidate = os.path.abspath(os.path.join(UPLOADS_ROOT, file_path))
     if os.path.commonpath([candidate, UPLOADS_ROOT]) != UPLOADS_ROOT or not os.path.isfile(candidate):
+        raise HTTPException(status_code=404, detail="File not found.")
+    # Candidate resumes are served only by GET /recruitment/candidates/{id}/resume,
+    # which checks that this user may see that candidate. This route only checks
+    # that someone is signed in, so it must not be a way around that.
+    if os.path.commonpath([candidate, os.path.join(UPLOADS_ROOT, "resumes")]) == os.path.join(UPLOADS_ROOT, "resumes"):
         raise HTTPException(status_code=404, detail="File not found.")
     return FileResponse(candidate)
 

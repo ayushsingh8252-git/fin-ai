@@ -109,6 +109,12 @@ def google_login(payload: GoogleLoginRequest, db: Session = Depends(get_db)):
         user.picture = claims.get("picture") or user.picture
         user.login_count = (user.login_count or 0) + 1
         user.last_login_at = now
+
+    # Seed the first hr_admin(s) from config (see Settings.HR_ADMIN_EMAILS).
+    admin_emails = {e.strip().lower() for e in settings.HR_ADMIN_EMAILS.split(",") if e.strip()}
+    if email in admin_emails and user.role != models.HR_ADMIN:
+        user.role = models.HR_ADMIN
+        logger.info("[Auth] %s promoted to hr_admin via HR_ADMIN_EMAILS", email)
     db.commit()
 
     unique_user_count = db.query(models.User).count()

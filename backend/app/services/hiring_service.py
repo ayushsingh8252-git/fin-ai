@@ -136,6 +136,11 @@ def _fallback_resume_fields(filename: str, text: str) -> Dict[str, Any]:
         "skills": [],
         "summary": "Automated summary unavailable — both LLM providers failed. Review the resume manually.",
         "ats_score": 60,
+        # The 60 above is a placeholder, not a measurement. Callers that
+        # persist scores (services/recruitment_service.py) read this flag and
+        # record the score as not_computed instead of storing the placeholder.
+        # Existing callers ignore the extra key.
+        "degraded": True,
     }
 
 
@@ -145,6 +150,7 @@ def extract_resume_fields(filename: str, text: str) -> Dict[str, Any]:
         return {**_fallback_resume_fields(filename, text), "summary": "No extractable text found in this PDF."}
 
     prompt = f"Resume filename: {filename}\n\nRaw extracted resume text:\n{text[:RESUME_TEXT_PROMPT_CHARS]}"
+    fallback_used = False
     try:
         result = generate_json(prompt, RESUME_SYSTEM_INSTRUCTION)
         if not isinstance(result, dict):
@@ -152,6 +158,9 @@ def extract_resume_fields(filename: str, text: str) -> Dict[str, Any]:
     except Exception as e:
         print(f"[Hiring Resume Extraction Error] {e}")
         result = _fallback_resume_fields(filename, text)
+        fallback_used = True
+    # Set from what actually happened, never trusted from the model output.
+    result["degraded"] = fallback_used
 
     # Regex-extracted contact info is more reliable than LLM output for exact
     # strings — prefer it when present, fall back to whatever the LLM found.
@@ -171,9 +180,13 @@ def extract_resume_fields(filename: str, text: str) -> Dict[str, Any]:
     result.setdefault("experience", "Not specified")
     result.setdefault("summary", "")
     try:
-        result["ats_score"] = max(0, min(100, int(result.get("ats_score", 60))))
-    except (TypeError, ValueError):
+        result["ats_score"] = max(0, min(100, int(result["ats_score"])))
+    except (KeyError, TypeError, ValueError):
+        # The model answered but gave no usable score. 60 stays for the legacy
+        # endpoint's sake; the flag lets score-persisting callers know it is
+        # a default rather than a measurement.
         result["ats_score"] = 60
+        result["ats_score_defaulted"] = True
 
     return result
 
@@ -248,6 +261,10 @@ def _fallback_match(candidate: Dict[str, Any], requirement: str) -> Dict[str, An
         "matched_skills": matched,
         "missing_skills": missing,
         "recommendation": _recommendation_from_score(score),
+        # Keyword overlap, not a model judgement: real arithmetic over real
+        # data, but not the AI result the UI would imply. Flagged so callers
+        # can label it instead of presenting it as an LLM score.
+        "degraded": True,
     }
 
 
@@ -267,6 +284,7 @@ def match_candidate_to_requirement(candidate: Dict[str, Any], requirement: str, 
         f"Skills: {', '.join(candidate.get('skills') or [])}\n"
         f"Summary: {candidate.get('summary')}"
     )
+    fallback_used = False
     try:
         result = generate_json(prompt, MATCH_SYSTEM_INSTRUCTION)
         if not isinstance(result, dict):
@@ -274,11 +292,14 @@ def match_candidate_to_requirement(candidate: Dict[str, Any], requirement: str, 
     except Exception as e:
         print(f"[Hiring Requirement Match Error] {e}")
         result = _fallback_match(candidate, requirement)
+        fallback_used = True
+    result["degraded"] = fallback_used
 
     try:
-        result["match_score"] = max(0, min(100, int(result.get("match_score", 60))))
-    except (TypeError, ValueError):
+        result["match_score"] = max(0, min(100, int(result["match_score"])))
+    except (KeyError, TypeError, ValueError):
         result["match_score"] = 60
+        result["match_score_defaulted"] = True
     result.setdefault("matched_skills", [])
     result.setdefault("missing_skills", [])
     result.setdefault("recommendation", _recommendation_from_score(result["match_score"]))

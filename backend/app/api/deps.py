@@ -65,3 +65,30 @@ def get_current_user_query(token: str, db: Session = Depends(get_db)) -> "models
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User account no longer exists.")
     return user
+
+
+def require_role(*allowed_roles: str):
+    """Dependency factory: 403 unless the signed-in user holds one of
+    `allowed_roles`. Roles are read from the User row that get_current_user
+    just loaded from the database, never from a token claim, so a role change
+    takes effect on the very next request instead of when the token expires.
+
+    This gates a whole endpoint by role. It deliberately does NOT decide
+    which jobs or candidates a role may touch: that is per-object and lives
+    in services/recruitment_service.py (visible_jobs_filter /
+    visible_applications_filter), applied inside the query so an
+    out-of-scope row is never loaded in the first place.
+    """
+    unknown = set(allowed_roles) - set(models.USER_ROLES)
+    if unknown:  # a typo here would silently lock everyone out, so fail at import time
+        raise ValueError(f"require_role: unknown role(s) {sorted(unknown)}")
+
+    def _dependency(user: "models.User" = Depends(get_current_user)) -> "models.User":
+        if user.role not in allowed_roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Your role does not have access to this action.",
+            )
+        return user
+
+    return _dependency

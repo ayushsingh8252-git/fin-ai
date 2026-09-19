@@ -1,7 +1,54 @@
-from sqlalchemy import Column, String, Integer, DateTime, ForeignKey, JSON, Float, Text
+from sqlalchemy import Column, String, Integer, DateTime, ForeignKey, JSON, Float, Text, UniqueConstraint, Index, text
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from .database import Base
+
+# ── Recruitment RBAC roles (User.role) ───────────────────────────────────
+# Kept here rather than in api/deps.py so the model layer, the service layer
+# and the migration can all import one definition without a circular import
+# back through the API package.
+HR_ADMIN = "hr_admin"
+RECRUITER = "recruiter"
+HIRING_MANAGER = "hiring_manager"
+INTERVIEWER = "interviewer"
+USER_ROLES = (HR_ADMIN, RECRUITER, HIRING_MANAGER, INTERVIEWER)
+
+# ── Application pipeline stages (Application.stage) ──────────────────────
+# One authoritative lifecycle. Agents never invent a stage of their own —
+# every transition goes through recruitment_service.transition_stage, which
+# validates against STAGE_TRANSITIONS below and records a CandidateActivity.
+STAGE_APPLIED = "APPLIED"
+STAGE_PROCESSING = "PROCESSING"
+STAGE_SCREENING = "SCREENING"
+STAGE_SHORTLISTED = "SHORTLISTED"
+STAGE_INTERVIEW = "INTERVIEW"
+STAGE_SELECTED = "SELECTED"
+STAGE_OFFER = "OFFER"
+STAGE_HIRED = "HIRED"
+STAGE_REJECTED = "REJECTED"
+STAGE_WITHDRAWN = "WITHDRAWN"
+
+PIPELINE_STAGES = (
+    STAGE_APPLIED, STAGE_PROCESSING, STAGE_SCREENING, STAGE_SHORTLISTED,
+    STAGE_INTERVIEW, STAGE_SELECTED, STAGE_OFFER, STAGE_HIRED,
+)
+TERMINAL_STAGES = (STAGE_REJECTED, STAGE_WITHDRAWN)
+ALL_STAGES = PIPELINE_STAGES + TERMINAL_STAGES
+
+# ── Score provenance (Application.score_provenance) ──────────────────────
+# Why this exists: the codebase's own audit found a fabricated score (a
+# hardcoded 50 produced during a total LLM outage) persisted and then marked
+# "is_real: true", because the guard only checked `is None`. A value alone
+# can never answer "was this actually computed?" — so every AI-derived score
+# on an Application carries a status + source alongside it, and the UI is
+# built to refuse to render a number whose status isn't "computed".
+SCORE_COMPUTED = "computed"          # the real (LLM) path produced this value
+SCORE_DEGRADED = "degraded"          # a fallback produced it; value kept, must be labelled
+SCORE_NOT_COMPUTED = "not_computed"  # nothing produced it; value is None
+
+SOURCE_LLM = "llm"
+SOURCE_DETERMINISTIC = "deterministic"
+SOURCE_DERIVED = "derived"           # arithmetic over other persisted fields, no model involved
 
 class Document(Base):
     __tablename__ = "documents"
@@ -76,6 +123,20 @@ class User(Base):
     name = Column(String)
     picture = Column(String)
     login_count = Column(Integer, default=0)
+    # Recruitment RBAC. Deliberately a plain string column rather than a
+    # separate roles/permissions table: this app has exactly four fixed roles
+    # and no notion of custom roles, so a lookup table would add a join to
+    # every authorization check and buy nothing. See api/deps.py::require_role
+    # and services/recruitment_service.py's visible_jobs_filter /
+    # assert_can_act_on, which are the only two places that interpret it.
+    #
+    # Defaults to "recruiter" rather than something more restrictive because
+    # every account that exists today predates this column and was, in
+    # effect, already a full-access user (get_current_user was a boolean
+    # "is signed in" gate). Defaulting to a narrower role would silently
+    # revoke access those users already have; tightening is a deliberate
+    # admin action, not a migration side effect.
+    role = Column(String, nullable=False, default=RECRUITER, server_default=RECRUITER, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     last_login_at = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -201,7 +262,16 @@ class CandidateDeliveryStatus(Base):
 class Role(Base):
     """Shared/global memory — one row per job role, readable by every agent
     (Screening, Telephonic, Fraud) so role expectations stay consistent
-    across products instead of each agent guessing at role_title free text."""
+    across products instead of each agent guessing at role_title free text.
+
+    Also the Job entity for the HR recruitment panel. Deliberately extended
+    rather than shadowed by a parallel `jobs` table: this row already holds
+    the JD text that the Screening and Telephonic agents read, so a second
+    job table would immediately create two competing sources of truth for
+    "what is this role's JD". The columns below are all nullable/defaulted,
+    so rows auto-upserted by the agents (global_memory.upsert_role, which
+    only ever sets title/jd_text) stay valid — they simply appear as jobs
+    with no owner and status "draft" until someone fills them in."""
 
     __tablename__ = "roles"
 
@@ -210,6 +280,18 @@ class Role(Base):
     department = Column(String, nullable=True)
     jd_text = Column(Text, nullable=True)
     must_have_skills = Column(JSON, default=list)
+    # ── Recruitment-panel fields ──
+    status = Column(String, nullable=False, default="draft", server_default="draft", index=True)  # draft | open | closed
+    location = Column(String, nullable=True)
+    min_experience_years = Column(Float, nullable=True)
+    preferred_skills = Column(JSON, default=list)
+    description = Column(Text, nullable=True)
+    # The hiring-manager ownership key: a user with role="hiring_manager"
+    # can only see and act on jobs where this matches their own id (see
+    # recruitment_service.visible_jobs_filter). Nullable because every row
+    # predating this column — and every row the agents auto-upsert — has no
+    # creating user; those are visible to hr_admin/recruiter only.
+    created_by = Column(String, ForeignKey("users.id"), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -440,4 +522,233 @@ class VoiceEnrollment(Base):
     embedding = Column(JSON, nullable=False)        # [float x 192]
     audio_quality_score = Column(Float, nullable=True)
     speech_duration_sec = Column(Float, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# HR Recruitment Panel
+#
+# Until these tables existed, the hiring pipeline had no system of record:
+# POST /hiring/parse-resumes parsed a PDF, deleted it, returned JSON, and
+# persisted nothing, so the entire pipeline lived in React state and was
+# lost on refresh. Candidate is the central entity; Application (Candidate
+# x Role) is what actually moves through the pipeline.
+#
+# These reuse rather than replace what already existed: Role is the job,
+# FraudScan holds fraud results, ScreeningSession/ScreeningResult hold
+# screening and interview evaluations, CallRecord holds telephonic calls.
+# Application carries foreign keys to those instead of copying their data.
+# ═════════════════════════════════════════════════════════════════════════
+
+
+class Candidate(Base):
+    """One person, globally — not one row per application. Someone who
+    applies to three roles is one Candidate with three Applications, so
+    their resume, fraud history and activity timeline stay unified.
+
+    The *_key columns are normalized blocking keys used by the dedup
+    matcher (services/recruitment_service.py::find_matching_candidate).
+    They're stored rather than computed per-query so they can be indexed.
+    """
+
+    __tablename__ = "candidates"
+    __table_args__ = (
+        # The database, not just the matcher, refuses a second candidate with
+        # the same normalized email. find_matching_candidate() handles the
+        # normal case, but two workers can both look, both find nothing, and
+        # both insert; without this the loser silently creates a duplicate
+        # person. With it the loser gets an IntegrityError and re-fetches the
+        # winner. Partial (email_key IS NOT NULL) because resumes legitimately
+        # parse with no email, and those must not collide with each other.
+        Index(
+            "uq_candidates_email_key", "email_key", unique=True,
+            sqlite_where=text("email_key IS NOT NULL"),
+            postgresql_where=text("email_key IS NOT NULL"),
+        ),
+    )
+
+    id = Column(String, primary_key=True, index=True)
+    email = Column(String, nullable=True, index=True)
+    email_key = Column(String, nullable=True, index=True)   # lowercased, trimmed, gmail dots/+tags stripped
+    name = Column(String, nullable=True)
+    name_key = Column(String, nullable=True, index=True)    # lowercased, non-alpha stripped
+    phone = Column(String, nullable=True)
+    phone_key = Column(String, nullable=True, index=True)   # last 10 digits
+    location = Column(String, nullable=True)
+    current_role = Column(String, nullable=True)
+    experience_text = Column(String, nullable=True)         # free text as extracted, e.g. "2.4 Years"
+    experience_years = Column(Float, nullable=True)          # parsed from the above when unambiguous, else null
+    education = Column(JSON, default=list)
+    skills = Column(JSON, default=list)
+    # Unlike /hiring/parse-resumes, the recruitment path KEEPS the file so
+    # HR can reopen it and so fraud analysis has something to scan. Served
+    # through main.py's auth-gated GET /uploads/{path}, never a static mount.
+    resume_file_path = Column(String, nullable=True)
+    resume_filename = Column(String, nullable=True)
+    resume_text = Column(Text, nullable=True)
+    source = Column(String, nullable=True)                   # "bulk_upload" | "manual" | ...
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    applications = relationship("Application", back_populates="candidate")
+
+
+class Application(Base):
+    """A Candidate's candidacy for one Role — the pipeline entity. Every AI
+    result and HR decision hangs off this row, which is why `stage` lives
+    here and not on Candidate: the same person can be SHORTLISTED for one
+    role and REJECTED for another.
+
+    Scores are paired with `score_provenance` (see the SCORE_* constants at
+    the top of this module). A number here is only trustworthy if its
+    provenance entry says status="computed" — readers must check, and the
+    UI is built to render a dash rather than a number otherwise.
+    """
+
+    __tablename__ = "applications"
+    __table_args__ = (
+        # One application per person per role. Also the concurrency guard:
+        # two resume-processing tasks racing on the same candidate both try
+        # to insert, one gets an IntegrityError, and the loser re-fetches
+        # the winner's row instead of creating a duplicate.
+        UniqueConstraint("candidate_id", "job_id", name="uq_application_candidate_job"),
+        Index("ix_applications_job_stage", "job_id", "stage"),
+    )
+
+    id = Column(String, primary_key=True, index=True)
+    candidate_id = Column(String, ForeignKey("candidates.id"), nullable=False, index=True)
+    job_id = Column(String, ForeignKey("roles.id"), nullable=False, index=True)
+    stage = Column(String, nullable=False, default=STAGE_PROCESSING, server_default=STAGE_PROCESSING, index=True)
+
+    # ── AI-derived, all nullable: null means "not computed", never zero ──
+    ats_score = Column(Integer, nullable=True)           # resume quality, independent of any JD
+    match_score = Column(Integer, nullable=True)         # JD match
+    skill_match_score = Column(Integer, nullable=True)   # derived: matched / (matched + missing)
+    matched_skills = Column(JSON, default=list)
+    missing_skills = Column(JSON, default=list)
+    recommendation = Column(String, nullable=True)
+    ai_summary = Column(Text, nullable=True)
+    # {"ats_score": {"status": "computed", "source": "llm"}, ...}
+    score_provenance = Column(JSON, default=dict)
+
+    analysis_status = Column(String, nullable=False, default="pending", server_default="pending", index=True)  # pending|running|completed|failed
+    analysis_error = Column(Text, nullable=True)
+
+    # Links to the existing engines rather than copies of their output.
+    fraud_scan_id = Column(String, ForeignKey("fraud_scans.id"), nullable=True, index=True)
+    screening_session_id = Column(String, ForeignKey("screening_sessions.id"), nullable=True, index=True)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    candidate = relationship("Candidate", back_populates="applications")
+
+
+class ResumeBatch(Base):
+    """One bulk upload action. Exists so the UI can show real progress for
+    a batch without the browser having to hold the file list itself."""
+
+    __tablename__ = "resume_batches"
+
+    id = Column(String, primary_key=True, index=True)
+    job_id = Column(String, ForeignKey("roles.id"), nullable=False, index=True)
+    uploaded_by = Column(String, ForeignKey("users.id"), nullable=True, index=True)
+    total_files = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class ResumeUpload(Base):
+    """One uploaded file, and the unit of work for process_resume_task.
+
+    This row is what makes upload progress honest: the UI's counts are a
+    GROUP BY over `status` here, so a stalled worker shows files still
+    sitting in "queued" rather than an animation implying progress that
+    isn't happening.
+
+    It is also the idempotency key. The task claims a row by a conditional
+    UPDATE (queued|failed -> processing) and returns without side effects
+    if it didn't win the claim, so a Celery retry, a double-dispatch, or a
+    user hitting Retry can never produce a second Candidate/Application.
+    """
+
+    __tablename__ = "resume_uploads"
+
+    id = Column(String, primary_key=True, index=True)
+    batch_id = Column(String, ForeignKey("resume_batches.id"), nullable=False, index=True)
+    job_id = Column(String, ForeignKey("roles.id"), nullable=False, index=True)
+    original_filename = Column(String, nullable=False)
+    stored_path = Column(String, nullable=True)
+    # queued -> processing -> parsed | duplicate | failed
+    status = Column(String, nullable=False, default="queued", server_default="queued", index=True)
+    error = Column(Text, nullable=True)
+    candidate_id = Column(String, ForeignKey("candidates.id"), nullable=True, index=True)
+    application_id = Column(String, ForeignKey("applications.id"), nullable=True, index=True)
+    task_id = Column(String, nullable=True)
+    attempts = Column(Integer, nullable=False, default=0, server_default="0")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class CandidateActivity(Base):
+    """The candidate timeline AND the audit trail — deliberately one table,
+    not two. Every HR decision, AI analysis, fraud scan, screening invite
+    and interview action writes exactly one row here via
+    recruitment_service.record_activity().
+
+    `actor_type` is what separates "the AI computed this" from "a person
+    decided this", which is the distinction the whole panel is built on:
+    AI recommends, HR decides, and the timeline has to show which was which.
+
+    `dedupe_key` makes retries safe. A task that re-runs re-emits the same
+    key (e.g. "resume_processed:<upload_id>") and the unique index turns
+    the second write into a no-op instead of a duplicated history entry.
+    """
+
+    __tablename__ = "candidate_activities"
+    __table_args__ = (
+        UniqueConstraint("dedupe_key", name="uq_candidate_activity_dedupe_key"),
+        Index("ix_candidate_activities_candidate_created", "candidate_id", "created_at"),
+    )
+
+    id = Column(String, primary_key=True, index=True)
+    candidate_id = Column(String, ForeignKey("candidates.id"), nullable=False, index=True)
+    application_id = Column(String, ForeignKey("applications.id"), nullable=True, index=True)
+    job_id = Column(String, ForeignKey("roles.id"), nullable=True, index=True)
+    event_type = Column(String, nullable=False, index=True)   # candidate.created, candidate.shortlisted, ...
+    actor_type = Column(String, nullable=False, default="system")  # "hr" | "ai" | "system"
+    actor_user_id = Column(String, ForeignKey("users.id"), nullable=True, index=True)
+    summary = Column(String, nullable=False)
+    payload = Column(JSON, default=dict)
+    # Nullable: only events that a retry could duplicate need a key. Ad-hoc
+    # HR actions (which are genuinely distinct each time someone clicks)
+    # leave it null, and SQL's "nulls don't collide" rule means the unique
+    # index doesn't constrain them.
+    dedupe_key = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+
+class Interview(Base):
+    """A scheduled interview for an Application. Phase 1 needs only the
+    columns that authorization reads: interviewer_email is what scopes an
+    interviewer-role user to the applications they are actually scheduled
+    against (recruitment_service.visible_applications_filter). Scheduling
+    itself (Google Calendar, invitation email) is built on top of this table
+    later and fills in the calendar_* fields; until then nothing writes here
+    except that future flow and tests.
+    """
+
+    __tablename__ = "interviews"
+
+    id = Column(String, primary_key=True, index=True)
+    application_id = Column(String, ForeignKey("applications.id"), nullable=False, index=True)
+    candidate_id = Column(String, ForeignKey("candidates.id"), nullable=False, index=True)
+    job_id = Column(String, ForeignKey("roles.id"), nullable=False, index=True)
+    mode = Column(String, nullable=False, default="human")  # ai_screening | telephonic | human
+    scheduled_at = Column(DateTime(timezone=True), nullable=True)
+    interviewer_email = Column(String, nullable=True, index=True)
+    calendar_event_id = Column(String, nullable=True)
+    meet_link = Column(String, nullable=True)
+    status = Column(String, nullable=False, default="scheduled")
+    screening_session_id = Column(String, ForeignKey("screening_sessions.id"), nullable=True, index=True)
+    call_record_id = Column(String, ForeignKey("call_records.id"), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

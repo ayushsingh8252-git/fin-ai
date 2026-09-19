@@ -120,6 +120,14 @@ class Settings(BaseSettings):
     # public URL for the Sarvam outbound-call webhook.
     FRONTEND_BASE_URL: str = "http://localhost:3000"
 
+    # Recruitment RBAC bootstrap: comma-separated emails that are promoted to
+    # role "hr_admin" when they sign in. Without some seed like this nobody
+    # could ever be granted a role, since only an hr_admin may assign roles.
+    # Promote-only: removing an email here does NOT demote an existing admin
+    # (that is a deliberate act through the role-assignment endpoint), so a
+    # typo or a config rollback can never lock the real admin out.
+    HR_ADMIN_EMAILS: str = ""
+
     DATABASE_URL: str = "sqlite:///./policy_engine.db"
 
     REDIS_URL: str = "redis://localhost:6379/0"

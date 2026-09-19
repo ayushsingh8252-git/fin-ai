@@ -411,3 +411,45 @@ def process_document_task(self, document_id: str, file_path: str):
         raise self.retry(exc=e, countdown=_ingestion_retry_countdown(attempt + 1))
     finally:
         db.close()
+
+
+# ── HR recruitment panel ─────────────────────────────────────────────────
+# Resume processing. All logic and all idempotency live in
+# services/recruitment_service.py::process_resume_upload; this task only adds
+# the retry policy. Safe to dispatch any number of times for one upload id:
+# only the call that wins the queued|failed -> processing claim does any work,
+# so a Celery retry, a duplicate dispatch, or a user double-clicking Retry can
+# never create a second candidate, application, or history entry.
+RESUME_MAX_RETRIES = 3
+
+
+@celery_app.task(name="process_resume", bind=True, max_retries=RESUME_MAX_RETRIES)
+def process_resume_task(self, upload_id: str):
+    from .database import SessionLocal
+    from .services import recruitment_service
+
+    task_id = self.request.id
+    attempt = self.request.retries
+    logger.info("[recruitment] task_id=%s upload_id=%s process_resume started (attempt %d)", task_id, upload_id, attempt + 1)
+
+    db = SessionLocal()
+    try:
+        try:
+            result = recruitment_service.process_resume_upload(db, upload_id)
+        except Exception as e:
+            # The service has already recorded the failure on the row. Retry
+            # only genuinely transient trouble, and only while retries remain;
+            # after that the row stays "failed" with the real reason for HR to
+            # see and retry by hand.
+            if attempt >= self.max_retries:
+                logger.error("[recruitment] task_id=%s upload_id=%s FAILED after %d attempts: %s", task_id, upload_id, attempt + 1, e)
+                return {"outcome": "failed", "error": str(e)}
+            logger.warning("[recruitment] task_id=%s upload_id=%s attempt %d failed, retrying: %s", task_id, upload_id, attempt + 1, e)
+            recruitment_service.mark_upload(
+                db, upload_id, "queued", f"Temporary problem, retrying (attempt {attempt + 2} of {self.max_retries + 1}): {e}"
+            )
+            raise self.retry(exc=e, countdown=_ingestion_retry_countdown(attempt + 1))
+        logger.info("[recruitment] task_id=%s upload_id=%s -> %s", task_id, upload_id, result.get("outcome"))
+        return result
+    finally:
+        db.close()

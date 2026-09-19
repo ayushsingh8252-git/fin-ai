@@ -5,7 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   ArrowLeft, LayoutGrid, ChevronDown, Search, ShieldCheck, Upload,
-  ShieldAlert, Phone, Video, Zap, Brain, UserPlus, Shield, Radar,
+  ShieldAlert, Phone, Video, Zap, Brain, UserPlus, Shield, Radar, BriefcaseBusiness,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -18,6 +18,7 @@ const PRODUCTS = [
   { href: "/telephonic-agent", label: "Telephonic Agent", icon: Phone },
   { href: "/screening-agent", label: "Screening Agent", icon: Video },
   { href: "/hiring-automation", label: "Hiring Pipeline", icon: Zap },
+  { href: "/recruitment", label: "Recruitment", icon: BriefcaseBusiness },
   { href: "/knowledge", label: "Knowledge Transfer", icon: Brain },
   { href: "/onboarding", label: "Onboarding", icon: UserPlus },
   { href: "/security", label: "Security & Compliance", icon: Shield },
