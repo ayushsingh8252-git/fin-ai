@@ -221,6 +221,13 @@ __marimo__/
 
 # Runtime data — these regenerate from app usage and shouldn't be versioned
 backend/policy_engine.db
+backend/policy_engine.db-shm
+backend/policy_engine.db-wal
+backend/policy_engine.db-journal
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
 policy_engine.db
 backend/uploads/
 

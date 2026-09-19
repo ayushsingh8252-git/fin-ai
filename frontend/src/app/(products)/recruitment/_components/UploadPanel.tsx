@@ -55,10 +55,10 @@ function Bar({ pct, label }: { pct: number; label: string }) {
       aria-valuemin={0}
       aria-valuemax={100}
       aria-valuenow={pct}
-      className="h-2.5 w-full overflow-hidden rounded-full bg-zinc-100 shadow-inner"
+      className="h-2 w-full overflow-hidden rounded-full bg-zinc-100"
     >
       <div
-        className="h-full rounded-full bg-gradient-to-r from-indigo-600 via-indigo-500 to-emerald-500 transition-all duration-300"
+        className="h-full rounded-full bg-zinc-900 transition-all duration-200"
         style={{ width: `${pct}%` }}
       />
     </div>
@@ -67,16 +67,16 @@ function Bar({ pct, label }: { pct: number; label: string }) {
 
 function Count({ label, value, tone }: { label: string; value: number; tone?: "danger" | "info" | "success" }) {
   return (
-    <div className="rounded-xl border border-zinc-200/80 bg-white px-3.5 py-2.5 shadow-xs">
+    <div className="rounded-md border border-zinc-200 bg-white px-3 py-2">
       <div
         className={cn(
-          "text-xl font-black tabular-nums",
-          tone === "danger" && value > 0 ? "text-red-600" : tone === "info" && value > 0 ? "text-indigo-600" : "text-zinc-900"
+          "text-lg font-semibold tabular-nums leading-none",
+          tone === "danger" && value > 0 ? "text-red-600" : tone === "info" && value > 0 ? "text-blue-600" : "text-zinc-900"
         )}
       >
         {value}
       </div>
-      <div className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 mt-0.5">{label}</div>
+      <div className="text-[10px] font-medium text-zinc-500 mt-1">{label}</div>
     </div>
   );
 }
@@ -222,12 +222,12 @@ export function UploadPanel({
 
   return (
     <Dialog open={open} onOpenChange={(next) => !uploading && onOpenChange(next)}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl rounded-lg border-zinc-200 p-5 sm:p-6 shadow-lg">
         <DialogHeader>
-          <DialogTitle>Upload resumes</DialogTitle>
-          <DialogDescription>
-            PDF resumes for <span className="font-medium text-zinc-700">{job.title}</span>. Each one becomes a candidate
-            profile and is analysed against this job.
+          <DialogTitle className="text-base font-semibold text-zinc-900">Upload resumes</DialogTitle>
+          <DialogDescription className="text-xs text-zinc-500">
+            PDF resumes for <span className="font-medium text-zinc-800">{job.title}</span>. Each one becomes a candidate
+            profile and is analyzed against this role.
           </DialogDescription>
         </DialogHeader>
 
@@ -247,14 +247,14 @@ export function UploadPanel({
                   add(e.dataTransfer.files);
                 }}
                 className={cn(
-                  "flex flex-col items-center gap-2 rounded-xl border-2 border-dashed px-6 py-8 text-center transition-colors",
-                  dragging ? "border-blue-400 bg-blue-50" : "border-zinc-200 bg-zinc-50"
+                  "flex flex-col items-center gap-2 rounded-lg border border-dashed px-6 py-7 text-center transition-colors",
+                  dragging ? "border-zinc-900 bg-zinc-50" : "border-zinc-300 bg-zinc-50/50 hover:bg-zinc-50"
                 )}
               >
-                <UploadCloud className="h-8 w-8 text-zinc-400" aria-hidden="true" />
-                <p className="text-sm font-medium text-zinc-800">Drop resumes here</p>
-                <p className="text-xs text-zinc-500">or</p>
-                <Button variant="outline" onClick={() => inputRef.current?.click()}>
+                <UploadCloud className="h-6 w-6 text-zinc-400" aria-hidden="true" />
+                <p className="text-xs font-semibold text-zinc-800">Drag and drop resume PDFs here</p>
+                <p className="text-[11px] text-zinc-400">or</p>
+                <Button variant="outline" size="sm" className="h-8 rounded-md border-zinc-200 text-xs font-medium" onClick={() => inputRef.current?.click()}>
                   Browse files
                 </Button>
                 <input
@@ -414,11 +414,12 @@ export function UploadPanel({
           </div>
         )}
 
-        <DialogFooter>
+        <DialogFooter className="pt-2 border-t border-zinc-100 flex items-center justify-end gap-2">
           {inTrackMode && status?.done && !uploading && pending.length === 0 ? (
             <>
               <Button
                 variant="outline"
+                className="h-8 rounded-md border-zinc-200 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
                 onClick={() => {
                   reset();
                   onStartNew();
@@ -426,18 +427,30 @@ export function UploadPanel({
               >
                 Upload more
               </Button>
-              <Button variant="brand" onClick={onViewCandidates}>
+              <Button
+                className="h-8 rounded-md bg-zinc-900 text-xs font-medium text-white hover:bg-zinc-800"
+                onClick={onViewCandidates}
+              >
                 View candidates
               </Button>
             </>
           ) : (
             <>
-              <Button variant="outline" disabled={uploading} onClick={() => onOpenChange(false)}>
+              <Button
+                variant="outline"
+                className="h-8 rounded-md border-zinc-200 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+                disabled={uploading}
+                onClick={() => onOpenChange(false)}
+              >
                 {inTrackMode ? "Close (processing continues)" : "Cancel"}
               </Button>
               {pending.length > 0 && (
-                <Button variant="brand" disabled={uploading} onClick={start}>
-                  {uploading && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
+                <Button
+                  className="h-8 rounded-md bg-zinc-900 text-xs font-medium text-white hover:bg-zinc-800"
+                  disabled={uploading}
+                  onClick={start}
+                >
+                  {uploading && <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" aria-hidden="true" />}
                   {uploadError ? "Resume upload" : `Start processing (${pending.length})`}
                 </Button>
               )}

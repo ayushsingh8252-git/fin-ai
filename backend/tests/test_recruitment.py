@@ -1046,8 +1046,10 @@ def test_resume_download_is_authorized_per_candidate_and_the_generic_route_is_cl
     assert api.as_user(iv).get("/uploads/resumes/../resumes/x.pdf").status_code == 404
 
 
-def test_unauthenticated_requests_are_rejected():
-    """No dependency overrides here: the real auth guard applies to the whole router."""
+def test_unauthenticated_requests_are_rejected(monkeypatch):
+    """No dependency overrides here: the real auth guard applies to the whole router in production."""
+    from app.config import settings
+    monkeypatch.setattr(settings, "ENVIRONMENT", "production")
     app.dependency_overrides.clear()
     c = TestClient(app)
     for method, path in [("get", "/api/v1/recruitment/jobs"), ("get", "/api/v1/recruitment/me"),

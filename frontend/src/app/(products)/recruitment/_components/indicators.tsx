@@ -1,15 +1,15 @@
-import { AlertTriangle, CheckCircle2, Loader2, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Loader2, XCircle, Clock, Check } from "lucide-react";
 import { StatusPill } from "@/components/ui/status-pill";
 import { cn } from "@/lib/utils";
 import type { AnalysisStatus, Score, Stage } from "@/lib/recruitmentApi";
 import { STAGE_LABEL, STAGE_TONE } from "./stages";
 
-/** A single AI score, honest about where it came from with modern visual telemetry. */
+/** A single candidate score with disciplined enterprise visual telemetry. */
 export function ScoreCell({ score, className }: { score: Score; className?: string }) {
   if (score.status === "not_computed" || score.value === null) {
     const why = score.reason || "Not computed";
     return (
-      <span className={cn("inline-flex items-center text-zinc-300 font-mono text-xs", className)} title={why}>
+      <span className={cn("inline-flex items-center text-zinc-400 font-mono text-xs", className)} title={why}>
         <span aria-hidden="true">—</span>
         <span className="sr-only">{why}</span>
       </span>
@@ -18,7 +18,7 @@ export function ScoreCell({ score, className }: { score: Score; className?: stri
 
   const degraded = score.status === "degraded";
   const note = degraded
-    ? score.reason || "Estimated by keyword overlap because the AI provider was unavailable. Review manually."
+    ? score.reason || "Estimated by keyword overlap because the automated model was unavailable. Review manually."
     : undefined;
   const val = score.value;
 
@@ -27,30 +27,30 @@ export function ScoreCell({ score, className }: { score: Score; className?: stri
     : val >= 75
     ? "text-emerald-700"
     : val >= 50
-    ? "text-indigo-700"
-    : "text-rose-700";
+    ? "text-zinc-800"
+    : "text-zinc-600";
 
   const barFill = degraded
-    ? "bg-amber-400"
+    ? "bg-amber-500"
     : val >= 75
-    ? "bg-gradient-to-r from-emerald-500 to-teal-400"
+    ? "bg-emerald-600"
     : val >= 50
-    ? "bg-gradient-to-r from-indigo-500 to-violet-500"
-    : "bg-gradient-to-r from-rose-500 to-amber-500";
+    ? "bg-zinc-700"
+    : "bg-zinc-400";
 
   return (
     <span className={cn("inline-flex items-center gap-2", className)} title={note}>
-      <span className={cn("w-10 text-xs font-bold tabular-nums", textColor)}>
+      <span className={cn("w-9 text-xs font-semibold tabular-nums", textColor)}>
         {val}%
       </span>
-      <span className="hidden h-1.5 w-14 overflow-hidden rounded-full bg-zinc-100/90 sm:block shadow-inner" aria-hidden="true">
+      <span className="hidden h-1.5 w-12 overflow-hidden rounded-full bg-zinc-100 sm:block" aria-hidden="true">
         <span
-          className={cn("block h-full rounded-full transition-all duration-300", barFill)}
+          className={cn("block h-full rounded-full transition-all duration-200", barFill)}
           style={{ width: `${Math.max(0, Math.min(100, val))}%` }}
         />
       </span>
       {degraded && (
-        <AlertTriangle className="h-3 w-3 text-amber-500 shrink-0" aria-hidden="true" />
+        <AlertTriangle className="h-3 w-3 text-amber-600 shrink-0" aria-hidden="true" />
       )}
     </span>
   );
@@ -65,14 +65,14 @@ export function StageBadge({ stage }: { stage: Stage }) {
   );
 }
 
-/** Whether the AI work on this candidate finished, partly finished, or failed. */
+/** Operational status indicator for candidate evaluation and analysis pipeline. */
 export function AnalysisIndicator({ status, error }: { status: AnalysisStatus; error: string | null }) {
   const map: Record<AnalysisStatus, { icon: React.ReactNode; label: string }> = {
-    completed: { icon: <CheckCircle2 className="h-4 w-4 text-emerald-600" />, label: "AI analysis complete" },
-    partial: { icon: <AlertTriangle className="h-4 w-4 text-amber-500" />, label: error || "Some AI results are unavailable" },
-    failed: { icon: <XCircle className="h-4 w-4 text-red-500" />, label: error || "AI analysis was unavailable" },
-    pending: { icon: <Loader2 className="h-4 w-4 animate-spin text-indigo-500" />, label: "AI analysis in progress" },
-    running: { icon: <Loader2 className="h-4 w-4 animate-spin text-indigo-500" />, label: "AI analysis in progress" },
+    completed: { icon: <Check className="h-3.5 w-3.5 text-emerald-600" />, label: "Analysis completed" },
+    partial: { icon: <AlertTriangle className="h-3.5 w-3.5 text-amber-600" />, label: error || "Partial results available" },
+    failed: { icon: <XCircle className="h-3.5 w-3.5 text-red-600" />, label: error || "Analysis unavailable" },
+    pending: { icon: <Clock className="h-3.5 w-3.5 text-zinc-400" />, label: "Pending analysis" },
+    running: { icon: <Loader2 className="h-3.5 w-3.5 animate-spin text-zinc-600" />, label: "Analysis in progress" },
   };
   const { icon, label } = map[status];
   return (

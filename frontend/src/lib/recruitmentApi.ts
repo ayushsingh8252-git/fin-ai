@@ -438,7 +438,7 @@ export function listCandidates(jobId: string, q: CandidateQuery = {}, signal?: A
       sort: q.sort,
       order: q.order,
       page: q.page,
-      page_size: q.pageSize,
+      page_size: q.pageSize !== undefined ? Math.min(100, Math.max(1, q.pageSize)) : undefined,
     })}`,
     { signal },
   );
