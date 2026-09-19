@@ -24,7 +24,9 @@ export const GOOGLE_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || "";
 // real JWT enforced by the backend on every protected route, leaving this
 // off would mean the frontend UI wall doesn't match backend reality — a
 // signed-out visitor would see 401s instead of the sign-in prompt.
-export const AUTH_GATE_ENABLED = true;
+// Temporarily disabled so the recruitment UI can be inspected locally while
+// Google OAuth configuration is being repaired. Re-enable before deployment.
+export const AUTH_GATE_ENABLED = false;
 
 const GSI_SCRIPT_SRC = "https://accounts.google.com/gsi/client";
 

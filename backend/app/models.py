@@ -752,3 +752,71 @@ class Interview(Base):
     screening_session_id = Column(String, ForeignKey("screening_sessions.id"), nullable=True, index=True)
     call_record_id = Column(String, ForeignKey("call_records.id"), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class WorkflowRun(Base):
+    """An execution run of an automated recruitment pipeline workflow
+    (e.g., auto-shortlist top candidates, bulk fraud check, automated screening)."""
+
+    __tablename__ = "workflow_runs"
+
+    id = Column(String, primary_key=True, index=True)
+    job_id = Column(String, ForeignKey("roles.id"), nullable=True, index=True)
+    workflow_type = Column(String, nullable=False, index=True)  # auto_shortlist | fraud_check_all | screening_invite_batch
+    title = Column(String, nullable=False)
+    status = Column(String, nullable=False, default="queued", index=True)  # queued | running | completed | failed | awaiting_hr
+    total_steps = Column(Integer, nullable=False, default=1)
+    completed_steps = Column(Integer, nullable=False, default=0)
+    current_step_name = Column(String, nullable=True)
+    summary = Column(Text, nullable=True)
+    parameters = Column(JSON, default=dict)
+    results = Column(JSON, default=dict)
+    error = Column(Text, nullable=True)
+    triggered_by = Column(String, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    steps = relationship("WorkflowStep", back_populates="run", cascade="all, delete-orphan", order_by="WorkflowStep.step_index")
+
+
+class WorkflowStep(Base):
+    """One discrete step within a WorkflowRun."""
+
+    __tablename__ = "workflow_steps"
+
+    id = Column(String, primary_key=True, index=True)
+    run_id = Column(String, ForeignKey("workflow_runs.id"), nullable=False, index=True)
+    step_index = Column(Integer, nullable=False)
+    name = Column(String, nullable=False)
+    action = Column(String, nullable=False)
+    status = Column(String, nullable=False, default="pending")  # pending | running | completed | failed | skipped
+    input_data = Column(JSON, default=dict)
+    output_data = Column(JSON, default=dict)
+    error = Column(Text, nullable=True)
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+
+    run = relationship("WorkflowRun", back_populates="steps")
+
+
+class Offer(Base):
+    """Formal job offer extended to a candidate for an application."""
+
+    __tablename__ = "offers"
+
+    id = Column(String, primary_key=True, index=True)
+    application_id = Column(String, ForeignKey("applications.id"), nullable=False, index=True)
+    candidate_id = Column(String, ForeignKey("candidates.id"), nullable=False, index=True)
+    job_id = Column(String, ForeignKey("roles.id"), nullable=False, index=True)
+    status = Column(String, nullable=False, default="draft", index=True)  # draft | sent | accepted | rejected | rescinded
+    salary = Column(Float, nullable=True)
+    currency = Column(String, nullable=False, default="USD")
+    equity = Column(String, nullable=True)
+    role_title = Column(String, nullable=True)
+    start_date = Column(String, nullable=True)
+    expiry_date = Column(String, nullable=True)
+    notes = Column(Text, nullable=True)
+    created_by = Column(String, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+

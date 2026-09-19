@@ -74,13 +74,39 @@ export function RecruitmentShell({ children }: { children: React.ReactNode }) {
               <nav aria-label="Recruitment sections" className="flex items-center gap-1">
                 <Link
                   href="/recruitment"
-                  aria-current={pathname?.startsWith("/recruitment") ? "page" : undefined}
+                  aria-current={pathname === "/recruitment" || pathname?.startsWith("/recruitment/jobs") ? "page" : undefined}
                   className={cn(
                     "rounded-md px-2.5 py-1.5 text-sm font-medium transition-colors",
-                    "bg-zinc-100 text-zinc-900"
+                    (pathname === "/recruitment" || pathname?.startsWith("/recruitment/jobs"))
+                      ? "bg-zinc-100 text-zinc-900 font-semibold"
+                      : "text-zinc-600 hover:text-zinc-900 hover:bg-zinc-50"
                   )}
                 >
                   Jobs
+                </Link>
+                <Link
+                  href="/recruitment/inbox"
+                  aria-current={pathname === "/recruitment/inbox" ? "page" : undefined}
+                  className={cn(
+                    "rounded-md px-2.5 py-1.5 text-sm font-medium transition-colors",
+                    pathname === "/recruitment/inbox"
+                      ? "bg-zinc-100 text-zinc-900 font-semibold"
+                      : "text-zinc-600 hover:text-zinc-900 hover:bg-zinc-50"
+                  )}
+                >
+                  Inbox
+                </Link>
+                <Link
+                  href="/recruitment/workflows"
+                  aria-current={pathname === "/recruitment/workflows" ? "page" : undefined}
+                  className={cn(
+                    "rounded-md px-2.5 py-1.5 text-sm font-medium transition-colors",
+                    pathname === "/recruitment/workflows"
+                      ? "bg-zinc-100 text-zinc-900 font-semibold"
+                      : "text-zinc-600 hover:text-zinc-900 hover:bg-zinc-50"
+                  )}
+                >
+                  Workflows
                 </Link>
               </nav>
             </div>

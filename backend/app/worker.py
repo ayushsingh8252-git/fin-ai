@@ -453,3 +453,60 @@ def process_resume_task(self, upload_id: str):
         return result
     finally:
         db.close()
+
+
+@celery_app.task(name="fraud_scan_application", bind=True, max_retries=2)
+def fraud_scan_application_task(self, application_id: str, scan_id: str):
+    from .database import SessionLocal
+    from .models import Application, Candidate, FraudScan
+    from .services import recruitment_service as rs
+    from .services.fraud_orchestrator import run_scan
+
+    task_id = self.request.id
+    logger.info("[recruitment] task_id=%s fraud_scan_application started for app %s scan %s", task_id, application_id, scan_id)
+
+    db = SessionLocal()
+    try:
+        scan = db.get(FraudScan, scan_id)
+        app = db.get(Application, application_id)
+        if not scan or not app:
+            logger.error("[recruitment] fraud scan %s or app %s missing", scan_id, application_id)
+            return {"outcome": "failed", "error": "Scan or Application not found"}
+
+        cand = db.get(Candidate, app.candidate_id)
+        if not cand or not cand.resume_file_path or not os.path.isfile(cand.resume_file_path):
+            scan.status = "error"
+            scan.result = {"error": "Candidate resume file missing"}
+            db.commit()
+            return {"outcome": "failed", "error": "Resume file missing"}
+
+        scan.status = "scanning"
+        db.commit()
+
+        try:
+            result = run_scan(cand.resume_file_path, "pdf")
+            scan.result = result
+            scan.status = "complete"
+        except Exception as exc:
+            logger.error("[recruitment] fraud scan %s failed: %s", scan_id, exc)
+            scan.status = "error"
+            scan.result = {"error": str(exc)}
+
+        db.commit()
+
+        rs.record_activity(
+            db, candidate_id=cand.id, application_id=app.id, job_id=app.job_id,
+            event_type="candidate.fraud_scanned", actor_type=rs.ACTOR_AI,
+            summary=f"Fraud scan completed — status: {scan.status}",
+            payload={"fraud_scan_id": scan_id, "status": scan.status},
+            dedupe_key=f"fraud_scan:{scan_id}",
+        )
+        db.commit()
+        return {"outcome": "success", "status": scan.status}
+    except Exception as exc:
+        db.rollback()
+        logger.error("[recruitment] fraud scan task error: %s", exc)
+        raise self.retry(exc=exc, countdown=10)
+    finally:
+        db.close()
+

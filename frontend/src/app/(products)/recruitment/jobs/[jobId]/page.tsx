@@ -2,14 +2,16 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
-import { ArrowLeft, FileUp, Loader2, RefreshCw, Users } from "lucide-react";
+import { useParams, useRouter } from "next/navigation";
+import { ArrowLeft, CheckSquare, FileUp, Loader2, RefreshCw, Square, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorBanner } from "@/components/ui/error-banner";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
-  errorMessage, getJob, listCandidates, retryUpload, type CandidatePage, type Job,
+  errorMessage, getJob, listCandidates, retryUpload,
+  bulkSetStage, bulkAnalyze,
+  type CandidatePage, type Job, type Stage,
 } from "@/lib/recruitmentApi";
 import { AnalysisIndicator, ScoreCell, StageBadge } from "../../_components/indicators";
 import { UploadPanel } from "../../_components/UploadPanel";
@@ -22,11 +24,17 @@ export default function JobWorkspacePage() {
   const params = useParams<{ jobId: string }>();
   const jobId = params.jobId;
   const { can } = useRecruitment();
+  const router = useRouter();
   const [loaded, setLoaded] = useState<LoadState>(null);
   const [refresh, setRefresh] = useState(0);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [batchId, setBatchId] = useState<string | null>(null);
   const [pollKey, setPollKey] = useState(0);
+
+  // Bulk actions state
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkLoading, setBulkLoading] = useState(false);
+  const [bulkError, setBulkError] = useState<string | null>(null);
 
   const reload = useCallback(() => setRefresh((n) => n + 1), []);
   const progress = useBatchProgress(batchId, reload, pollKey);
@@ -34,6 +42,7 @@ export default function JobWorkspacePage() {
   useEffect(() => {
     let cancelled = false;
     setLoaded(null);
+    setSelectedIds(new Set());
     Promise.all([getJob(jobId), listCandidates(jobId, { pageSize: 100 })])
       .then(([job, candidates]) => !cancelled && setLoaded({ job, candidates }))
       .catch((err) => !cancelled && setLoaded({ error: errorMessage(err) }));
@@ -50,6 +59,56 @@ export default function JobWorkspacePage() {
   const { job, candidates } = loaded;
   const pipeline = job.pipeline;
   const processing = (pipeline.PROCESSING ?? 0) + (pipeline.SCREENING ?? 0);
+
+  const allSelected = candidates.items.length > 0 && selectedIds.size === candidates.items.length;
+
+  const toggleSelectAll = () => {
+    if (allSelected) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(candidates.items.map((c) => c.id)));
+    }
+  };
+
+  const toggleSelectOne = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const handleBulkStage = async (stage: Stage) => {
+    if (selectedIds.size === 0) return;
+    setBulkLoading(true);
+    setBulkError(null);
+    try {
+      await bulkSetStage(Array.from(selectedIds), stage);
+      setSelectedIds(new Set());
+      reload();
+    } catch (err) {
+      setBulkError(errorMessage(err));
+    } finally {
+      setBulkLoading(false);
+    }
+  };
+
+  const handleBulkAnalyze = async () => {
+    if (selectedIds.size === 0) return;
+    setBulkLoading(true);
+    setBulkError(null);
+    try {
+      await bulkAnalyze(Array.from(selectedIds));
+      setSelectedIds(new Set());
+      reload();
+    } catch (err) {
+      setBulkError(errorMessage(err));
+    } finally {
+      setBulkLoading(false);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -74,6 +133,53 @@ export default function JobWorkspacePage() {
         ].map(([label, value]) => <div key={String(label)} className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm"><p className="text-2xl font-semibold tabular-nums text-zinc-900">{value}</p><p className="text-xs text-zinc-500">{label}</p></div>)}
       </div>
 
+      {/* Bulk Action Toolbar */}
+      {selectedIds.size > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-indigo-50 border border-indigo-200 px-5 py-3 shadow-sm">
+          <div className="flex items-center gap-3">
+            <span className="text-xs font-bold text-indigo-950">
+              {selectedIds.size} {selectedIds.size === 1 ? "candidate" : "candidates"} selected
+            </span>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setSelectedIds(new Set())}
+              className="text-xs text-indigo-700 hover:text-indigo-900"
+            >
+              Clear
+            </Button>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <select
+              defaultValue=""
+              disabled={bulkLoading}
+              onChange={(e) => {
+                const stage = e.target.value as Stage;
+                if (stage) handleBulkStage(stage);
+              }}
+              className="rounded-lg border border-indigo-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 shadow-sm focus:outline-none"
+            >
+              <option value="" disabled>Move stage...</option>
+              <option value="SHORTLISTED">Shortlist</option>
+              <option value="INTERVIEWING">Interviewing</option>
+              <option value="REJECTED">Reject</option>
+              <option value="WITHDRAWN">Withdrawn</option>
+            </select>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={bulkLoading}
+              onClick={handleBulkAnalyze}
+            >
+              {bulkLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+              Re-Analyze
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {bulkError && <ErrorBanner message={bulkError} />}
+
       <section className="overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm">
         <div className="flex items-center justify-between border-b border-zinc-100 px-5 py-4">
           <div><h2 className="font-semibold text-zinc-900">Candidates</h2><p className="text-xs text-zinc-500">Persisted applications for this job</p></div>
@@ -82,8 +188,34 @@ export default function JobWorkspacePage() {
         {candidates.items.length === 0 ? (
           <EmptyState icon={Users} title="No candidates yet" description={can("upload") ? "Upload PDF resumes to start the pipeline." : "Candidates will appear here once resumes are uploaded."} />
         ) : (
-          <div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-sm"><thead className="bg-zinc-50 text-xs text-zinc-500"><tr><th className="px-5 py-3 font-medium">Candidate</th><th className="px-4 py-3 font-medium">Stage</th><th className="px-4 py-3 font-medium">ATS</th><th className="px-4 py-3 font-medium">Job match</th><th className="px-4 py-3 font-medium">Analysis</th></tr></thead><tbody className="divide-y divide-zinc-100">
-            {candidates.items.map((app) => <tr key={app.id} className="text-zinc-700"><td className="px-5 py-3"><p className="font-medium text-zinc-900">{app.candidate.name || "Unnamed candidate"}</p><p className="text-xs text-zinc-500">{app.candidate.current_role || app.candidate.email || "Resume uploaded"}</p></td><td className="px-4 py-3"><StageBadge stage={app.stage} /></td><td className="px-4 py-3"><ScoreCell score={app.scores.ats_score} /></td><td className="px-4 py-3"><ScoreCell score={app.scores.match_score} /></td><td className="px-4 py-3"><AnalysisIndicator status={app.analysis_status} error={app.analysis_error} /></td></tr>)}
+          <div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-sm"><thead className="bg-zinc-50 text-xs text-zinc-500"><tr>
+            <th className="w-10 px-4 py-3">
+              <button
+                type="button"
+                onClick={toggleSelectAll}
+                className="flex items-center text-zinc-400 hover:text-zinc-600 focus:outline-none"
+              >
+                {allSelected ? <CheckSquare className="h-4 w-4 text-indigo-600" /> : <Square className="h-4 w-4" />}
+              </button>
+            </th>
+            <th className="px-4 py-3 font-medium">Candidate</th><th className="px-4 py-3 font-medium">Stage</th><th className="px-4 py-3 font-medium">ATS</th><th className="px-4 py-3 font-medium">Job match</th><th className="px-4 py-3 font-medium">Analysis</th></tr></thead><tbody className="divide-y divide-zinc-100">
+            {candidates.items.map((app) => {
+              const isSelected = selectedIds.has(app.id);
+              return (
+                <tr
+                  key={app.id}
+                  className={`text-zinc-700 cursor-pointer transition-colors ${isSelected ? "bg-indigo-50/50" : "hover:bg-zinc-50/80"}`}
+                  onClick={() => router.push(`/recruitment/jobs/${jobId}/candidates/${app.id}`)}
+                >
+                  <td className="w-10 px-4 py-3" onClick={(e) => toggleSelectOne(app.id, e)}>
+                    <button type="button" className="flex items-center text-zinc-400 hover:text-zinc-600 focus:outline-none">
+                      {isSelected ? <CheckSquare className="h-4 w-4 text-indigo-600" /> : <Square className="h-4 w-4" />}
+                    </button>
+                  </td>
+                  <td className="px-4 py-3"><p className="font-medium text-zinc-900 hover:text-blue-700">{app.candidate.name || "Unnamed candidate"}</p><p className="text-xs text-zinc-500">{app.candidate.current_role || app.candidate.email || "Resume uploaded"}</p></td><td className="px-4 py-3"><StageBadge stage={app.stage} /></td><td className="px-4 py-3"><ScoreCell score={app.scores.ats_score} /></td><td className="px-4 py-3"><ScoreCell score={app.scores.match_score} /></td><td className="px-4 py-3"><AnalysisIndicator status={app.analysis_status} error={app.analysis_error} /></td>
+                </tr>
+              );
+            })}
           </tbody></table></div>
         )}
       </section>

@@ -50,7 +50,7 @@ services:
       CELERY_RESULT_BACKEND: redis://redis:6379/0
       EPISODIC_DATABASE_URL: postgresql+psycopg2://policy:policy@postgres:5432/policy_episodic
       TESSERACT_CMD: /usr/bin/tesseract
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+        CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000},http://localhost:3000,http://127.0.0.1:3000
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
       # Without this, api/auth.py generates a random per-process JWT signing
       # key (see its own startup warning) — breaks token verification the

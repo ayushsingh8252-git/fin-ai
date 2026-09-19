@@ -111,6 +111,197 @@ export interface CandidateQuery {
   pageSize?: number;
 }
 
+// ── Candidate 360 ───────────────────────────────────────────────────────
+
+export interface CandidateProfile {
+  id: string;
+  name: string | null;
+  email: string | null;
+  phone: string | null;
+  location: string | null;
+  current_role: string | null;
+  experience_text: string | null;
+  experience_years: number | null;
+  skills: string[];
+  education: unknown[];
+  has_resume: boolean;
+  resume_filename: string | null;
+}
+
+export interface AnalysisDetail {
+  ai_summary: string | null;
+  ai_summary_provenance: Score;
+  matched_skills: string[];
+  missing_skills: string[];
+  recommendation: string | null;
+  analysis_status: AnalysisStatus;
+  analysis_error: string | null;
+}
+
+export interface FraudScanInfo {
+  id: string;
+  status: string;
+  result: Record<string, unknown>;
+  created_at: string | null;
+}
+
+export interface ScreeningResultInfo {
+  id: string;
+  source: string;
+  verdict: string | null;
+  jd_match_score: number | null;
+  strengths: string[];
+  gaps: string[];
+  summary: string | null;
+  details: Record<string, unknown>;
+  created_at: string | null;
+}
+
+export interface ScreeningInfo {
+  session_id: string;
+  session_status: string;
+  results: ScreeningResultInfo[];
+}
+
+export interface InterviewInfo {
+  id: string;
+  mode: string;
+  status: string;
+  scheduled_at: string | null;
+  interviewer_email: string | null;
+  meet_link: string | null;
+  created_at: string | null;
+}
+
+export interface ActivityEvent {
+  id: string;
+  event_type: string;
+  summary: string;
+  actor_type: string;
+  actor_user_id: string | null;
+  payload: Record<string, unknown>;
+  created_at: string | null;
+}
+
+export interface JobBrief {
+  id: string;
+  title: string;
+  department: string | null;
+  location: string | null;
+  status: string;
+}
+
+export interface Application360 {
+  application: {
+    id: string;
+    job_id: string;
+    stage: Stage;
+    scores: { ats_score: Score; match_score: Score; skill_match_score: Score };
+    analysis: AnalysisDetail;
+    score_provenance: Record<string, unknown>;
+    created_at: string | null;
+  };
+  candidate: CandidateProfile;
+  job: JobBrief | null;
+  fraud: FraudScanInfo | null;
+  screening: ScreeningInfo | null;
+  interviews: InterviewInfo[];
+  offers?: OfferInfo[];
+  activity: ActivityEvent[];
+}
+
+export interface OfferInfo {
+  id: string;
+  application_id: string;
+  status: "draft" | "sent" | "accepted" | "rejected" | "rescinded";
+  salary: number | null;
+  currency: string;
+  equity: string | null;
+  role_title: string | null;
+  start_date: string | null;
+  expiry_date: string | null;
+  notes: string | null;
+  created_at: string | null;
+}
+
+export interface InboxItem {
+  id: string;
+  category: "high_match" | "screening_ready" | "fraud_alert" | string;
+  priority: "urgent" | "high" | "medium" | "low";
+  title: string;
+  description: string;
+  application_id: string;
+  job_id: string;
+  candidate_name: string;
+  job_title: string;
+  created_at: string | null;
+}
+
+export interface InboxResponse {
+  total_count: number;
+  urgent_count: number;
+  items: InboxItem[];
+}
+
+export interface WorkflowTemplate {
+  id: string;
+  name: string;
+  description: string;
+  icon: string;
+  default_params: Record<string, unknown>;
+  steps: Array<{ name: string; action: string }>;
+}
+
+export interface WorkflowRunItem {
+  id: string;
+  job_id: string | null;
+  workflow_type: string;
+  title: string;
+  status: "queued" | "running" | "completed" | "failed" | "awaiting_hr";
+  total_steps: number;
+  completed_steps: number;
+  current_step_name: string | null;
+  summary: string | null;
+  parameters: Record<string, unknown>;
+  results: Record<string, unknown>;
+  error: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+  steps: Array<{
+    id: string;
+    step_index: number;
+    name: string;
+    action: string;
+    status: string;
+    error: string | null;
+    started_at: string | null;
+    completed_at: string | null;
+  }>;
+}
+
+export interface FraudScanResponse {
+  id: string;
+  status: string;
+  result: Record<string, unknown>;
+  created_at: string | null;
+}
+
+export interface ScreeningInviteResponse {
+  session_id: string;
+  interview_link: string;
+  email_sent: boolean;
+  message: string;
+}
+
+export interface BulkStageResponse {
+  results: Array<{
+    application_id: string;
+    status: "ok" | "error";
+    error?: string;
+  }>;
+}
+
+
 export type UploadStatus = "queued" | "processing" | "parsed" | "duplicate" | "failed";
 
 export interface UploadRow {
@@ -258,6 +449,84 @@ export const setStage = (applicationId: string, stage: Stage, reason?: string) =
     method: "POST",
     body: JSON.stringify({ stage, reason: reason || null }),
   });
+
+export const getApplication360 = (applicationId: string) =>
+  request<Application360>(`/applications/${applicationId}/360`);
+
+export const getApplicationActivity = (applicationId: string, limit = 100) =>
+  request<{ items: ActivityEvent[] }>(`/applications/${applicationId}/activity?limit=${limit}`);
+
+export const triggerFraudScan = (applicationId: string) =>
+  request<FraudScanResponse>(`/applications/${applicationId}/fraud`, { method: "POST" });
+
+export const sendScreeningInvite = (applicationId: string, jdText?: string) =>
+  request<ScreeningInviteResponse>(`/applications/${applicationId}/screening-invite`, {
+    method: "POST",
+    body: JSON.stringify({ jd_text: jdText || null }),
+  });
+
+export const bulkSetStage = (applicationIds: string[], stage: Stage, reason?: string) =>
+  request<BulkStageResponse>(`/bulk/stage`, {
+    method: "POST",
+    body: JSON.stringify({ application_ids: applicationIds, stage, reason: reason || null }),
+  });
+
+export const bulkAnalyze = (applicationIds: string[]) =>
+  request<BulkStageResponse>(`/bulk/analyze`, {
+    method: "POST",
+    body: JSON.stringify({ application_ids: applicationIds }),
+  });
+
+export const scheduleInterview = (
+  applicationId: string,
+  payload: { scheduled_at: string; mode?: string; interviewer_email?: string; notes?: string },
+) =>
+  request<InterviewInfo>(`/applications/${applicationId}/interviews`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+
+export const createOffer = (
+  applicationId: string,
+  payload: {
+    salary?: number;
+    currency?: string;
+    equity?: string;
+    role_title?: string;
+    start_date?: string;
+    expiry_date?: string;
+    notes?: string;
+  },
+) =>
+  request<OfferInfo>(`/applications/${applicationId}/offers`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+
+export const getOffers = (applicationId: string) =>
+  request<{ items: OfferInfo[] }>(`/applications/${applicationId}/offers`);
+
+export const updateOffer = (offerId: string, payload: { status: string; notes?: string }) =>
+  request<OfferInfo>(`/offers/${offerId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+
+export const getInbox = () => request<InboxResponse>(`/inbox`);
+
+export const getWorkflowTemplates = () =>
+  request<{ templates: WorkflowTemplate[] }>(`/workflows/templates`);
+
+export const getWorkflowRuns = (jobId?: string) =>
+  request<{ runs: WorkflowRunItem[] }>(jobId ? `/workflows/runs?job_id=${jobId}` : `/workflows/runs`);
+
+export const triggerWorkflowRun = (templateId: string, jobId?: string, parameters?: Record<string, unknown>) =>
+  request<WorkflowRunItem>(`/workflows/runs`, {
+    method: "POST",
+    body: JSON.stringify({ template_id: templateId, job_id: jobId || null, parameters: parameters || {} }),
+  });
+
+
 
 export const getBatch = (batchId: string) => request<BatchStatus>(`/batches/${batchId}`);
 export const retryUpload = (uploadId: string) => request<UploadRow>(`/uploads/${uploadId}/retry`, { method: "POST" });

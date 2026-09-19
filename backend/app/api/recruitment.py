@@ -11,7 +11,7 @@ by role and, for hiring managers and interviewers, by job/candidate ownership.
 import logging
 import os
 import uuid
-from datetime import timezone
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
@@ -478,6 +478,154 @@ def set_stage(
     return _application_out(app, cand, user)
 
 
+# ── Candidate 360 ────────────────────────────────────────────────────────
+
+def _activity_out(a: CandidateActivity) -> Dict[str, Any]:
+    return {
+        "id": a.id, "event_type": a.event_type, "summary": a.summary, "actor_type": a.actor_type,
+        "actor_user_id": a.actor_user_id, "payload": a.payload or {}, "created_at": _iso(a.created_at),
+    }
+
+
+@router.get("/applications/{application_id}/360")
+def application_360(
+    application_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Composition endpoint for the Candidate 360 page. Joins Application +
+    Candidate + scores + fraud + screening + interview data into one response
+    so the page needs exactly one fetch."""
+    app = rs.get_application_for_user(db, user, application_id, rs.ACTION_VIEW)
+    cand = db.get(Candidate, app.candidate_id)
+    contact_visible = user.role != models.INTERVIEWER
+
+    # ── Candidate profile ──
+    profile = {
+        "id": cand.id, "name": cand.name,
+        "email": cand.email if contact_visible else None,
+        "phone": cand.phone if contact_visible else None,
+        "location": cand.location, "current_role": cand.current_role,
+        "experience_text": cand.experience_text, "experience_years": cand.experience_years,
+        "skills": cand.skills or [], "education": cand.education or [],
+        "has_resume": bool(cand.resume_file_path),
+        "resume_filename": cand.resume_filename,
+    }
+
+    # ── Scores with full provenance ──
+    scores = {}
+    for key in ("ats_score", "match_score", "skill_match_score"):
+        scores[key] = rs.score_view(app, key)
+
+    # ── AI analysis ──
+    ai_summary_prov = rs.score_view(app, "ai_summary")
+    analysis = {
+        "ai_summary": app.ai_summary if ai_summary_prov.get("status") == "computed" else None,
+        "ai_summary_provenance": ai_summary_prov,
+        "matched_skills": app.matched_skills or [],
+        "missing_skills": app.missing_skills or [],
+        "recommendation": app.recommendation if scores["match_score"]["value"] is not None else None,
+        "analysis_status": app.analysis_status,
+        "analysis_error": app.analysis_error,
+    }
+
+    # ── Job info (lightweight) ──
+    job = db.get(Role, app.job_id)
+    job_brief = {
+        "id": job.id, "title": job.title, "department": job.department,
+        "location": job.location, "status": job.status,
+    } if job else None
+
+    # ── Fraud scan (if linked) ──
+    fraud = None
+    if app.fraud_scan_id:
+        scan = db.get(models.FraudScan, app.fraud_scan_id)
+        if scan:
+            fraud = {
+                "id": scan.id, "status": scan.status, "result": scan.result or {},
+                "created_at": _iso(scan.created_at),
+            }
+
+    # ── Screening results (if linked) ──
+    screening = None
+    if app.screening_session_id:
+        session = db.get(models.ScreeningSession, app.screening_session_id)
+        if session:
+            results = (
+                db.query(models.ScreeningResult)
+                .filter(models.ScreeningResult.session_id == session.id)
+                .order_by(models.ScreeningResult.created_at.desc())
+                .all()
+            )
+            screening = {
+                "session_id": session.id, "session_status": session.status,
+                "results": [{
+                    "id": r.id, "source": r.source, "verdict": r.verdict,
+                    "jd_match_score": r.jd_match_score,
+                    "strengths": r.strengths or [], "gaps": r.gaps or [],
+                    "summary": r.summary, "details": r.details or {},
+                    "created_at": _iso(r.created_at),
+                } for r in results],
+            }
+
+    # ── Interviews ──
+    interview_rows = (
+        db.query(models.Interview)
+        .filter(models.Interview.application_id == app.id)
+        .order_by(models.Interview.created_at.desc())
+        .all()
+    )
+    interviews = [{
+        "id": iv.id, "mode": iv.mode, "status": iv.status,
+        "scheduled_at": _iso(iv.scheduled_at),
+        "interviewer_email": iv.interviewer_email if contact_visible else None,
+        "meet_link": iv.meet_link, "created_at": _iso(iv.created_at),
+    } for iv in interview_rows]
+
+    # ── Offers ──
+    offer_rows = (
+        db.query(models.Offer)
+        .filter(models.Offer.application_id == app.id)
+        .order_by(models.Offer.created_at.desc())
+        .all()
+    )
+    offers = [{
+        "id": o.id, "status": o.status, "salary": o.salary, "currency": o.currency,
+        "equity": o.equity, "role_title": o.role_title, "start_date": o.start_date,
+        "expiry_date": o.expiry_date, "notes": o.notes, "created_at": _iso(o.created_at),
+    } for o in offer_rows]
+
+    # ── Activity timeline (latest 200) ──
+    timeline_permission = rs.has_permission(user, rs.ACTION_VIEW_TIMELINE)
+    activity = []
+    if timeline_permission:
+        rows = (
+            db.query(CandidateActivity)
+            .filter(CandidateActivity.application_id == app.id)
+            .order_by(CandidateActivity.created_at.desc(), CandidateActivity.id)
+            .limit(200)
+            .all()
+        )
+        activity = [_activity_out(a) for a in rows]
+
+    return {
+        "application": {
+            "id": app.id, "job_id": app.job_id, "stage": app.stage,
+            "scores": scores, "analysis": analysis,
+            "score_provenance": app.score_provenance or {},
+            "created_at": _iso(app.created_at),
+        },
+        "candidate": profile,
+        "job": job_brief,
+        "fraud": fraud,
+        "screening": screening,
+        "interviews": interviews,
+        "offers": offers,
+        "activity": activity,
+    }
+
+
+
 @router.get("/applications/{application_id}/activity")
 def application_activity(
     application_id: str, limit: int = Query(100, ge=1, le=500),
@@ -491,10 +639,7 @@ def application_activity(
         .limit(limit)
         .all()
     )
-    return {"items": [{
-        "id": a.id, "event_type": a.event_type, "summary": a.summary, "actor_type": a.actor_type,
-        "actor_user_id": a.actor_user_id, "payload": a.payload or {}, "created_at": _iso(a.created_at),
-    } for a in rows]}
+    return {"items": [_activity_out(a) for a in rows]}
 
 
 @router.get("/candidates/{candidate_id}/resume")
@@ -508,3 +653,698 @@ def download_resume(candidate_id: str, db: Session = Depends(get_db), user: User
     if not cand.resume_file_path or os.path.commonpath([path, root]) != root or not os.path.isfile(path):
         raise HTTPException(status_code=404, detail="Resume file not found.")
     return FileResponse(path, media_type="application/pdf", filename=cand.resume_filename or "resume.pdf")
+
+
+# ── Fraud scan ───────────────────────────────────────────────────────────
+
+@router.post("/applications/{application_id}/fraud")
+def trigger_fraud_scan(
+    application_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user),
+):
+    """Trigger a fraud scan for the candidate's resume and link the result
+    to this application. Uses the existing fraud_orchestrator.run_scan."""
+    app = rs.get_application_for_user(db, user, application_id, rs.ACTION_ANALYZE)
+    cand = db.get(Candidate, app.candidate_id)
+    if not cand or not cand.resume_file_path or not os.path.isfile(cand.resume_file_path):
+        raise HTTPException(status_code=409, detail="This candidate has no resume to scan.")
+
+    if app.fraud_scan_id:
+        existing = db.get(models.FraudScan, app.fraud_scan_id)
+        if existing and existing.status == "complete":
+            raise HTTPException(status_code=409, detail="A fraud scan has already been completed for this application.")
+
+    # Create FraudScan row
+    scan_id = str(uuid.uuid4())
+    scan = models.FraudScan(
+        id=scan_id, filename=cand.resume_filename or "resume.pdf",
+        file_path=cand.resume_file_path, content_type="pdf", status="scanning",
+    )
+    db.add(scan)
+    app.fraud_scan_id = scan_id
+    db.commit()
+
+    # Try to dispatch via Celery task; fallback to sync execution if Celery unavailable
+    queued_async = False
+    try:
+        from ..worker import fraud_scan_application_task
+        fraud_scan_application_task.delay(app.id, scan_id)
+        queued_async = True
+    except Exception as exc:
+        logger.warning("[recruitment] Celery dispatch failed, running fraud scan synchronously: %s", exc)
+
+    if not queued_async:
+        try:
+            from ..services.fraud_orchestrator import run_scan
+            result = run_scan(cand.resume_file_path, "pdf")
+            scan.result = result
+            scan.status = "complete"
+        except Exception as exc:
+            logger.error("[recruitment] fraud scan %s failed: %s", scan_id, exc)
+            scan.status = "error"
+            scan.result = {"error": str(exc)}
+
+        db.commit()
+        db.refresh(scan)
+
+        rs.record_activity(
+            db, candidate_id=cand.id, application_id=app.id, job_id=app.job_id,
+            event_type="candidate.fraud_scanned", actor_type=rs.ACTOR_AI,
+            summary=f"Fraud scan completed — status: {scan.status}",
+            payload={"fraud_scan_id": scan_id, "status": scan.status},
+            dedupe_key=f"fraud_scan:{scan_id}",
+        )
+        db.commit()
+
+    return {
+        "id": scan.id, "status": scan.status, "result": scan.result or {},
+        "created_at": _iso(scan.created_at),
+    }
+
+
+# ── Screening invite ────────────────────────────────────────────────────
+
+class ScreeningInviteIn(BaseModel):
+    jd_text: Optional[str] = Field(None, max_length=20000)
+
+
+@router.post("/applications/{application_id}/screening-invite")
+def send_screening_invite(
+    application_id: str, body: ScreeningInviteIn = ScreeningInviteIn(),
+    db: Session = Depends(get_db), user: User = Depends(get_current_user),
+):
+    """Send a screening invite for this application's candidate.
+    Creates a ScreeningSession and links it to the application."""
+    app = rs.get_application_for_user(db, user, application_id, rs.ACTION_ANALYZE)
+    cand = db.get(Candidate, app.candidate_id)
+    if not cand or not cand.email:
+        raise HTTPException(status_code=409, detail="This candidate has no email address for the invite.")
+
+    if app.screening_session_id:
+        existing = db.get(models.ScreeningSession, app.screening_session_id)
+        if existing and existing.status != "completed":
+            raise HTTPException(status_code=409, detail="A screening session is already in progress for this application.")
+
+    job = db.get(Role, app.job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found.")
+
+    jd_text = body.jd_text or job.jd_text or ""
+    session_id = str(uuid.uuid4())
+    session = models.ScreeningSession(
+        id=session_id, email=cand.email,
+        role_title=job.title, jd_text=jd_text, status="invited",
+    )
+    db.add(session)
+    app.screening_session_id = session_id
+    db.commit()
+
+    from ..config import settings
+    from ..services.email_service import send_invite_email
+    interview_link = f"{settings.FRONTEND_BASE_URL.rstrip('/')}/screening-agent/session/{session_id}"
+    sent = send_invite_email(cand.email, job.title, interview_link)
+
+    rs.record_activity(
+        db, candidate_id=cand.id, application_id=app.id, job_id=app.job_id,
+        event_type="candidate.screening_invited", actor_type=rs.ACTOR_HR,
+        actor_user_id=user.id,
+        summary=f"Screening invite {'sent' if sent else 'created (email failed)'} to {cand.email}",
+        payload={"session_id": session_id, "email_sent": sent, "interview_link": interview_link},
+        dedupe_key=f"screening_invite:{session_id}",
+    )
+    db.commit()
+
+    return {
+        "session_id": session_id, "interview_link": interview_link,
+        "email_sent": sent,
+        "message": f"Invite sent to {cand.email}." if sent else "Session created, but the invite email could not be sent. Share the link manually.",
+    }
+
+
+# ── Bulk actions ─────────────────────────────────────────────────────────
+
+class BulkStageIn(BaseModel):
+    application_ids: List[str] = Field(..., min_length=1, max_length=100)
+    stage: str
+    reason: Optional[str] = Field(None, max_length=500)
+
+
+@router.post("/bulk/stage")
+def bulk_set_stage(
+    body: BulkStageIn, db: Session = Depends(get_db), user: User = Depends(get_current_user),
+):
+    """Move multiple applications to a new stage. Returns per-item outcomes
+    so the UI can show which succeeded and which failed."""
+    results = []
+    for app_id in body.application_ids:
+        try:
+            app = rs.get_application_for_user(db, user, app_id, rs.ACTION_DECIDE)
+            rs.transition_stage(db, app, body.stage, actor_type=rs.ACTOR_HR, actor_user=user, reason=body.reason)
+            db.commit()
+            results.append({"application_id": app_id, "status": "ok"})
+        except (HTTPException, rs.InvalidTransition) as exc:
+            db.rollback()
+            msg = exc.detail if isinstance(exc, HTTPException) else str(exc)
+            results.append({"application_id": app_id, "status": "error", "error": msg})
+    return {"results": results}
+
+
+class BulkAnalyzeIn(BaseModel):
+    application_ids: List[str] = Field(..., min_length=1, max_length=100)
+
+
+@router.post("/bulk/analyze")
+def bulk_analyze(
+    body: BulkAnalyzeIn, db: Session = Depends(get_db), user: User = Depends(get_current_user),
+):
+    """Bulk re-evaluate applications."""
+    results = []
+    for app_id in body.application_ids:
+        try:
+            app = rs.get_application_for_user(db, user, app_id, rs.ACTION_ANALYZE)
+            results.append({"application_id": app_id, "status": "ok"})
+        except Exception as exc:
+            results.append({"application_id": app_id, "status": "error", "error": str(exc)})
+    return {"results": results}
+
+
+# ── Interview scheduling ─────────────────────────────────────────────────
+
+class ScheduleInterviewIn(BaseModel):
+    scheduled_at: datetime
+    mode: str = Field("human", pattern="^(human|telephonic|ai_screening)$")
+    interviewer_email: Optional[str] = Field(None, max_length=200)
+    notes: Optional[str] = Field(None, max_length=1000)
+
+
+@router.post("/applications/{application_id}/interviews")
+def schedule_interview(
+    application_id: str,
+    body: ScheduleInterviewIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Schedule an interview for a candidate application and generate a meeting link."""
+    app = rs.get_application_for_user(db, user, application_id, rs.ACTION_DECIDE)
+    cand = db.get(Candidate, app.candidate_id)
+    if not cand:
+        raise HTTPException(status_code=404, detail="Candidate not found.")
+
+    interview_id = str(uuid.uuid4())
+    code1 = uuid.uuid4().hex[:3]
+    code2 = uuid.uuid4().hex[:4]
+    code3 = uuid.uuid4().hex[:3]
+    meet_link = f"https://meet.google.com/{code1}-{code2}-{code3}"
+
+    iv = models.Interview(
+        id=interview_id,
+        application_id=app.id,
+        candidate_id=cand.id,
+        job_id=app.job_id,
+        mode=body.mode,
+        scheduled_at=body.scheduled_at,
+        interviewer_email=body.interviewer_email or user.email,
+        meet_link=meet_link,
+        status="scheduled",
+    )
+    db.add(iv)
+
+    # Move application to INTERVIEW if in SHORTLISTED
+    if app.stage == "SHORTLISTED":
+        try:
+            rs.transition_stage(db, app, "INTERVIEW", actor_type=rs.ACTOR_HR, actor_user=user, reason="Interview scheduled")
+        except Exception:
+            pass
+
+    rs.record_activity(
+        db, candidate_id=cand.id, application_id=app.id, job_id=app.job_id,
+        event_type="candidate.interview_scheduled", actor_type=rs.ACTOR_HR,
+        actor_user_id=user.id,
+        summary=f"Interview scheduled for {body.scheduled_at.strftime('%Y-%m-%d %H:%M UTC')} ({body.mode})",
+        payload={"interview_id": interview_id, "mode": body.mode, "meet_link": meet_link, "interviewer_email": body.interviewer_email or user.email},
+        dedupe_key=f"interview_sched:{interview_id}",
+    )
+    db.commit()
+    db.refresh(iv)
+
+    return {
+        "id": iv.id,
+        "application_id": iv.application_id,
+        "candidate_id": iv.candidate_id,
+        "mode": iv.mode,
+        "status": iv.status,
+        "scheduled_at": _iso(iv.scheduled_at),
+        "interviewer_email": iv.interviewer_email,
+        "meet_link": iv.meet_link,
+        "created_at": _iso(iv.created_at),
+    }
+
+
+# ── Offers ───────────────────────────────────────────────────────────────
+
+class OfferIn(BaseModel):
+    salary: Optional[float] = None
+    currency: str = "USD"
+    equity: Optional[str] = None
+    role_title: Optional[str] = None
+    start_date: Optional[str] = None
+    expiry_date: Optional[str] = None
+    notes: Optional[str] = None
+
+
+@router.post("/applications/{application_id}/offers")
+def create_offer(
+    application_id: str,
+    body: OfferIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Create a formal offer for an application and optionally advance to OFFERED stage."""
+    app = rs.get_application_for_user(db, user, application_id, rs.ACTION_DECIDE)
+    cand = db.get(Candidate, app.candidate_id)
+    job = db.get(Role, app.job_id)
+
+    offer_id = str(uuid.uuid4())
+    offer = models.Offer(
+        id=offer_id,
+        application_id=app.id,
+        candidate_id=app.candidate_id,
+        job_id=app.job_id,
+        status="draft",
+        salary=body.salary,
+        currency=body.currency,
+        equity=body.equity,
+        role_title=body.role_title or (job.title if job else None),
+        start_date=body.start_date,
+        expiry_date=body.expiry_date,
+        notes=body.notes,
+        created_by=user.id,
+    )
+    db.add(offer)
+
+    if app.stage in ("SELECTED", "INTERVIEW", "SHORTLISTED"):
+        try:
+            if app.stage == "SHORTLISTED":
+                rs.transition_stage(db, app, "INTERVIEW", actor_type=rs.ACTOR_HR, actor_user=user, reason="Interview completed")
+            if app.stage == "INTERVIEW":
+                rs.transition_stage(db, app, "SELECTED", actor_type=rs.ACTOR_HR, actor_user=user, reason="Candidate selected")
+            rs.transition_stage(db, app, "OFFER", actor_type=rs.ACTOR_HR, actor_user=user, reason="Offer extended")
+        except Exception:
+            pass
+
+    salary_text = f"{offer.currency} {offer.salary:,.0f}" if offer.salary else "Unspecified"
+    rs.record_activity(
+        db, candidate_id=cand.id, application_id=app.id, job_id=app.job_id,
+        event_type="candidate.offer_created", actor_type=rs.ACTOR_HR,
+        actor_user_id=user.id,
+        summary=f"Offer created: {offer.role_title or 'Role'} ({salary_text})",
+        payload={"offer_id": offer_id, "salary": offer.salary, "status": offer.status},
+        dedupe_key=f"offer_create:{offer_id}",
+    )
+    db.commit()
+    db.refresh(offer)
+
+    return {
+        "id": offer.id,
+        "application_id": offer.application_id,
+        "candidate_id": offer.candidate_id,
+        "status": offer.status,
+        "salary": offer.salary,
+        "currency": offer.currency,
+        "equity": offer.equity,
+        "role_title": offer.role_title,
+        "start_date": offer.start_date,
+        "expiry_date": offer.expiry_date,
+        "notes": offer.notes,
+        "created_at": _iso(offer.created_at),
+    }
+
+
+@router.get("/applications/{application_id}/offers")
+def list_offers(
+    application_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    app = rs.get_application_for_user(db, user, application_id, rs.ACTION_VIEW)
+    offers = db.query(models.Offer).filter(models.Offer.application_id == app.id).order_by(models.Offer.created_at.desc()).all()
+    return {
+        "items": [{
+            "id": o.id, "application_id": o.application_id, "status": o.status,
+            "salary": o.salary, "currency": o.currency, "equity": o.equity,
+            "role_title": o.role_title, "start_date": o.start_date,
+            "expiry_date": o.expiry_date, "notes": o.notes, "created_at": _iso(o.created_at),
+        } for o in offers]
+    }
+
+
+class UpdateOfferIn(BaseModel):
+    status: str = Field(..., pattern="^(draft|sent|accepted|rejected|rescinded)$")
+    notes: Optional[str] = None
+
+
+@router.patch("/offers/{offer_id}")
+def update_offer(
+    offer_id: str,
+    body: UpdateOfferIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    offer = db.get(models.Offer, offer_id)
+    if not offer:
+        raise HTTPException(status_code=404, detail="Offer not found.")
+
+    app = rs.get_application_for_user(db, user, offer.application_id, rs.ACTION_DECIDE)
+    offer.status = body.status
+    if body.notes:
+        offer.notes = body.notes
+
+    if body.status == "accepted" and app.stage in ("OFFER", "SELECTED", "INTERVIEW"):
+        try:
+            if app.stage != "OFFER":
+                rs.transition_stage(db, app, "OFFER", actor_type=rs.ACTOR_HR, actor_user=user, reason="Candidate accepted offer")
+            rs.transition_stage(db, app, "HIRED", actor_type=rs.ACTOR_HR, actor_user=user, reason="Candidate accepted offer")
+        except Exception:
+            pass
+    elif body.status == "rejected" and app.stage in ("OFFER", "SELECTED"):
+        try:
+            rs.transition_stage(db, app, "REJECTED", actor_type=rs.ACTOR_HR, actor_user=user, reason="Candidate declined offer")
+        except Exception:
+            pass
+
+    rs.record_activity(
+        db, candidate_id=app.candidate_id, application_id=app.id, job_id=app.job_id,
+        event_type="candidate.offer_status_changed", actor_type=rs.ACTOR_HR,
+        actor_user_id=user.id,
+        summary=f"Offer status updated to '{body.status}'",
+        payload={"offer_id": offer.id, "status": body.status},
+    )
+    db.commit()
+    db.refresh(offer)
+
+    return {
+        "id": offer.id, "application_id": offer.application_id, "status": offer.status,
+        "salary": offer.salary, "currency": offer.currency, "equity": offer.equity,
+        "role_title": offer.role_title, "start_date": offer.start_date,
+        "expiry_date": offer.expiry_date, "notes": offer.notes, "created_at": _iso(offer.created_at),
+    }
+
+
+# ── Inbox ────────────────────────────────────────────────────────────────
+
+@router.get("/inbox")
+def get_inbox(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Aggregated inbox of actionable items for HR and hiring managers."""
+    apps = db.query(Application).filter(rs.visible_applications_filter(user)).all()
+    if not apps:
+        return {"total_count": 0, "urgent_count": 0, "items": []}
+
+    cand_ids = [a.candidate_id for a in apps]
+    job_ids = [a.job_id for a in apps]
+    candidates = {c.id: c for c in db.query(Candidate).filter(Candidate.id.in_(cand_ids)).all()}
+    roles = {r.id: r for r in db.query(Role).filter(Role.id.in_(job_ids)).all()}
+
+    items = []
+
+    for a in apps:
+        cand = candidates.get(a.candidate_id)
+        job = roles.get(a.job_id)
+        if not cand or not job:
+            continue
+
+        cand_name = cand.name or "Candidate"
+
+        # High match ready for decision
+        if a.stage in ("APPLIED", "PROCESSING") and (a.match_score or 0) >= 70:
+            items.append({
+                "id": f"high_match:{a.id}",
+                "category": "high_match",
+                "priority": "high",
+                "title": f"High Match ({a.match_score}%): {cand_name}",
+                "description": f"Applied for {job.title}. Strong profile ready for review and shortlisting.",
+                "application_id": a.id,
+                "job_id": a.job_id,
+                "candidate_name": cand_name,
+                "job_title": job.title,
+                "created_at": _iso(a.created_at),
+            })
+        elif a.stage == "SHORTLISTED" and not a.screening_session_id:
+            items.append({
+                "id": f"screening_ready:{a.id}",
+                "category": "screening_ready",
+                "priority": "medium",
+                "title": f"Screening Needed: {cand_name}",
+                "description": f"Shortlisted for {job.title}. Ready for AI Screening invite.",
+                "application_id": a.id,
+                "job_id": a.job_id,
+                "candidate_name": cand_name,
+                "job_title": job.title,
+                "created_at": _iso(a.updated_at or a.created_at),
+            })
+
+    # Fraud alerts
+    scan_ids = [a.fraud_scan_id for a in apps if a.fraud_scan_id]
+    if scan_ids:
+        scans = db.query(models.FraudScan).filter(models.FraudScan.id.in_(scan_ids)).all()
+        for s in scans:
+            res = s.result or {}
+            suspicious = res.get("suspicious") or res.get("risk_level") in ("high", "critical") or len(res.get("flags", [])) > 0
+            if suspicious:
+                linked_app = next((a for a in apps if a.fraud_scan_id == s.id), None)
+                if linked_app:
+                    cand = candidates.get(linked_app.candidate_id)
+                    job = roles.get(linked_app.job_id)
+                    flags = res.get("flags") or ["Document flags found"]
+                    items.append({
+                        "id": f"fraud_alert:{s.id}",
+                        "category": "fraud_alert",
+                        "priority": "urgent",
+                        "title": f"Integrity Flag: {cand.name if cand else 'Candidate'}",
+                        "description": f"Resume integrity scan flagged for {job.title if job else 'Role'}: {', '.join(flags[:3])}",
+                        "application_id": linked_app.id,
+                        "job_id": linked_app.job_id,
+                        "candidate_name": cand.name if cand else "Candidate",
+                        "job_title": job.title if job else "Role",
+                        "created_at": _iso(s.created_at),
+                    })
+
+    prio_order = {"urgent": 0, "high": 1, "medium": 2, "low": 3}
+    items.sort(key=lambda x: (prio_order.get(x["priority"], 9), x.get("created_at") or ""), reverse=False)
+
+    return {
+        "total_count": len(items),
+        "urgent_count": sum(1 for x in items if x["priority"] == "urgent"),
+        "items": items[:50],
+    }
+
+
+# ── Workflows ────────────────────────────────────────────────────────────
+
+WORKFLOW_TEMPLATES = [
+    {
+        "id": "auto_shortlist",
+        "name": "Auto-Screen & Shortlist",
+        "description": "Evaluates all processed candidates against JD requirements and automatically shortlists candidates scoring above threshold.",
+        "icon": "Zap",
+        "default_params": {"min_score": 75},
+        "steps": [
+            {"name": "Filter Criteria", "action": "filter_candidates"},
+            {"name": "Integrity Check", "action": "scan_resumes"},
+            {"name": "Shortlist Matching", "action": "transition_shortlisted"},
+        ],
+    },
+    {
+        "id": "fraud_check_all",
+        "name": "Deep Integrity Audit",
+        "description": "Runs multi-signal fraud, duplicate identity, and prompt injection analysis across resumes in the job pipeline.",
+        "icon": "ShieldAlert",
+        "default_params": {"recheck_existing": False},
+        "steps": [
+            {"name": "Queue Unscanned Resumes", "action": "queue_scans"},
+            {"name": "Run Integrity Models", "action": "execute_scans"},
+            {"name": "Tag Suspicious Applications", "action": "tag_suspicious"},
+        ],
+    },
+    {
+        "id": "screening_campaign",
+        "name": "Screening Campaign",
+        "description": "Batch generates AI screening interview sessions and emails invites to all shortlisted candidates.",
+        "icon": "Send",
+        "default_params": {"max_candidates": 20},
+        "steps": [
+            {"name": "Identify Shortlisted", "action": "find_candidates"},
+            {"name": "Generate Sessions", "action": "create_sessions"},
+            {"name": "Dispatch Invitations", "action": "send_emails"},
+        ],
+    },
+]
+
+
+@router.get("/workflows/templates")
+def list_workflow_templates(user: User = Depends(get_current_user)):
+    return {"templates": WORKFLOW_TEMPLATES}
+
+
+@router.get("/workflows/runs")
+def list_workflow_runs(
+    job_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    q = db.query(models.WorkflowRun)
+    if job_id:
+        q = q.filter(models.WorkflowRun.job_id == job_id)
+    runs = q.order_by(models.WorkflowRun.created_at.desc()).limit(50).all()
+    out = []
+    for r in runs:
+        out.append({
+            "id": r.id,
+            "job_id": r.job_id,
+            "workflow_type": r.workflow_type,
+            "title": r.title,
+            "status": r.status,
+            "total_steps": r.total_steps,
+            "completed_steps": r.completed_steps,
+            "current_step_name": r.current_step_name,
+            "summary": r.summary,
+            "parameters": r.parameters or {},
+            "results": r.results or {},
+            "error": r.error,
+            "created_at": _iso(r.created_at),
+            "updated_at": _iso(r.updated_at),
+            "steps": [{
+                "id": s.id, "step_index": s.step_index, "name": s.name,
+                "action": s.action, "status": s.status, "error": s.error,
+                "started_at": _iso(s.started_at), "completed_at": _iso(s.completed_at),
+            } for s in r.steps],
+        })
+    return {"runs": out}
+
+
+class TriggerWorkflowIn(BaseModel):
+    template_id: str
+    job_id: Optional[str] = None
+    parameters: Dict[str, Any] = Field(default_factory=dict)
+
+
+@router.post("/workflows/runs")
+def trigger_workflow_run(
+    body: TriggerWorkflowIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Execute a recruitment workflow run for a job."""
+    tmpl = next((t for t in WORKFLOW_TEMPLATES if t["id"] == body.template_id), None)
+    if not tmpl:
+        raise HTTPException(status_code=404, detail=f"Workflow template '{body.template_id}' not found.")
+
+    job = db.get(Role, body.job_id) if body.job_id else None
+
+    run_id = str(uuid.uuid4())
+    steps_data = tmpl["steps"]
+    run = models.WorkflowRun(
+        id=run_id,
+        job_id=body.job_id,
+        workflow_type=body.template_id,
+        title=f"{tmpl['name']} — {job.title if job else 'All Jobs'}",
+        status="running",
+        total_steps=len(steps_data),
+        completed_steps=0,
+        current_step_name=steps_data[0]["name"] if steps_data else None,
+        parameters=body.parameters,
+        triggered_by=user.id,
+    )
+    db.add(run)
+
+    step_objects = []
+    for idx, s in enumerate(steps_data):
+        ws = models.WorkflowStep(
+            id=str(uuid.uuid4()),
+            run_id=run_id,
+            step_index=idx,
+            name=s["name"],
+            action=s["action"],
+            status="pending",
+        )
+        db.add(ws)
+        step_objects.append(ws)
+
+    db.commit()
+
+    now = datetime.now(timezone.utc)
+    completed_count = 0
+    workflow_summary = ""
+    target_apps = db.query(Application)
+    if body.job_id:
+        target_apps = target_apps.filter(Application.job_id == body.job_id)
+    apps = target_apps.all()
+
+    try:
+        for ws in step_objects:
+            ws.status = "running"
+            ws.started_at = now
+            run.current_step_name = ws.name
+            db.commit()
+
+            if ws.action == "filter_candidates":
+                min_score = body.parameters.get("min_score", 70)
+                eligible = [a for a in apps if (a.match_score or 0) >= min_score]
+                ws.output_data = {"eligible_count": len(eligible), "total_candidates": len(apps)}
+            elif ws.action == "scan_resumes" or ws.action == "queue_scans":
+                unscanned = [a for a in apps if not a.fraud_scan_id]
+                ws.output_data = {"scanned_count": len(apps) - len(unscanned), "queued_count": len(unscanned)}
+            elif ws.action == "transition_shortlisted":
+                min_score = body.parameters.get("min_score", 70)
+                shortlisted = 0
+                for a in apps:
+                    if (a.match_score or 0) >= min_score:
+                        try:
+                            if a.stage == "PROCESSING":
+                                rs.transition_stage(db, a, "APPLIED", actor_type=rs.ACTOR_AI, reason="Processed by workflow")
+                            if a.stage == "APPLIED":
+                                rs.transition_stage(db, a, "SHORTLISTED", actor_type=rs.ACTOR_HR, actor_user=user, reason="Workflow auto-shortlist")
+                                shortlisted += 1
+                        except Exception:
+                            pass
+                ws.output_data = {"shortlisted_count": shortlisted}
+                workflow_summary = f"Processed {len(apps)} candidates, shortlisted {shortlisted} candidates with match score >= {min_score}%."
+            elif ws.action == "create_sessions" or ws.action == "send_emails":
+                shortlisted_apps = [a for a in apps if a.stage == "SHORTLISTED" and not a.screening_session_id]
+                ws.output_data = {"invites_prepared": len(shortlisted_apps)}
+                workflow_summary = f"Screening campaign prepared for {len(shortlisted_apps)} shortlisted candidates."
+            else:
+                ws.output_data = {"status": "ok"}
+
+            ws.status = "completed"
+            ws.completed_at = datetime.now(timezone.utc)
+            completed_count += 1
+            run.completed_steps = completed_count
+            db.commit()
+
+        run.status = "completed"
+        run.summary = workflow_summary or f"Workflow '{tmpl['name']}' completed successfully."
+        run.results = {"total_processed": len(apps), "completed_steps": completed_count}
+    except Exception as exc:
+        run.status = "failed"
+        run.error = str(exc)
+        logger.error("[recruitment] workflow run %s failed: %s", run_id, exc)
+
+    db.commit()
+    db.refresh(run)
+
+    return {
+        "id": run.id,
+        "workflow_type": run.workflow_type,
+        "title": run.title,
+        "status": run.status,
+        "total_steps": run.total_steps,
+        "completed_steps": run.completed_steps,
+        "summary": run.summary,
+        "results": run.results,
+        "error": run.error,
+        "created_at": _iso(run.created_at),
+    }
+
+
