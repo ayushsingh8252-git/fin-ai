@@ -585,3 +585,13 @@ export async function openResume(candidateId: string): Promise<void> {
   window.open(url, "_blank", "noopener");
   window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
+
+export async function seedDemoPipeline(): Promise<{ message: string; jobs_count: number; candidates_count: number }> {
+  const res = await fetch(`${BASE}/seed-demo`, {
+    method: "POST",
+    headers: { Accept: "application/json", ...getAuthHeaders() },
+  });
+  if (!res.ok) throw await parseError(res);
+  return res.json();
+}
+

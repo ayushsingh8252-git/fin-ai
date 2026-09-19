@@ -625,6 +625,11 @@ def application_360(
     }
 
 
+@router.post("/seed-demo")
+def seed_demo(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    from ..services.seed_service import seed_recruitment_demo
+    return seed_recruitment_demo(db, user)
+
 
 @router.get("/applications/{application_id}/activity")
 def application_activity(

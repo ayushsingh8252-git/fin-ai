@@ -55,25 +55,28 @@ function Bar({ pct, label }: { pct: number; label: string }) {
       aria-valuemin={0}
       aria-valuemax={100}
       aria-valuenow={pct}
-      className="h-2 w-full overflow-hidden rounded-full bg-zinc-100"
+      className="h-2.5 w-full overflow-hidden rounded-full bg-zinc-100 shadow-inner"
     >
-      <div className="h-full rounded-full bg-blue-600 transition-all duration-300" style={{ width: `${pct}%` }} />
+      <div
+        className="h-full rounded-full bg-gradient-to-r from-indigo-600 via-indigo-500 to-emerald-500 transition-all duration-300"
+        style={{ width: `${pct}%` }}
+      />
     </div>
   );
 }
 
 function Count({ label, value, tone }: { label: string; value: number; tone?: "danger" | "info" | "success" }) {
   return (
-    <div className="rounded-lg border border-zinc-200 bg-white px-3 py-2">
+    <div className="rounded-xl border border-zinc-200/80 bg-white px-3.5 py-2.5 shadow-xs">
       <div
         className={cn(
-          "text-lg font-semibold tabular-nums",
-          tone === "danger" && value > 0 ? "text-red-600" : tone === "info" && value > 0 ? "text-blue-600" : "text-zinc-900"
+          "text-xl font-black tabular-nums",
+          tone === "danger" && value > 0 ? "text-red-600" : tone === "info" && value > 0 ? "text-indigo-600" : "text-zinc-900"
         )}
       >
         {value}
       </div>
-      <div className="text-[11px] text-zinc-500">{label}</div>
+      <div className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 mt-0.5">{label}</div>
     </div>
   );
 }
