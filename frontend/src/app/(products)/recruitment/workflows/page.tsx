@@ -3,8 +3,7 @@
 import { useEffect, useState } from "react";
 import {
   AlertTriangle, CheckCircle2, ChevronDown, ChevronRight,
-  Clock, Loader2, Play, RefreshCw, Send, ShieldAlert,
-  Zap, Layers
+  Clock, Loader2, Play, RefreshCw, Layers, Sliders
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ErrorBanner } from "@/components/ui/error-banner";
@@ -16,12 +15,6 @@ import {
 } from "@/lib/recruitmentApi";
 import { cn } from "@/lib/utils";
 
-const ICONS: Record<string, React.ReactNode> = {
-  Zap: <Zap className="h-4 w-4 text-zinc-700" />,
-  ShieldAlert: <ShieldAlert className="h-4 w-4 text-zinc-700" />,
-  Send: <Send className="h-4 w-4 text-zinc-700" />,
-};
-
 export default function WorkflowsPage() {
   const [templates, setTemplates] = useState<WorkflowTemplate[]>([]);
   const [runs, setRuns] = useState<WorkflowRunItem[]>([]);
@@ -30,7 +23,7 @@ export default function WorkflowsPage() {
   const [error, setError] = useState<string | null>(null);
   const [refresh, setRefresh] = useState(0);
 
-  // Trigger modal state
+  // Trigger modal / configuration state
   const [selectedTemplate, setSelectedTemplate] = useState<WorkflowTemplate | null>(null);
   const [selectedJobId, setSelectedJobId] = useState<string>("");
   const [paramMinScore, setParamMinScore] = useState<number>(75);
@@ -85,13 +78,13 @@ export default function WorkflowsPage() {
   return (
     <div className="space-y-6">
       {/* Enterprise Header */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b border-zinc-200/80 pb-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b border-[#E4E7EC] pb-5">
         <div>
-          <h1 className="text-xl sm:text-2xl font-semibold tracking-tight text-zinc-900">
-            Pipeline Workflows
+          <h1 className="text-xl sm:text-2xl font-semibold tracking-tight text-[#171717]">
+            Recruitment Workflows
           </h1>
-          <p className="mt-1 text-xs sm:text-sm text-zinc-500">
-            Automated multi-stage pipelines for resume scoring, fraud verification gates, and candidate screening.
+          <p className="mt-0.5 text-xs sm:text-sm text-[#667085]">
+            Automated multi-stage pipelines for resume parsing, hard requirement matching, and decision routing.
           </p>
         </div>
 
@@ -101,49 +94,78 @@ export default function WorkflowsPage() {
             size="sm"
             onClick={() => setRefresh((n) => n + 1)}
             disabled={loading}
-            className="h-8 rounded-md border-zinc-200 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+            className="h-8 rounded-md border-[#E4E7EC] text-xs font-medium text-[#667085] hover:bg-[#F2F4F7]"
           >
-            <RefreshCw className={cn("h-3.5 w-3.5 mr-1.5 text-zinc-500", loading && "animate-spin")} />
-            Sync Runs
+            <RefreshCw className={cn("h-3.5 w-3.5 mr-1.5 text-[#98A2B3]", loading && "animate-spin")} />
+            Sync Status
           </Button>
         </div>
       </div>
 
       {error && <ErrorBanner message={error} />}
 
+      {/* CORE 4-STAGE PIPELINE OVERVIEW */}
+      <div className="rounded-lg border border-[#E4E7EC] bg-white p-4 sm:p-5">
+        <div className="flex items-center justify-between pb-3 border-b border-[#E4E7EC]">
+          <div>
+            <h2 className="text-xs font-semibold uppercase tracking-wider text-[#667085]">Standard Evaluation Pipeline</h2>
+            <p className="text-[11px] text-[#98A2B3] mt-0.5">End-to-end candidate processing flow</p>
+          </div>
+          <span className="text-xs font-medium text-[#12B76A]">● Active System</span>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 pt-4">
+          <div className="rounded-md border border-[#E4E7EC] bg-[#F7F8FA] p-3 space-y-1">
+            <span className="text-[10px] font-semibold text-[#667085] uppercase tracking-wider">Stage 1</span>
+            <h3 className="text-xs font-semibold text-[#171717]">Document Ingestion</h3>
+            <p className="text-[11px] text-[#667085]">PDF & DOCX text extraction</p>
+          </div>
+          <div className="rounded-md border border-[#E4E7EC] bg-[#F7F8FA] p-3 space-y-1">
+            <span className="text-[10px] font-semibold text-[#667085] uppercase tracking-wider">Stage 2</span>
+            <h3 className="text-xs font-semibold text-[#171717]">Hard Requirements</h3>
+            <p className="text-[11px] text-[#667085]">Experience & mandatory skills</p>
+          </div>
+          <div className="rounded-md border border-[#E4E7EC] bg-[#F7F8FA] p-3 space-y-1">
+            <span className="text-[10px] font-semibold text-[#667085] uppercase tracking-wider">Stage 3</span>
+            <h3 className="text-xs font-semibold text-[#171717]">Semantic Evaluation</h3>
+            <p className="text-[11px] text-[#667085]">Role relevance & skill depth</p>
+          </div>
+          <div className="rounded-md border border-[#E4E7EC] bg-[#F7F8FA] p-3 space-y-1">
+            <span className="text-[10px] font-semibold text-[#667085] uppercase tracking-wider">Stage 4</span>
+            <h3 className="text-xs font-semibold text-[#171717]">Decision Routing</h3>
+            <p className="text-[11px] text-[#667085]">Shortlist, triage, or reject</p>
+          </div>
+        </div>
+      </div>
+
       {/* Trigger Execution Modal/Drawer Form */}
       {selectedTemplate && (
-        <div className="rounded-lg border border-zinc-300 bg-white p-5 shadow-sm space-y-4">
-          <div className="flex items-center justify-between border-b border-zinc-100 pb-3">
-            <div className="flex items-center gap-2.5">
-              <div className="flex h-7 w-7 items-center justify-center rounded-md bg-zinc-100 text-zinc-700">
-                <Zap className="h-3.5 w-3.5" />
-              </div>
-              <div>
-                <h3 className="text-sm font-semibold text-zinc-900">Execute: {selectedTemplate.name}</h3>
-                <p className="text-[11px] text-zinc-500">Configure parameters for this workflow execution</p>
-              </div>
+        <div className="rounded-lg border border-[#E4E7EC] bg-white p-5 space-y-4">
+          <div className="flex items-center justify-between border-b border-[#E4E7EC] pb-3">
+            <div>
+              <h3 className="text-sm font-semibold text-[#171717]">Execute: {selectedTemplate.name}</h3>
+              <p className="text-xs text-[#667085]">Configure parameters for this workflow execution</p>
             </div>
             <Button
               variant="ghost"
               size="sm"
               onClick={() => setSelectedTemplate(null)}
-              className="h-7 text-xs text-zinc-500 hover:text-zinc-900"
+              className="h-7 text-xs text-[#667085] hover:text-[#171717]"
             >
-              Dismiss
+              Cancel
             </Button>
           </div>
 
           <form onSubmit={handleRunSubmit} className="space-y-4">
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1.5">
-                <label className="block text-xs font-medium text-zinc-700">
-                  Target Job Position
+                <label className="block text-xs font-medium text-[#171717]">
+                  Target Position
                 </label>
                 <select
                   value={selectedJobId}
                   onChange={(e) => setSelectedJobId(e.target.value)}
-                  className="w-full h-9 rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-900 shadow-xs focus:border-zinc-900 focus:outline-none"
+                  className="w-full h-8 rounded-md border border-[#E4E7EC] bg-white px-2.5 text-xs font-medium text-[#171717] focus:border-[#171717] focus:outline-none"
                 >
                   <option value="">All Open Positions (Global)</option>
                   {jobs.map((job) => (
@@ -152,16 +174,16 @@ export default function WorkflowsPage() {
                     </option>
                   ))}
                 </select>
-                <p className="text-[11px] text-zinc-400">Limit this run to candidates of a specific position.</p>
+                <p className="text-[11px] text-[#98A2B3]">Limit execution to applicants of a specific role.</p>
               </div>
 
               {selectedTemplate.id === "auto_shortlist" && (
                 <div className="space-y-1.5">
                   <div className="flex items-center justify-between">
-                    <label className="block text-xs font-medium text-zinc-700">
+                    <label className="block text-xs font-medium text-[#171717]">
                       Minimum Match Threshold
                     </label>
-                    <span className="rounded bg-zinc-100 px-2 py-0.5 text-xs font-semibold tabular-nums text-zinc-800">
+                    <span className="text-xs font-semibold tabular-nums text-[#171717]">
                       {paramMinScore}%
                     </span>
                   </div>
@@ -172,9 +194,9 @@ export default function WorkflowsPage() {
                     step="5"
                     value={paramMinScore}
                     onChange={(e) => setParamMinScore(parseInt(e.target.value))}
-                    className="w-full h-1.5 bg-zinc-200 rounded-lg appearance-none cursor-pointer accent-zinc-900 mt-2"
+                    className="w-full h-1.5 bg-[#E4E7EC] rounded-lg appearance-none cursor-pointer accent-[#171717] mt-2"
                   />
-                  <div className="flex justify-between text-[10px] text-zinc-400 font-medium">
+                  <div className="flex justify-between text-[10px] text-[#98A2B3] font-medium">
                     <span>50% (Flexible)</span>
                     <span>75% (Standard)</span>
                     <span>95% (Strict)</span>
@@ -185,13 +207,13 @@ export default function WorkflowsPage() {
 
             {triggerError && <ErrorBanner message={triggerError} />}
 
-            <div className="flex items-center justify-end gap-2 pt-2 border-t border-zinc-100">
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#E4E7EC]">
               <Button
                 type="button"
                 variant="outline"
                 size="sm"
                 onClick={() => setSelectedTemplate(null)}
-                className="h-8 rounded-md border-zinc-200 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+                className="h-8 rounded-md border-[#E4E7EC] text-xs font-medium text-[#667085] hover:bg-[#F2F4F7]"
               >
                 Cancel
               </Button>
@@ -199,7 +221,7 @@ export default function WorkflowsPage() {
                 type="submit"
                 size="sm"
                 disabled={triggering}
-                className="h-8 rounded-md bg-zinc-900 text-xs font-medium text-white hover:bg-zinc-800"
+                className="h-8 rounded-md bg-[#171717] text-xs font-medium text-white hover:bg-[#262626]"
               >
                 {triggering ? (
                   <>
@@ -221,17 +243,15 @@ export default function WorkflowsPage() {
       {/* Templates Section */}
       <section className="space-y-3">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Layers className="h-4 w-4 text-zinc-500" />
-            <h2 className="text-sm font-semibold text-zinc-900">Workflow Templates</h2>
-          </div>
-          <span className="text-xs text-zinc-400 font-normal">Available automation rules</span>
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-[#667085]">
+            Workflow Rules & Templates ({templates.length})
+          </h2>
         </div>
 
         {loading ? (
           <div className="grid gap-3 sm:grid-cols-3">
             {[1, 2, 3].map((i) => (
-              <Skeleton key={i} className="h-44 rounded-lg" />
+              <Skeleton key={i} className="h-44 rounded-lg bg-[#E4E7EC]" />
             ))}
           </div>
         ) : (
@@ -239,57 +259,46 @@ export default function WorkflowsPage() {
             {templates.map((tmpl) => (
               <div
                 key={tmpl.id}
-                className="rounded-lg border border-zinc-200/80 bg-white p-4 shadow-xs flex flex-col justify-between space-y-4 transition-colors hover:border-zinc-300"
+                className="rounded-lg border border-[#E4E7EC] bg-white p-4 flex flex-col justify-between space-y-4"
               >
-                <div className="space-y-3">
-                  <div className="flex items-start justify-between">
-                    <div className="flex h-8 w-8 items-center justify-center rounded-md bg-zinc-100 text-zinc-700">
-                      {ICONS[tmpl.icon] || <Zap className="h-4 w-4 text-zinc-700" />}
-                    </div>
-                    <span className="rounded bg-zinc-100 px-2 py-0.5 text-[10px] font-medium text-zinc-600">
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-xs font-semibold text-[#171717]">
+                      {tmpl.name}
+                    </h3>
+                    <span className="rounded bg-[#F2F4F7] px-1.5 py-0.5 text-[10px] font-medium text-[#667085]">
                       {tmpl.steps.length} Steps
                     </span>
                   </div>
 
-                  <div>
-                    <h3 className="text-sm font-semibold text-zinc-900">
-                      {tmpl.name}
-                    </h3>
-                    <p className="mt-1 text-xs text-zinc-500 leading-relaxed font-normal">
-                      {tmpl.description}
-                    </p>
-                  </div>
+                  <p className="text-xs text-[#667085] leading-relaxed font-normal">
+                    {tmpl.description}
+                  </p>
 
-                  {/* Multi-step Pipeline Flow */}
-                  <div className="pt-1">
-                    <p className="text-[10px] font-medium uppercase tracking-wider text-zinc-400 mb-1.5">
-                      Stages:
+                  <div className="pt-2 border-t border-[#E4E7EC]">
+                    <p className="text-[10px] font-medium uppercase tracking-wider text-[#98A2B3] mb-1">
+                      Steps:
                     </p>
                     <div className="space-y-1">
                       {tmpl.steps.map((st, i) => (
-                        <div key={i} className="flex items-center gap-2 text-xs text-zinc-600">
-                          <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded bg-zinc-100 text-[10px] font-semibold text-zinc-500">
-                            {i + 1}
-                          </span>
-                          <span className="truncate font-normal">{st.name}</span>
-                          {i < tmpl.steps.length - 1 && (
-                            <ChevronRight className="h-3 w-3 text-zinc-300 ml-auto shrink-0" />
-                          )}
+                        <div key={i} className="flex items-center gap-1.5 text-xs text-[#667085]">
+                          <span className="text-[10px] text-[#98A2B3]">{i + 1}.</span>
+                          <span className="truncate">{st.name}</span>
                         </div>
                       ))}
                     </div>
                   </div>
                 </div>
 
-                <div className="pt-2 border-t border-zinc-100">
+                <div className="pt-2 border-t border-[#E4E7EC]">
                   <Button
                     variant="outline"
                     size="sm"
-                    className="w-full h-8 rounded-md border-zinc-200 text-xs font-medium text-zinc-800 hover:bg-zinc-50"
+                    className="w-full h-8 rounded-md border-[#E4E7EC] text-xs font-medium text-[#171717] hover:bg-[#F2F4F7]"
                     onClick={() => setSelectedTemplate(tmpl)}
                   >
-                    <Play className="h-3.5 w-3.5 mr-1.5 text-zinc-500" />
-                    Configure & Run
+                    <Play className="h-3 w-3 mr-1.5 text-[#667085]" />
+                    Run Workflow
                   </Button>
                 </div>
               </div>
@@ -301,26 +310,20 @@ export default function WorkflowsPage() {
       {/* Execution Runs Section */}
       <section className="space-y-3">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Clock className="h-4 w-4 text-zinc-500" />
-            <h2 className="text-sm font-semibold text-zinc-900">Execution History</h2>
-          </div>
-          <span className="text-xs text-zinc-400 font-normal">Recent automated workflow runs</span>
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-[#667085]">
+            Execution History
+          </h2>
         </div>
 
         {loading ? (
           <div className="space-y-2">
             {[1, 2, 3].map((i) => (
-              <Skeleton key={i} className="h-24 rounded-lg" />
+              <Skeleton key={i} className="h-20 rounded-lg bg-[#E4E7EC]" />
             ))}
           </div>
         ) : runs.length === 0 ? (
-          <div className="rounded-lg border border-zinc-200 bg-white p-12 text-center shadow-xs">
-            <Clock className="mx-auto h-8 w-8 text-zinc-300 mb-2" />
-            <h3 className="text-sm font-semibold text-zinc-800">No workflow executions logged</h3>
-            <p className="text-xs text-zinc-500 mt-1 max-w-sm mx-auto">
-              Execute a workflow from the templates above to process candidates through automated pipelines.
-            </p>
+          <div className="rounded-lg border border-[#E4E7EC] bg-white p-8 text-center text-xs text-[#667085]">
+            No workflow executions logged yet.
           </div>
         ) : (
           <div className="space-y-2.5">
@@ -333,34 +336,27 @@ export default function WorkflowsPage() {
               return (
                 <div
                   key={run.id}
-                  className="rounded-lg border border-zinc-200/80 bg-white p-4 shadow-xs space-y-3"
+                  className="rounded-lg border border-[#E4E7EC] bg-white p-4 space-y-3"
                 >
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div className="space-y-0.5">
                       <div className="flex items-center gap-2">
-                        <h3 className="text-sm font-semibold text-zinc-900">{run.title}</h3>
+                        <h3 className="text-xs font-semibold text-[#171717]">{run.title}</h3>
                         <span
                           className={cn(
                             "inline-flex items-center gap-1 rounded px-1.5 py-0.2 text-[10px] font-medium uppercase",
                             isCompleted
-                              ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                              ? "bg-[#ECFDF3] text-[#12B76A]"
                               : isFailed
-                              ? "bg-red-50 text-red-700 border border-red-200"
-                              : "bg-amber-50 text-amber-700 border border-amber-200"
+                              ? "bg-[#FEF3F2] text-[#F04438]"
+                              : "bg-[#FFFAEB] text-[#F79009]"
                           )}
                         >
-                          {isCompleted ? (
-                            <CheckCircle2 className="h-3 w-3 text-emerald-600" />
-                          ) : isFailed ? (
-                            <AlertTriangle className="h-3 w-3 text-red-600" />
-                          ) : (
-                            <Loader2 className="h-3 w-3 animate-spin text-amber-600" />
-                          )}
                           {run.status}
                         </span>
                       </div>
-                      <p className="text-[11px] text-zinc-400">
-                        Triggered {run.created_at ? new Date(run.created_at).toLocaleString() : "Recently"}
+                      <p className="text-[11px] text-[#98A2B3]">
+                        {run.created_at ? new Date(run.created_at).toLocaleString() : "Recently"}
                       </p>
                     </div>
 
@@ -368,7 +364,7 @@ export default function WorkflowsPage() {
                       variant="outline"
                       size="sm"
                       onClick={() => setExpandedRun(isExpanded ? null : run.id)}
-                      className="h-7 rounded-md border-zinc-200 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+                      className="h-7 rounded-md border-[#E4E7EC] text-xs font-medium text-[#667085] hover:bg-[#F2F4F7]"
                     >
                       {isExpanded ? "Hide Logs" : "View Logs"}
                       <ChevronDown className={cn("h-3 w-3 ml-1 transition-transform", isExpanded && "rotate-180")} />
@@ -377,15 +373,15 @@ export default function WorkflowsPage() {
 
                   {/* Progress bar */}
                   <div className="space-y-1">
-                    <div className="flex justify-between text-xs text-zinc-500 font-normal">
-                      <span>Progress: {run.completed_steps} of {run.total_steps} steps</span>
-                      <span className="font-semibold text-zinc-800 tabular-nums">{percent}%</span>
+                    <div className="flex justify-between text-xs text-[#667085]">
+                      <span>{run.completed_steps} of {run.total_steps} steps</span>
+                      <span className="font-semibold text-[#171717] tabular-nums">{percent}%</span>
                     </div>
-                    <div className="h-1.5 w-full rounded-full bg-zinc-100 overflow-hidden">
+                    <div className="h-1.5 w-full rounded-full bg-[#F2F4F7] overflow-hidden">
                       <div
                         className={cn(
                           "h-full rounded-full transition-all duration-300",
-                          isFailed ? "bg-red-500" : isCompleted ? "bg-emerald-600" : "bg-zinc-800"
+                          isFailed ? "bg-[#F04438]" : isCompleted ? "bg-[#12B76A]" : "bg-[#171717]"
                         )}
                         style={{ width: `${percent}%` }}
                       />
@@ -393,52 +389,29 @@ export default function WorkflowsPage() {
                   </div>
 
                   {run.summary && (
-                    <p className="text-xs text-zinc-700 bg-zinc-50 p-2.5 rounded-md border border-zinc-100 font-mono">
+                    <p className="text-xs text-[#667085] bg-[#F7F8FA] p-2.5 rounded-md border border-[#E4E7EC]">
                       {run.summary}
-                    </p>
-                  )}
-
-                  {run.error && (
-                    <p className="text-xs text-red-600 bg-red-50 p-2.5 rounded-md border border-red-200">
-                      Error: {run.error}
                     </p>
                   )}
 
                   {/* Expanded Steps */}
                   {isExpanded && run.steps && run.steps.length > 0 && (
-                    <div className="pt-3 border-t border-zinc-100 space-y-2">
-                      <h4 className="text-[11px] font-medium uppercase tracking-wider text-zinc-400">
-                        Step Audit Trail
-                      </h4>
-                      <div className="divide-y divide-zinc-100 rounded-md border border-zinc-200 bg-zinc-50/50">
-                        {run.steps.map((st) => (
-                          <div key={st.id} className="py-2 px-3 flex items-center justify-between text-xs">
-                            <div className="flex items-center gap-2">
-                              {st.status === "completed" ? (
-                                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
-                              ) : st.status === "failed" ? (
-                                <AlertTriangle className="h-3.5 w-3.5 text-red-600" />
-                              ) : (
-                                <Clock className="h-3.5 w-3.5 text-zinc-400" />
-                              )}
-                              <span className="font-medium text-zinc-900">{st.step_index + 1}. {st.name}</span>
-                              <span className="text-zinc-400 font-mono text-[11px]">({st.action})</span>
-                            </div>
-                            <span
-                              className={cn(
-                                "rounded px-1.5 py-0.2 text-[10px] font-medium uppercase",
-                                st.status === "completed"
-                                  ? "bg-emerald-100 text-emerald-800"
-                                  : st.status === "failed"
-                                  ? "bg-red-100 text-red-800"
-                                  : "bg-zinc-200 text-zinc-700"
-                              )}
-                            >
-                              {st.status}
-                            </span>
+                    <div className="pt-2 border-t border-[#E4E7EC] space-y-1.5">
+                      {run.steps.map((st) => (
+                        <div key={st.id} className="py-1 px-2.5 flex items-center justify-between text-xs rounded bg-[#F7F8FA]">
+                          <div className="flex items-center gap-2">
+                            {st.status === "completed" ? (
+                              <CheckCircle2 className="h-3 w-3 text-[#12B76A]" />
+                            ) : st.status === "failed" ? (
+                              <AlertTriangle className="h-3 w-3 text-[#F04438]" />
+                            ) : (
+                              <Clock className="h-3 w-3 text-[#98A2B3]" />
+                            )}
+                            <span className="font-medium text-[#171717]">{st.name}</span>
                           </div>
-                        ))}
-                      </div>
+                          <span className="text-[10px] text-[#667085] uppercase">{st.status}</span>
+                        </div>
+                      ))}
                     </div>
                   )}
                 </div>

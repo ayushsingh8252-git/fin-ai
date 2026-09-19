@@ -15,10 +15,10 @@ import { errorMessage, getMe, seedDemoPipeline, type Me, type UserRole } from "@
 import { cn } from "@/lib/utils";
 
 const ROLE_LABEL: Record<UserRole, string> = {
-  hr_admin: "HR Administrator",
+  hr_admin: "HR Admin",
   recruiter: "Recruiter",
   hiring_manager: "Hiring Manager",
-  interviewer: "Technical Interviewer",
+  interviewer: "Interviewer",
 };
 
 interface RecruitmentContextValue {
@@ -58,17 +58,17 @@ function NavLink({
       className={cn(
         "inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
         active
-          ? "bg-zinc-100 text-zinc-900 font-semibold"
-          : "text-zinc-600 hover:bg-zinc-50 hover:text-zinc-900"
+          ? "bg-[#F2F4F7] text-[#171717] font-semibold"
+          : "text-[#667085] hover:bg-[#F2F4F7] hover:text-[#171717]"
       )}
     >
-      <Icon className={cn("h-3.5 w-3.5", active ? "text-zinc-900" : "text-zinc-500")} />
+      <Icon className={cn("h-3.5 w-3.5", active ? "text-[#171717]" : "text-[#98A2B3]")} />
       <span>{label}</span>
       {badge !== undefined && (
         <span
           className={cn(
             "ml-1 inline-flex items-center rounded px-1.5 py-0.2 text-[10px] tabular-nums font-medium",
-            active ? "bg-zinc-200 text-zinc-800" : "bg-zinc-100 text-zinc-600"
+            active ? "bg-[#E4E7EC] text-[#171717]" : "bg-[#F2F4F7] text-[#667085]"
           )}
         >
           {badge}
@@ -131,51 +131,50 @@ function ShellContent({ children }: { children: React.ReactNode }) {
   }, [loaded]);
 
   return (
-    <div className="min-h-screen bg-[#fcfcfd] text-zinc-900 antialiased selection:bg-zinc-200">
+    <div className="min-h-screen bg-[#F7F8FA] text-[#171717] antialiased">
       {/* Enterprise Header */}
-      <header className="sticky top-0 z-40 border-b border-zinc-200/80 bg-white shadow-xs">
+      <header className="sticky top-0 z-40 border-b border-[#E4E7EC] bg-white">
         <div className="mx-auto flex h-14 max-w-7xl items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
           {/* Brand & Section Navigation */}
           <div className="flex items-center gap-6">
             <Link
               href="/recruitment"
-              className="flex items-center gap-2.5 text-zinc-900 transition-opacity hover:opacity-80"
+              className="flex items-center gap-2.5 text-[#171717] transition-opacity hover:opacity-85"
             >
-              <div className="flex h-7 w-7 items-center justify-center rounded-md bg-zinc-900 text-white shadow-xs">
+              <div className="flex h-7 w-7 items-center justify-center rounded-md bg-[#171717] text-white">
                 <Briefcase className="h-3.5 w-3.5" />
               </div>
               <div className="flex flex-col">
-                <span className="text-sm font-semibold tracking-tight text-zinc-900 leading-none">
+                <span className="text-sm font-semibold tracking-tight text-[#171717] leading-none">
                   Recruitment
                 </span>
-                <span className="text-[10px] text-zinc-500 font-normal leading-tight mt-0.5">
-                  Talent Pipeline
+                <span className="text-[11px] text-[#667085] font-normal leading-tight mt-0.5">
+                  Talent Operations
                 </span>
               </div>
             </Link>
 
-            <div className="h-4 w-px bg-zinc-200" />
+            <div className="h-4 w-px bg-[#E4E7EC]" />
 
-            {/* Navigation Tabs */}
+            {/* Navigation Links */}
             <nav aria-label="Recruitment navigation" className="flex items-center gap-1">
               <NavLink
                 href="/recruitment"
                 active={pathname === "/recruitment" || pathname?.startsWith("/recruitment/jobs")}
                 icon={Briefcase}
-                label="Jobs & Pipeline"
+                label="Overview & Jobs"
               />
               <NavLink
                 href="/recruitment/inbox"
                 active={pathname === "/recruitment/inbox"}
                 icon={Inbox}
-                label="Action Queue"
+                label="Review Inbox"
               />
               <NavLink
                 href="/recruitment/workflows"
                 active={pathname === "/recruitment/workflows"}
                 icon={Zap}
                 label="Workflows"
-                badge="3 Active"
               />
             </nav>
           </div>
@@ -188,33 +187,33 @@ function ShellContent({ children }: { children: React.ReactNode }) {
               size="sm"
               onClick={handleSeedDemo}
               disabled={seeding}
-              className="hidden sm:inline-flex items-center gap-1.5 h-8 rounded-md border-zinc-200 bg-white text-xs font-medium text-zinc-700 hover:bg-zinc-50 hover:text-zinc-900"
+              className="hidden sm:inline-flex items-center gap-1.5 h-8 rounded-md border-[#E4E7EC] bg-white text-xs font-medium text-[#667085] hover:bg-[#F2F4F7] hover:text-[#171717]"
             >
               {seeding ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin text-zinc-500" />
+                <Loader2 className="h-3.5 w-3.5 animate-spin text-[#667085]" />
               ) : (
-                <Database className="h-3.5 w-3.5 text-zinc-500" />
+                <Database className="h-3.5 w-3.5 text-[#98A2B3]" />
               )}
-              Seed Demo Data
+              Demo Data
             </Button>
 
-            {/* User Profile Pill */}
+            {/* User Profile */}
             {value ? (
-              <div className="flex items-center gap-2 rounded-md border border-zinc-200 bg-white py-1 pl-1.5 pr-2.5 shadow-xs">
-                <div className="flex h-6 w-6 items-center justify-center rounded-full bg-zinc-900 text-[10px] font-semibold text-white">
+              <div className="flex items-center gap-2 rounded-md border border-[#E4E7EC] bg-white py-1 pl-1.5 pr-2.5">
+                <div className="flex h-6 w-6 items-center justify-center rounded-full bg-[#171717] text-[10px] font-semibold text-white">
                   {userInitials}
                 </div>
                 <div className="flex flex-col text-left">
-                  <span className="max-w-[130px] truncate text-xs font-semibold text-zinc-800 leading-tight">
+                  <span className="max-w-[130px] truncate text-xs font-semibold text-[#171717] leading-tight">
                     {value.me.name || value.me.email}
                   </span>
-                  <span className="text-[10px] text-zinc-500 font-normal leading-tight">
+                  <span className="text-[10px] text-[#667085] font-normal leading-tight">
                     {ROLE_LABEL[value.me.role] ?? value.me.role}
                   </span>
                 </div>
               </div>
             ) : (
-              <Skeleton className="h-8 w-28 rounded-md" />
+              <Skeleton className="h-8 w-28 rounded-md bg-[#E4E7EC]" />
             )}
           </div>
         </div>
@@ -225,17 +224,17 @@ function ShellContent({ children }: { children: React.ReactNode }) {
         {loaded === null && (
           <div className="space-y-6">
             <div className="flex items-center justify-between">
-              <Skeleton className="h-8 w-60 rounded-md" />
-              <Skeleton className="h-8 w-28 rounded-md" />
+              <Skeleton className="h-8 w-60 rounded-md bg-[#E4E7EC]" />
+              <Skeleton className="h-8 w-28 rounded-md bg-[#E4E7EC]" />
             </div>
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               {[0, 1, 2, 3].map((i) => (
-                <Skeleton key={i} className="h-20 rounded-lg" />
+                <Skeleton key={i} className="h-20 rounded-lg bg-[#E4E7EC]" />
               ))}
             </div>
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {[0, 1, 2].map((i) => (
-                <Skeleton key={i} className="h-48 rounded-lg" />
+                <Skeleton key={i} className="h-48 rounded-lg bg-[#E4E7EC]" />
               ))}
             </div>
           </div>
@@ -250,7 +249,7 @@ function ShellContent({ children }: { children: React.ReactNode }) {
                 setLoaded(null);
                 setAttempt((n) => n + 1);
               }}
-              className="rounded-md"
+              className="rounded-md border-[#E4E7EC] text-xs font-medium"
             >
               <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
               Try again

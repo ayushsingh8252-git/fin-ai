@@ -55,10 +55,10 @@ function Bar({ pct, label }: { pct: number; label: string }) {
       aria-valuemin={0}
       aria-valuemax={100}
       aria-valuenow={pct}
-      className="h-2 w-full overflow-hidden rounded-full bg-zinc-100"
+      className="h-1.5 w-full overflow-hidden rounded-full bg-[#F2F4F7]"
     >
       <div
-        className="h-full rounded-full bg-zinc-900 transition-all duration-200"
+        className="h-full rounded-full bg-[#171717] transition-all duration-200"
         style={{ width: `${pct}%` }}
       />
     </div>
@@ -67,16 +67,16 @@ function Bar({ pct, label }: { pct: number; label: string }) {
 
 function Count({ label, value, tone }: { label: string; value: number; tone?: "danger" | "info" | "success" }) {
   return (
-    <div className="rounded-md border border-zinc-200 bg-white px-3 py-2">
+    <div className="rounded-md border border-[#E4E7EC] bg-white px-3 py-2">
       <div
         className={cn(
           "text-lg font-semibold tabular-nums leading-none",
-          tone === "danger" && value > 0 ? "text-red-600" : tone === "info" && value > 0 ? "text-blue-600" : "text-zinc-900"
+          tone === "danger" && value > 0 ? "text-[#F04438]" : tone === "info" && value > 0 ? "text-[#2E90FA]" : "text-[#171717]"
         )}
       >
         {value}
       </div>
-      <div className="text-[10px] font-medium text-zinc-500 mt-1">{label}</div>
+      <div className="text-[10px] font-medium text-[#667085] mt-1">{label}</div>
     </div>
   );
 }
@@ -189,8 +189,6 @@ export function UploadPanel({
       }
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return;
-      // Anything that was mid-flight was not confirmed, so it goes back to
-      // "selected" and will be sent again; files already confirmed stay sent.
       setEntries((prev) => prev.map((e) => (e.state === "uploading" ? { ...e, state: "selected" } : e)));
       setUploadError(errorMessage(err));
     } finally {
@@ -222,12 +220,11 @@ export function UploadPanel({
 
   return (
     <Dialog open={open} onOpenChange={(next) => !uploading && onOpenChange(next)}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl rounded-lg border-zinc-200 p-5 sm:p-6 shadow-lg">
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl rounded-lg border-[#E4E7EC] bg-white p-5 sm:p-6 shadow-lg">
         <DialogHeader>
-          <DialogTitle className="text-base font-semibold text-zinc-900">Upload resumes</DialogTitle>
-          <DialogDescription className="text-xs text-zinc-500">
-            PDF resumes for <span className="font-medium text-zinc-800">{job.title}</span>. Each one becomes a candidate
-            profile and is analyzed against this role.
+          <DialogTitle className="text-base font-semibold text-[#171717]">Upload Resumes</DialogTitle>
+          <DialogDescription className="text-xs text-[#667085]">
+            Upload PDF resumes for <span className="font-medium text-[#171717]">{job.title}</span>.
           </DialogDescription>
         </DialogHeader>
 
@@ -248,13 +245,13 @@ export function UploadPanel({
                 }}
                 className={cn(
                   "flex flex-col items-center gap-2 rounded-lg border border-dashed px-6 py-7 text-center transition-colors",
-                  dragging ? "border-zinc-900 bg-zinc-50" : "border-zinc-300 bg-zinc-50/50 hover:bg-zinc-50"
+                  dragging ? "border-[#171717] bg-[#F7F8FA]" : "border-[#E4E7EC] bg-[#F7F8FA] hover:bg-white"
                 )}
               >
-                <UploadCloud className="h-6 w-6 text-zinc-400" aria-hidden="true" />
-                <p className="text-xs font-semibold text-zinc-800">Drag and drop resume PDFs here</p>
-                <p className="text-[11px] text-zinc-400">or</p>
-                <Button variant="outline" size="sm" className="h-8 rounded-md border-zinc-200 text-xs font-medium" onClick={() => inputRef.current?.click()}>
+                <UploadCloud className="h-6 w-6 text-[#98A2B3]" aria-hidden="true" />
+                <p className="text-xs font-semibold text-[#171717]">Drag and drop resume PDFs here</p>
+                <p className="text-[11px] text-[#98A2B3]">or</p>
+                <Button variant="outline" size="sm" className="h-8 rounded-md border-[#E4E7EC] text-xs font-medium text-[#171717] hover:bg-[#F2F4F7]" onClick={() => inputRef.current?.click()}>
                   Browse files
                 </Button>
                 <input
@@ -267,15 +264,15 @@ export function UploadPanel({
                   aria-label="Choose resume PDFs"
                   onChange={(e) => {
                     if (e.target.files) add(e.target.files);
-                    e.target.value = ""; // allow picking the same file again
+                    e.target.value = "";
                   }}
                 />
-                <p className="text-xs text-zinc-400">PDF only, up to 25 MB each. Large batches are sent in parts automatically.</p>
+                <p className="text-xs text-[#98A2B3]">PDF only, up to 25 MB each.</p>
               </div>
             )}
 
             {skipped.length > 0 && (
-              <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              <div className="rounded-lg border border-[#FEDF89] bg-[#FFFAEB] px-3 py-2 text-xs text-[#B54708]">
                 <p className="mb-1 font-semibold">{skipped.length} file{skipped.length === 1 ? " was" : "s were"} not added:</p>
                 <ul className="max-h-20 space-y-0.5 overflow-y-auto">
                   {skipped.map((s, i) => (
@@ -286,39 +283,39 @@ export function UploadPanel({
             )}
 
             {entries.length > 0 && (
-              <div className="rounded-xl border border-zinc-200">
-                <div className="flex items-center justify-between border-b border-zinc-100 px-3 py-2">
-                  <p className="text-sm font-medium text-zinc-800">
+              <div className="rounded-lg border border-[#E4E7EC] bg-white">
+                <div className="flex items-center justify-between border-b border-[#E4E7EC] px-3 py-2">
+                  <p className="text-xs font-medium text-[#171717]">
                     {entries.length} file{entries.length === 1 ? "" : "s"} selected
-                    <span className="ml-2 text-xs font-normal text-zinc-500">{formatBytes(totalBytes)}</span>
+                    <span className="ml-2 text-xs font-normal text-[#667085]">{formatBytes(totalBytes)}</span>
                   </p>
                   {!uploading && (
-                    <Button variant="ghost" size="sm" onClick={reset}>
+                    <Button variant="ghost" size="sm" onClick={reset} className="h-6 text-xs text-[#667085] hover:text-[#171717]">
                       Clear
                     </Button>
                   )}
                 </div>
-                <ul className="max-h-56 divide-y divide-zinc-100 overflow-y-auto">
+                <ul className="max-h-56 divide-y divide-[#E4E7EC] overflow-y-auto">
                   {entries.map((e) => (
-                    <li key={e.key} className="flex items-center gap-2 px-3 py-1.5 text-sm">
-                      <FileText className="h-4 w-4 shrink-0 text-zinc-400" aria-hidden="true" />
-                      <span className="min-w-0 flex-1 truncate" title={e.file.name}>{e.file.name}</span>
-                      <span className="shrink-0 text-xs text-zinc-400">{formatBytes(e.file.size)}</span>
+                    <li key={e.key} className="flex items-center gap-2 px-3 py-1.5 text-xs">
+                      <FileText className="h-3.5 w-3.5 shrink-0 text-[#98A2B3]" aria-hidden="true" />
+                      <span className="min-w-0 flex-1 truncate text-[#171717]" title={e.file.name}>{e.file.name}</span>
+                      <span className="shrink-0 text-xs text-[#98A2B3]">{formatBytes(e.file.size)}</span>
                       {e.state === "selected" && !uploading && (
                         <button
                           type="button"
                           onClick={() => removeEntry(e.key)}
-                          className="rounded p-0.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
+                          className="rounded p-0.5 text-[#98A2B3] hover:bg-[#F2F4F7] hover:text-[#171717]"
                           aria-label={`Remove ${e.file.name}`}
                         >
                           <X className="h-3.5 w-3.5" />
                         </button>
                       )}
-                      {e.state === "uploading" && <Loader2 className="h-4 w-4 shrink-0 animate-spin text-blue-500" aria-label="Uploading" />}
-                      {e.state === "sent" && <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" aria-label="Uploaded" />}
+                      {e.state === "uploading" && <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-[#2E90FA]" aria-label="Uploading" />}
+                      {e.state === "sent" && <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-[#12B76A]" aria-label="Uploaded" />}
                       {e.state === "rejected" && (
-                        <span className="inline-flex shrink-0 items-center gap-1 text-xs text-red-600" title={e.error}>
-                          <XCircle className="h-4 w-4" aria-hidden="true" />
+                        <span className="inline-flex shrink-0 items-center gap-1 text-xs text-[#F04438]" title={e.error}>
+                          <XCircle className="h-3.5 w-3.5" aria-hidden="true" />
                           Rejected
                         </span>
                       )}
@@ -330,7 +327,7 @@ export function UploadPanel({
 
             {uploading && (
               <div className="space-y-1.5" aria-live="polite">
-                <p className="text-sm text-zinc-700">
+                <p className="text-xs text-[#667085]">
                   Uploading… {settled} of {entries.length} files sent
                 </p>
                 <Bar pct={uploadPct} label="Upload progress" />
@@ -339,7 +336,7 @@ export function UploadPanel({
 
             {uploadError && (
               <ErrorBanner
-                message={`${uploadError} ${pending.length} file${pending.length === 1 ? " was" : "s were"} not sent. Nothing already uploaded was lost.`}
+                message={`${uploadError} ${pending.length} file${pending.length === 1 ? " was" : "s were"} not sent.`}
               />
             )}
           </div>
@@ -349,59 +346,55 @@ export function UploadPanel({
         {inTrackMode && (
           <div className="space-y-3" aria-live="polite">
             {!status ? (
-              <p className="flex items-center gap-2 text-sm text-zinc-500">
-                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> Checking progress…
+              <p className="flex items-center gap-2 text-xs text-[#667085]">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> Checking progress…
               </p>
             ) : (
               <>
                 <div className="space-y-1.5">
-                  <p className="text-sm font-medium text-zinc-800">
+                  <p className="text-xs font-medium text-[#171717]">
                     {finished} of {total} resume{total === 1 ? "" : "s"} processed
-                    {uploading && <span className="font-normal text-zinc-500"> · more still uploading</span>}
+                    {uploading && <span className="font-normal text-[#667085]"> · more uploading</span>}
                   </p>
                   <Bar pct={pct} label="Processing progress" />
                 </div>
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
                   <Count label="Completed" value={counts!.parsed} />
-                  <Count label="Analysing" value={counts!.processing} tone="info" />
+                  <Count label="Evaluating" value={counts!.processing} tone="info" />
                   <Count label="Waiting" value={counts!.queued} />
                   <Count label="Duplicates" value={counts!.duplicate} />
                   <Count label="Failed" value={counts!.failed} tone="danger" />
                 </div>
 
                 {progress?.stalled && (
-                  <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                  <div className="flex items-start gap-2 rounded-md border border-[#FEDF89] bg-[#FFFAEB] px-3 py-2 text-xs text-[#B54708]">
+                    <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                     <span>
-                      These resumes are saved but nothing has started processing them yet. The processing service may be
-                      down. They will be picked up automatically once it is back; nothing needs to be re-uploaded.
+                      Resumes are saved and will be evaluated once the processing worker completes current items.
                     </span>
                   </div>
                 )}
-                {progress?.refreshError && (
-                  <p className="text-xs text-zinc-500">Could not refresh progress just now. Trying again…</p>
-                )}
 
                 {problems.length > 0 && (
-                  <ul className="max-h-52 divide-y divide-zinc-100 overflow-y-auto rounded-xl border border-zinc-200">
+                  <ul className="max-h-52 divide-y divide-[#E4E7EC] overflow-y-auto rounded-md border border-[#E4E7EC]">
                     {problems.map((u) => (
-                      <li key={u.id} className="flex items-start gap-2 px-3 py-2 text-sm">
+                      <li key={u.id} className="flex items-start gap-2 px-3 py-2 text-xs">
                         {u.status === "failed" ? (
-                          <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-500" aria-hidden="true" />
+                          <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#F04438]" aria-hidden="true" />
                         ) : (
-                          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" aria-hidden="true" />
+                          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#F79009]" aria-hidden="true" />
                         )}
                         <div className="min-w-0 flex-1">
-                          <p className="truncate font-medium text-zinc-800" title={u.filename}>{u.filename}</p>
-                          <p className="text-xs text-zinc-500">
+                          <p className="truncate font-medium text-[#171717]" title={u.filename}>{u.filename}</p>
+                          <p className="text-[11px] text-[#667085]">
                             {u.status === "duplicate"
-                              ? "Already in this job. The existing profile was updated, no second candidate was created."
-                              : u.error || "This file could not be processed."}
+                              ? "Already in this role. Existing profile updated."
+                              : u.error || "Could not process file."}
                           </p>
                         </div>
                         {u.status === "failed" && u.retryable && (
-                          <Button variant="outline" size="sm" disabled={retrying.has(u.id)} onClick={() => retry(u.id)}>
-                            {retrying.has(u.id) ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
+                          <Button variant="outline" size="sm" disabled={retrying.has(u.id)} onClick={() => retry(u.id)} className="h-6 text-xs">
+                            {retrying.has(u.id) ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCcw className="h-3 w-3" />}
                             Retry
                           </Button>
                         )}
@@ -414,12 +407,12 @@ export function UploadPanel({
           </div>
         )}
 
-        <DialogFooter className="pt-2 border-t border-zinc-100 flex items-center justify-end gap-2">
+        <DialogFooter className="pt-2 border-t border-[#E4E7EC] flex items-center justify-end gap-2">
           {inTrackMode && status?.done && !uploading && pending.length === 0 ? (
             <>
               <Button
                 variant="outline"
-                className="h-8 rounded-md border-zinc-200 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+                className="h-8 rounded-md border-[#E4E7EC] text-xs font-medium text-[#667085] hover:bg-[#F2F4F7]"
                 onClick={() => {
                   reset();
                   onStartNew();
@@ -428,7 +421,7 @@ export function UploadPanel({
                 Upload more
               </Button>
               <Button
-                className="h-8 rounded-md bg-zinc-900 text-xs font-medium text-white hover:bg-zinc-800"
+                className="h-8 rounded-md bg-[#171717] text-xs font-medium text-white hover:bg-[#262626]"
                 onClick={onViewCandidates}
               >
                 View candidates
@@ -438,20 +431,20 @@ export function UploadPanel({
             <>
               <Button
                 variant="outline"
-                className="h-8 rounded-md border-zinc-200 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+                className="h-8 rounded-md border-[#E4E7EC] text-xs font-medium text-[#667085] hover:bg-[#F2F4F7]"
                 disabled={uploading}
                 onClick={() => onOpenChange(false)}
               >
-                {inTrackMode ? "Close (processing continues)" : "Cancel"}
+                {inTrackMode ? "Close" : "Cancel"}
               </Button>
               {pending.length > 0 && (
                 <Button
-                  className="h-8 rounded-md bg-zinc-900 text-xs font-medium text-white hover:bg-zinc-800"
+                  className="h-8 rounded-md bg-[#171717] text-xs font-medium text-white hover:bg-[#262626]"
                   disabled={uploading}
                   onClick={start}
                 >
                   {uploading && <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" aria-hidden="true" />}
-                  {uploadError ? "Resume upload" : `Start processing (${pending.length})`}
+                  {uploadError ? "Resume upload" : `Start upload (${pending.length})`}
                 </Button>
               )}
             </>

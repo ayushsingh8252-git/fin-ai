@@ -18,12 +18,12 @@ const splitSkills = (text: string): string[] =>
 function Field({ label, hint, htmlFor, icon, children }: { label: string; hint?: string; htmlFor: string; icon?: React.ReactNode; children: React.ReactNode }) {
   return (
     <div className="space-y-1.5">
-      <label htmlFor={htmlFor} className="flex items-center gap-1.5 text-xs font-medium text-zinc-700">
+      <label htmlFor={htmlFor} className="flex items-center gap-1.5 text-xs font-medium text-[#171717]">
         {icon}
         <span>{label}</span>
       </label>
       {children}
-      {hint && <p className="text-[11px] text-zinc-400 font-normal">{hint}</p>}
+      {hint && <p className="text-[11px] text-[#667085] font-normal">{hint}</p>}
     </div>
   );
 }
@@ -81,92 +81,92 @@ export function JobFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={(next) => !saving && onOpenChange(next)}>
-      <DialogContent className="sm:max-w-xl rounded-lg border-zinc-200 p-5 sm:p-6 shadow-lg">
+      <DialogContent className="sm:max-w-xl rounded-lg border-[#E4E7EC] bg-white p-5 sm:p-6 shadow-lg">
         <form onSubmit={submit} className="space-y-4">
           <DialogHeader>
             <div className="flex items-center gap-2 mb-1">
-              <div className="flex h-7 w-7 items-center justify-center rounded-md bg-zinc-100 text-zinc-700">
+              <div className="flex h-7 w-7 items-center justify-center rounded-md bg-[#171717] text-white">
                 <Briefcase className="h-3.5 w-3.5" />
               </div>
-              <DialogTitle className="text-base font-semibold text-zinc-900">
-                {editing ? "Edit Position Details" : "Create New Job Position"}
+              <DialogTitle className="text-base font-semibold text-[#171717]">
+                {editing ? "Edit Position Details" : "Create Position"}
               </DialogTitle>
             </div>
-            <DialogDescription className="text-xs text-zinc-500">
-              Specify requirements and responsibilities for semantic candidate evaluation.
+            <DialogDescription className="text-xs text-[#667085]">
+              Specify role details and requirements for candidate evaluation.
             </DialogDescription>
           </DialogHeader>
 
           {error && <ErrorBanner message={error} />}
 
-          <Field label="Job Position Title" htmlFor="job-title">
+          <Field label="Position Title" htmlFor="job-title">
             <Input
               id="job-title"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               maxLength={200}
-              placeholder="e.g. Senior Backend Engineer"
-              className="h-9 rounded-md border-zinc-200 text-xs sm:text-sm focus:border-zinc-900 focus:ring-0"
+              placeholder="e.g. Lead Software Engineer"
+              className="h-8 rounded-md border-[#E4E7EC] text-xs focus:border-[#171717] focus:ring-0"
               autoFocus
             />
           </Field>
 
           <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="Department" htmlFor="job-dept" icon={<Building2 className="h-3 w-3 text-zinc-400" />}>
+            <Field label="Department" htmlFor="job-dept" icon={<Building2 className="h-3 w-3 text-[#98A2B3]" />}>
               <Input
                 id="job-dept"
                 value={department}
                 onChange={(e) => setDepartment(e.target.value)}
                 maxLength={120}
-                placeholder="Engineering / Core Platform"
-                className="h-9 rounded-md border-zinc-200 text-xs sm:text-sm focus:border-zinc-900 focus:ring-0"
+                placeholder="Engineering"
+                className="h-8 rounded-md border-[#E4E7EC] text-xs focus:border-[#171717] focus:ring-0"
               />
             </Field>
-            <Field label="Work Location" htmlFor="job-loc" icon={<MapPin className="h-3 w-3 text-zinc-400" />}>
+            <Field label="Location" htmlFor="job-loc" icon={<MapPin className="h-3 w-3 text-[#98A2B3]" />}>
               <Input
                 id="job-loc"
                 value={location}
                 onChange={(e) => setLocation(e.target.value)}
                 maxLength={120}
-                placeholder="Remote / Bengaluru / Hybrid"
-                className="h-9 rounded-md border-zinc-200 text-xs sm:text-sm focus:border-zinc-900 focus:ring-0"
+                placeholder="Remote / San Francisco"
+                className="h-8 rounded-md border-[#E4E7EC] text-xs focus:border-[#171717] focus:ring-0"
               />
             </Field>
           </div>
 
           <Field
-            label="Job Description & Requirements"
+            label="Job Description"
             htmlFor="job-jd"
-            icon={<FileText className="h-3 w-3 text-zinc-400" />}
-            hint="Key responsibilities and qualifications used for candidate scoring."
+            icon={<FileText className="h-3 w-3 text-[#98A2B3]" />}
+            hint="Role responsibilities and context used for semantic fit evaluation."
           >
             <Textarea
               id="job-jd"
               value={jd}
               onChange={(e) => setJd(e.target.value)}
-              className="min-h-24 rounded-md border-zinc-200 text-xs leading-relaxed focus:border-zinc-900 focus:ring-0"
+              className="min-h-24 rounded-md border-[#E4E7EC] text-xs leading-relaxed focus:border-[#171717] focus:ring-0"
               maxLength={20000}
-              placeholder="Outline role objectives, requirements, and day-to-day deliverables..."
+              placeholder="Outline responsibilities and core project requirements..."
             />
           </Field>
 
           <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="Must-Have Skills" htmlFor="job-must" icon={<Tag className="h-3 w-3 text-zinc-400" />} hint="Comma separated">
+            <Field label="Must-Have Skills" htmlFor="job-must" icon={<Tag className="h-3 w-3 text-[#98A2B3]" />} hint="Comma separated">
               <Input
                 id="job-must"
                 value={must}
                 onChange={(e) => setMust(e.target.value)}
-                placeholder="Python, PyTorch, FastAPI, Docker"
-                className="h-9 rounded-md border-zinc-200 text-xs focus:border-zinc-900 focus:ring-0"
+                placeholder="Python, React, PostgreSQL"
+                className="h-8 rounded-md border-[#E4E7EC] text-xs focus:border-[#171717] focus:ring-0"
               />
             </Field>
-            <Field label="Preferred Skills" htmlFor="job-pref" icon={<Tag className="h-3 w-3 text-zinc-400" />} hint="Comma separated">
+            <Field label="Preferred Skills" htmlFor="job-pref" icon={<Tag className="h-3 w-3 text-[#98A2B3]" />} hint="Comma separated">
               <Input
                 id="job-pref"
                 value={preferred}
                 onChange={(e) => setPreferred(e.target.value)}
-                placeholder="Kubernetes, Kafka, GraphQL"
-                className="h-9 rounded-md border-zinc-200 text-xs focus:border-zinc-900 focus:ring-0"
+                placeholder="Docker, Redis, AWS"
+                className="h-8 rounded-md border-[#E4E7EC] text-xs focus:border-[#171717] focus:ring-0"
               />
             </Field>
           </div>
@@ -181,25 +181,25 @@ export function JobFormDialog({
               step="0.5"
               value={minYears}
               onChange={(e) => setMinYears(e.target.value)}
-              className="h-9 sm:max-w-36 rounded-md border-zinc-200 text-xs focus:border-zinc-900 focus:ring-0"
+              className="h-8 sm:max-w-36 rounded-md border-[#E4E7EC] text-xs focus:border-[#171717] focus:ring-0"
               placeholder="e.g. 4"
             />
           </Field>
 
-          <DialogFooter className="pt-2 border-t border-zinc-100 flex items-center justify-end gap-2">
+          <DialogFooter className="pt-2 border-t border-[#E4E7EC] flex items-center justify-end gap-2">
             <Button
               type="button"
               variant="outline"
               onClick={() => onOpenChange(false)}
               disabled={saving}
-              className="h-8 rounded-md border-zinc-200 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+              className="h-8 rounded-md border-[#E4E7EC] text-xs font-medium text-[#667085] hover:bg-[#F2F4F7]"
             >
               Cancel
             </Button>
             <Button
               type="submit"
               disabled={saving}
-              className="h-8 rounded-md bg-zinc-900 text-xs font-medium text-white hover:bg-zinc-800"
+              className="h-8 rounded-md bg-[#171717] text-xs font-medium text-white hover:bg-[#262626]"
             >
               {saving && <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" aria-hidden="true" />}
               {editing ? "Save Changes" : "Create Position"}
