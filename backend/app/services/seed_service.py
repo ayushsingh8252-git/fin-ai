@@ -200,6 +200,81 @@ def seed_recruitment_demo(db: Session, user: User) -> dict:
             db.add(app)
             db.flush()
 
+            # ── Link AI Screening Session for top candidate ──
+            if cdata["name"] == "Dr. Marcus Chen":
+                screening_sess = models.ScreeningSession(
+                    id=str(uuid.uuid4()),
+                    email=cand.email,
+                    role_title=job1.title,
+                    jd_text=job1.jd_text,
+                    status="completed",
+                    created_at=datetime.now(timezone.utc) - timedelta(days=1),
+                )
+                db.add(screening_sess)
+                db.flush()
+                app.screening_session_id = screening_sess.id
+
+                screening_res = models.ScreeningResult(
+                    id=str(uuid.uuid4()),
+                    session_id=screening_sess.id,
+                    source="screening_agent",
+                    verdict="Strong Fit",
+                    jd_match_score=94,
+                    strengths=["Extensive transformer serving experience", "Deep knowledge of FastAPI and vector search", "Strong communication and technical clarity"],
+                    gaps=["Minor: Has less production experience with Redis Cluster compared to single-node Redis"],
+                    summary="Exceptional candidate with proven track record architecting LLM platforms at scale. Highly recommended for final loop.",
+                    created_at=datetime.now(timezone.utc) - timedelta(days=1),
+                )
+                db.add(screening_res)
+
+            # ── Seed WhatsApp conversation history ──
+            if cand.phone:
+                db.add(models.WhatsAppMessage(
+                    id=str(uuid.uuid4()),
+                    direction="outbound",
+                    to_number=cand.phone,
+                    from_number="+1 (800) 555-0199",
+                    message_type="text",
+                    body=f"Hi {cand.name.split()[0]}! Thank you for applying for the {job1.title} position at our company. We were very impressed by your profile and would love to connect for a quick 3-minute voice screening chat.",
+                    status="delivered",
+                    created_at=datetime.now(timezone.utc) - timedelta(days=2),
+                ))
+                db.add(models.WhatsAppMessage(
+                    id=str(uuid.uuid4()),
+                    direction="inbound",
+                    to_number="+1 (800) 555-0199",
+                    from_number=cand.phone,
+                    message_type="text",
+                    body="Hello! Thank you for getting back to me so quickly. Yes, absolutely, I am free today between 2 PM and 5 PM PT. Looking forward to it!",
+                    status="read",
+                    created_at=datetime.now(timezone.utc) - timedelta(days=2, hours=-1),
+                ))
+
+            # ── Seed Telephonic Screening Call Record ──
+            if cdata["name"] in ("Dr. Marcus Chen", "Elena Rostova") and cand.phone:
+                db.add(models.CallRecord(
+                    id=str(uuid.uuid4()),
+                    to_number=cand.phone,
+                    candidate_name=cand.name,
+                    role_title=job1.title,
+                    status="completed",
+                    duration_sec=165,
+                    communication_score=94 if cdata["name"] == "Dr. Marcus Chen" else 88,
+                    relevance_score=92 if cdata["name"] == "Dr. Marcus Chen" else 85,
+                    confidence_score=91 if cdata["name"] == "Dr. Marcus Chen" else 87,
+                    evaluation_summary=f"Automated Telephonic Pre-Screen for {job1.title}: Candidate spoke confidently, verified {cdata['experience_years']} years of relevant experience in {', '.join(cdata['skills'][:3])}, and answered technical scenario questions with precision.",
+                    transcript=[
+                        {"role": "agent", "text": f"Hello {cand.name}, this is the automated talent screening agent calling on behalf of the hiring team for {job1.title}. Do you have two minutes to verify a few details?"},
+                        {"role": "candidate", "text": "Hi! Yes, I do. Glad to speak with you."},
+                        {"role": "agent", "text": f"Great. Could you share your hands-on experience with {cdata['skills'][0]} and distributed architectures?"},
+                        {"role": "candidate", "text": f"Certainly. Over the past several years, I designed our inference pipeline utilizing {cdata['skills'][0]} alongside vector embeddings, optimizing p99 latency by over 40% under high throughput."},
+                        {"role": "agent", "text": "That directly matches our current infrastructure requirements. What is your preferred notice period or availability to start?"},
+                        {"role": "candidate", "text": "I can comfortably start within two to three weeks upon receiving an offer."},
+                        {"role": "agent", "text": "Wonderful. Thank you for your time, we are advancing your profile to our engineering leadership for the next round."},
+                    ],
+                    created_at=datetime.now(timezone.utc) - timedelta(days=1, hours=4),
+                ))
+
             if cdata["stage"] in ("INTERVIEW", "OFFER"):
                 interview = models.Interview(
                     id=str(uuid.uuid4()),

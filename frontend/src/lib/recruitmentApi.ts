@@ -209,7 +209,39 @@ export interface Application360 {
   screening: ScreeningInfo | null;
   interviews: InterviewInfo[];
   offers?: OfferInfo[];
+  whatsapp_messages?: WhatsAppMessageItem[];
+  telephonic_calls?: TelephonicCallItem[];
   activity: ActivityEvent[];
+}
+
+export interface WhatsAppMessageItem {
+  id: string;
+  wamid?: string | null;
+  direction: "outbound" | "inbound" | string;
+  to_number: string;
+  from_number?: string | null;
+  message_type?: string;
+  body: string;
+  status: "queued" | "sent" | "delivered" | "read" | "failed" | string;
+  error_message?: string | null;
+  is_configured?: boolean;
+  created_at: string | null;
+}
+
+export interface TelephonicCallItem {
+  id: string;
+  to_number: string;
+  candidate_name: string;
+  role_title: string;
+  status: "queued" | "in-progress" | "completed" | "failed" | string;
+  duration_sec?: number | null;
+  communication_score?: number | null;
+  relevance_score?: number | null;
+  confidence_score?: number | null;
+  evaluation_summary?: string | null;
+  transcript: Array<{ role: "agent" | "candidate" | string; text: string }>;
+  is_configured?: boolean;
+  created_at: string | null;
 }
 
 export interface OfferInfo {
@@ -513,6 +545,24 @@ export const updateOffer = (offerId: string, payload: { status: string; notes?: 
     method: "PATCH",
     body: JSON.stringify(payload),
   });
+
+export const sendWhatsAppMessage = (applicationId: string, message: string, templateName?: string) =>
+  request<WhatsAppMessageItem>(`/applications/${applicationId}/whatsapp`, {
+    method: "POST",
+    body: JSON.stringify({ message, template_name: templateName || null }),
+  });
+
+export const getWhatsAppMessages = (applicationId: string) =>
+  request<{ items: WhatsAppMessageItem[] }>(`/applications/${applicationId}/whatsapp`);
+
+export const triggerTelephonicCall = (applicationId: string, objective = "screening", customNotes?: string) =>
+  request<TelephonicCallItem>(`/applications/${applicationId}/telephonic`, {
+    method: "POST",
+    body: JSON.stringify({ objective, custom_notes: customNotes || null }),
+  });
+
+export const getTelephonicCalls = (applicationId: string) =>
+  request<{ items: TelephonicCallItem[] }>(`/applications/${applicationId}/telephonic`);
 
 export const getInbox = () => request<InboxResponse>(`/inbox`);
 

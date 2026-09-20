@@ -4,11 +4,13 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
-  ArrowLeft, ChevronRight, Clock, ExternalLink, FileText,
-  Loader2, MapPin, Mail, Phone, RefreshCw, Shield, User,
+  ArrowLeft, ChevronRight, Clock, ExternalLink,
+  Loader2, MapPin, Mail, Phone, RefreshCw,
   CheckCircle2, XCircle, AlertTriangle, Briefcase,
-  Activity, Eye, Download, Calendar, Send, DollarSign, Check,
-  Copy, Plus, ShieldCheck, ShieldAlert, Video, ThumbsUp, ThumbsDown
+  Download, Calendar, Send, DollarSign, Check,
+  Copy, Plus, ShieldCheck, ShieldAlert,
+  MessageSquare, PhoneCall, Bot, User as UserIcon,
+  Sparkles, CheckCircle, Info, HelpCircle
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ErrorBanner } from "@/components/ui/error-banner";
@@ -17,11 +19,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   errorMessage, getApplication360, setStage, openResume,
   triggerFraudScan, sendScreeningInvite, scheduleInterview,
-  createOffer, updateOffer,
-  type Application360, type Score, type Stage, type ActivityEvent,
-  type OfferInfo, type InterviewInfo,
+  createOffer, updateOffer, sendWhatsAppMessage, triggerTelephonicCall,
+  type Application360, type Stage, type ActivityEvent,
+  type OfferInfo, type InterviewInfo, type WhatsAppMessageItem, type TelephonicCallItem
 } from "@/lib/recruitmentApi";
-import { ScoreCell, StageBadge, SkillMatchSvg } from "@/app/(products)/recruitment/_components/indicators";
+import { StageBadge } from "@/app/(products)/recruitment/_components/indicators";
 import { NEXT_STAGES, STAGE_LABEL } from "@/app/(products)/recruitment/_components/stages";
 import { useRecruitment } from "@/app/(products)/recruitment/_components/RecruitmentShell";
 import { cn } from "@/lib/utils";
@@ -42,7 +44,7 @@ function InfoRow({ icon, label, value }: { icon: React.ReactNode; label: string;
 }
 
 function TimelineEvent({ event }: { event: ActivityEvent }) {
-  const actorLabel = event.actor_type === "ai" ? "Automated Evaluation" : event.actor_type === "hr" ? "Recruiter" : "System";
+  const actorLabel = event.actor_type === "ai" ? "AI Automation" : event.actor_type === "hr" ? "Hiring Team" : "System";
   const time = event.created_at ? new Date(event.created_at) : null;
   const payload = event.payload || {};
 
@@ -55,10 +57,11 @@ function TimelineEvent({ event }: { event: ActivityEvent }) {
       <div className="min-w-0 flex-1 pt-0.5">
         <p className="text-xs font-semibold text-[#171717]">{event.summary}</p>
         <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[11px] text-[#667085]">
-          <span className="rounded bg-[#F2F4F7] px-1.5 py-0.2 font-medium text-[#171717]">{actorLabel}</span>
+          <span className="rounded bg-[#F2F4F7] px-1.5 py-0.5 font-medium text-[#171717]">{actorLabel}</span>
           {time && (
             <span>
-              {time.toLocaleDateString("en-US", { month: "short", day: "numeric" })} at {time.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}
+              {time.toLocaleDateString("en-US", { month: "short", day: "numeric" })} at{" "}
+              {time.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}
             </span>
           )}
         </div>
@@ -83,6 +86,113 @@ function TimelineEvent({ event }: { event: ActivityEvent }) {
   );
 }
 
+// ── Chronological Hiring Journey Stepper ────────────────────────────────
+const JOURNEY_STEPS = [
+  { id: "APPLIED", stepNumber: 1, label: "Resume & Screening", subtitle: "Hard skill match & fraud scan" },
+  { id: "OUTREACH", stepNumber: 2, label: "WhatsApp Outreach", subtitle: "Direct message & pre-invite" },
+  { id: "TELEPHONIC", stepNumber: 3, label: "AI Phone Call", subtitle: "Automated qualification call" },
+  { id: "TECH_INTERVIEW", stepNumber: 4, label: "AI Tech Interview", subtitle: "Coding & technical session" },
+  { id: "INTERVIEW", stepNumber: 5, label: "Panel Interview", subtitle: "Live team interview" },
+  { id: "OFFER", stepNumber: 6, label: "Job Offer", subtitle: "Compensation & start date" },
+  { id: "HIRED", stepNumber: 7, label: "Hired", subtitle: "Accepted & onboarding" },
+];
+
+function ChronologicalHiringJourney({
+  stage,
+  hasWhatsApp,
+  hasPhoneCall,
+  hasScreening,
+  hasInterviews,
+  hasOffers,
+}: {
+  stage: Stage;
+  hasWhatsApp: boolean;
+  hasPhoneCall: boolean;
+  hasScreening: boolean;
+  hasInterviews: boolean;
+  hasOffers: boolean;
+}) {
+  const getStepStatus = (index: number) => {
+    // 0: Resume
+    if (index === 0) return "completed";
+    // 1: WhatsApp
+    if (index === 1) return hasWhatsApp ? "completed" : stage !== "PROCESSING" && stage !== "APPLIED" ? "completed" : "current";
+    // 2: Telephonic
+    if (index === 2) return hasPhoneCall ? "completed" : stage === "SHORTLISTED" ? "current" : stage === "INTERVIEW" || stage === "SELECTED" || stage === "OFFER" || stage === "HIRED" ? "completed" : "pending";
+    // 3: Tech Interview
+    if (index === 3) return hasScreening ? "completed" : stage === "SHORTLISTED" ? "current" : stage === "INTERVIEW" || stage === "SELECTED" || stage === "OFFER" || stage === "HIRED" ? "completed" : "pending";
+    // 4: Panel Interview
+    if (index === 4) return stage === "INTERVIEW" ? "current" : stage === "SELECTED" || stage === "OFFER" || stage === "HIRED" || hasInterviews ? "completed" : "pending";
+    // 5: Offer
+    if (index === 5) return stage === "OFFER" ? "current" : stage === "HIRED" || hasOffers ? "completed" : "pending";
+    // 6: Hired
+    if (index === 6) return stage === "HIRED" ? "completed" : "pending";
+    return "pending";
+  };
+
+  return (
+    <div className="rounded-lg border border-[#E4E7EC] bg-white p-4 sm:p-5 space-y-3">
+      <div className="flex items-center justify-between border-b border-[#E4E7EC] pb-2.5">
+        <div>
+          <h2 className="text-xs font-semibold text-[#171717] uppercase tracking-wider">
+            Chronological Candidate Progression
+          </h2>
+          <p className="text-[11px] text-[#667085] mt-0.5">
+            Step-by-step progress from resume upload to final offer acceptance
+          </p>
+        </div>
+        <span className="text-xs font-medium text-[#171717] bg-[#F7F8FA] border border-[#E4E7EC] rounded px-2.5 py-1">
+          Current Stage: <strong className="capitalize">{STAGE_LABEL[stage] || stage}</strong>
+        </span>
+      </div>
+
+      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2 pt-1">
+        {JOURNEY_STEPS.map((step, idx) => {
+          const status = getStepStatus(idx);
+          const isCompleted = status === "completed";
+          const isCurrent = status === "current";
+
+          return (
+            <div
+              key={step.id}
+              className={cn(
+                "rounded-md border p-2.5 text-xs transition-all flex flex-col justify-between",
+                isCurrent && "border-[#171717] bg-[#F7F8FA] shadow-xs",
+                isCompleted && "border-[#E4E7EC] bg-white text-[#171717]",
+                !isCurrent && !isCompleted && "border-[#F2F4F7] bg-[#FAFBFD] text-[#98A2B3]"
+              )}
+            >
+              <div className="flex items-center justify-between gap-1 mb-1">
+                <span className={cn(
+                  "flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold",
+                  isCompleted ? "bg-[#12B76A] text-white" : isCurrent ? "bg-[#171717] text-white" : "bg-[#E4E7EC] text-[#667085]"
+                )}>
+                  {isCompleted ? "✓" : step.stepNumber}
+                </span>
+                <span className={cn(
+                  "text-[9px] font-semibold uppercase tracking-wider",
+                  isCompleted ? "text-[#12B76A]" : isCurrent ? "text-[#171717]" : "text-[#98A2B3]"
+                )}>
+                  {isCompleted ? "Done" : isCurrent ? "Active" : "Upcoming"}
+                </span>
+              </div>
+              <div>
+                <p className={cn("text-xs font-semibold leading-snug", isCurrent ? "text-[#171717]" : isCompleted ? "text-[#171717]" : "text-[#667085]")}>
+                  {step.label}
+                </p>
+                <p className="text-[10px] text-[#98A2B3] line-clamp-1 mt-0.5">
+                  {step.subtitle}
+                </p>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── Tab 1: Overview & Resume Tab ─────────────────────────────────────────
 function OverviewTab({
   data,
   onStageChange,
@@ -198,152 +308,118 @@ function OverviewTab({
                 {fraud.status === "complete" ? (isSuspicious ? "Discrepancy" : "Verified") : fraud.status}
               </span>
             ) : (
-              <span className="rounded bg-[#F2F4F7] px-2 py-0.5 text-[10px] font-medium text-[#667085]">
-                Not Scanned
+              <span className="rounded px-2 py-0.5 text-[10px] font-medium uppercase bg-[#F2F4F7] text-[#667085]">
+                Unchecked
               </span>
             )}
           </div>
 
           {fraud ? (
-            <div className="space-y-2 pt-1 text-xs">
-              <div className="flex items-center justify-between py-1 border-b border-[#E4E7EC]">
-                <span className="text-[#667085]">Status:</span>
-                <span className="font-medium text-[#171717] capitalize">{fraud.status}</span>
-              </div>
-              {fraud.status === "complete" && (
-                <>
-                  <div className="flex items-center justify-between py-1 border-b border-[#E4E7EC]">
-                    <span className="text-[#667085]">Integrity:</span>
-                    <span className={cn("font-medium", isSuspicious ? "text-[#F04438]" : "text-[#12B76A]")}>
-                      {isSuspicious ? "Flags Detected" : "Clean Document"}
-                    </span>
-                  </div>
-                  {Array.isArray(fraudResult.flags) && fraudResult.flags.length > 0 && (
-                    <div className="pt-1">
-                      <p className="text-[10px] font-medium uppercase tracking-wider text-[#F04438] mb-1">Detected Flags:</p>
-                      <ul className="space-y-1">
-                        {fraudResult.flags.map((flag: unknown, idx: number) => (
-                          <li key={idx} className="text-xs text-[#F04438] bg-[#FEF3F2] rounded p-2 flex items-start gap-1.5 border border-[#FECDCA]">
-                            <AlertTriangle className="h-3 w-3 shrink-0 mt-0.5" />
-                            <span>{String(flag)}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                </>
+            <div className="space-y-2 text-xs">
+              <p className="text-[11px] text-[#667085]">
+                Scanned {fraud.created_at ? new Date(fraud.created_at).toLocaleDateString() : ""}
+              </p>
+              {isSuspicious ? (
+                <div className="rounded bg-[#FEF3F2] p-2.5 text-[#F04438] space-y-1">
+                  <p className="font-semibold text-xs">Document Flags Identified</p>
+                  <p className="text-[11px]">
+                    {String(fraudResult.recommendation || "Discrepancy detected in text layout or metadata.")}
+                  </p>
+                </div>
+              ) : (
+                <div className="rounded bg-[#ECFDF3] p-2.5 text-[#027A48]">
+                  <p className="font-medium text-xs">No tampering or hidden prompt injections detected.</p>
+                </div>
               )}
             </div>
           ) : (
-            <div className="space-y-2 text-xs text-[#667085] pt-1">
-              <p className="font-normal">
-                Verifies document authenticity, checks for hidden text stuffing, and timeline consistency.
-              </p>
+            <div className="pt-2">
               <Button
                 variant="outline"
                 size="sm"
-                className="w-full h-8 rounded-md text-xs font-medium border-[#E4E7EC] text-[#171717] hover:bg-[#F2F4F7]"
+                className="w-full h-8 rounded-md border-[#E4E7EC] hover:bg-[#F2F4F7] text-xs font-medium text-[#171717]"
                 disabled={scanningFraud || !candidate.has_resume}
                 onClick={handleRunFraud}
               >
-                {scanningFraud ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <Shield className="h-3.5 w-3.5 mr-1.5 text-[#667085]" />}
-                Run Verification Scan
+                {scanningFraud ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <ShieldCheck className="h-3.5 w-3.5 mr-1.5 text-[#667085]" />}
+                Run Document Verification Scan
               </Button>
             </div>
           )}
-          {fraudError && <ErrorBanner message={fraudError} className="mt-2" />}
+          {fraudError && <ErrorBanner message={fraudError} />}
         </div>
       </div>
 
-      {/* Right Column: Decision Actions, Score Matrix, Skills, and Evaluation */}
-      <div className="space-y-5 lg:col-span-2">
-        {/* Stage Progression Action Bar */}
+      {/* Right Column: AI Analysis & Provenance */}
+      <div className="lg:col-span-2 space-y-5">
+        {/* ACTION / DECISION BANNER */}
         <div className="rounded-lg border border-[#E4E7EC] bg-white p-4 sm:p-5 space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <p className="text-xs font-medium text-[#667085] mb-1">Current Stage</p>
-              <StageBadge stage={application.stage} />
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-[#667085]">
+                Hiring Stage Progression
+              </h3>
+              <p className="text-xs text-[#171717] mt-0.5">
+                Current stage: <strong className="font-semibold">{STAGE_LABEL[application.stage]}</strong>
+              </p>
             </div>
-            {job && (
-              <div className="text-right">
-                <p className="text-xs font-medium text-[#667085] mb-0.5">Role Applied</p>
-                <p className="text-xs font-semibold text-[#171717]">{job.title}</p>
+            {canDecide && nextStages.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5">
+                {nextStages.map((target) => (
+                  <Button
+                    key={target}
+                    size="sm"
+                    disabled={stageLoading !== null}
+                    onClick={() => handleStage(target)}
+                    className={cn(
+                      "h-8 rounded-md px-3 text-xs font-medium transition-all",
+                      target === "REJECTED"
+                        ? "border border-[#E4E7EC] bg-white text-[#F04438] hover:bg-[#FEF3F2]"
+                        : target === "SHORTLISTED" || target === "INTERVIEW"
+                        ? "bg-[#171717] text-white hover:bg-[#262626]"
+                        : "border border-[#E4E7EC] bg-white text-[#171717] hover:bg-[#F2F4F7]"
+                    )}
+                  >
+                    {stageLoading === target && <Loader2 className="h-3 w-3 animate-spin mr-1" />}
+                    Move to {STAGE_LABEL[target]}
+                  </Button>
+                ))}
               </div>
             )}
           </div>
-
-          {canDecide && nextStages.length > 0 && (
-            <div className="pt-3 border-t border-[#E4E7EC]">
-              <p className="text-xs font-medium text-[#667085] mb-2">
-                Stage Decisions:
-              </p>
-              <div className="flex flex-wrap gap-2">
-                {nextStages.map((s: Stage) => {
-                  const isReject = s === "REJECTED" || s === "WITHDRAWN";
-                  const isHire = s === "HIRED";
-                  return (
-                    <Button
-                      key={s}
-                      variant={isReject ? "outline" : "outline"}
-                      size="sm"
-                      disabled={stageLoading !== null}
-                      onClick={() => handleStage(s)}
-                      className={cn(
-                        "h-8 rounded-md text-xs font-medium transition-colors border-[#E4E7EC]",
-                        isReject && "text-[#F04438] hover:bg-[#FEF3F2] hover:border-[#FECDCA]",
-                        isHire && "bg-[#171717] text-white hover:bg-[#262626] border-[#171717]",
-                        !isReject && !isHire && "text-[#171717] hover:bg-[#F2F4F7]"
-                      )}
-                    >
-                      {stageLoading === s ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : null}
-                      {STAGE_LABEL[s]}
-                    </Button>
-                  );
-                })}
-              </div>
-              {stageError && <ErrorBanner message={stageError} className="mt-2" />}
-            </div>
-          )}
+          {stageError && <ErrorBanner message={stageError} />}
         </div>
 
-        {/* MATCH ANALYSIS MATRIX WITH GEOMETRIC SVG GAUGE */}
-        <div className="rounded-lg border border-[#E4E7EC] bg-white p-4 sm:p-5 space-y-4">
-          <div className="flex items-center justify-between border-b border-[#E4E7EC] pb-2.5">
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-[#667085]">
-              Match Analysis
-            </h3>
-            <span className="text-[11px] text-[#667085] font-medium">
-              Autonomous Competency Matrix
-            </span>
-          </div>
-
-          <div className="flex flex-col sm:flex-row items-center gap-4">
-            <SkillMatchSvg
-              matchedCount={matched.length}
-              totalCount={matched.length + missing.length || 1}
-              score={matchScore}
-              size={76}
-            />
-
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 flex-1 w-full">
-              <div className="rounded-md bg-[#F7F8FA] p-2.5 border border-[#E4E7EC]">
-                <p className="text-[10px] text-[#667085] font-medium uppercase tracking-wider">Hard Requirements</p>
-                <p className="mt-1 text-lg font-semibold text-[#171717] tabular-nums">
-                  {atsScore !== null ? `${atsScore}%` : "—"}
-                </p>
-              </div>
-              <div className="rounded-md bg-[#F7F8FA] p-2.5 border border-[#E4E7EC]">
-                <p className="text-[10px] text-[#667085] font-medium uppercase tracking-wider">Semantic Fit</p>
-                <p className="mt-1 text-lg font-semibold text-[#171717] tabular-nums">
+        {/* SCORES OVERVIEW */}
+        <div className="rounded-lg border border-[#E4E7EC] bg-white p-4 sm:p-5">
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-[#667085] mb-3">
+            Role Suitability Scores
+          </h3>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="rounded-md border border-[#E4E7EC] bg-[#F7F8FA] p-3.5 space-y-1">
+              <span className="text-[11px] font-medium text-[#667085]">Job Description Fit</span>
+              <div className="flex items-baseline gap-2">
+                <span className="text-2xl font-semibold text-[#171717] tabular-nums">
                   {matchScore !== null ? `${matchScore}%` : "—"}
-                </p>
+                </span>
+                {application.scores.match_score.status === "computed" ? (
+                  <span className="text-[10px] text-[#12B76A] font-medium">Verified AI Fit</span>
+                ) : (
+                  <span className="text-[10px] text-[#98A2B3]">Standard Fallback</span>
+                )}
               </div>
-              <div className="rounded-md bg-[#F7F8FA] p-2.5 border border-[#E4E7EC]">
-                <p className="text-[10px] text-[#667085] font-medium uppercase tracking-wider">Experience Fit</p>
-                <p className="mt-1 text-lg font-semibold text-[#171717]">
-                  {matchScore !== null && matchScore >= 80 ? "Strong" : matchScore !== null && matchScore >= 65 ? "Good" : "Moderate"}
-                </p>
+              <p className="text-[10px] text-[#98A2B3]">Relevance against must-have criteria</p>
+            </div>
+
+            <div className="rounded-md border border-[#E4E7EC] bg-[#F7F8FA] p-3.5 space-y-1">
+              <span className="text-[11px] font-medium text-[#667085]">Resume Structure Score</span>
+              <div className="flex items-baseline gap-2">
+                <span className="text-2xl font-semibold text-[#171717] tabular-nums">
+                  {atsScore !== null ? `${atsScore}%` : "—"}
+                </span>
+                <span className="text-[10px] text-[#667085]">Completeness</span>
               </div>
+              <p className="text-[10px] text-[#98A2B3]">Grammar, layout, and work history clarity</p>
             </div>
           </div>
         </div>
@@ -355,7 +431,6 @@ function OverviewTab({
           </h3>
 
           <div className="grid gap-4 sm:grid-cols-2">
-            {/* Matched */}
             <div className="rounded-md border border-[#E4E7EC] bg-[#F7F8FA] p-3 space-y-2">
               <p className="text-xs font-semibold text-[#171717] flex items-center gap-1.5">
                 <CheckCircle2 className="h-3.5 w-3.5 text-[#12B76A]" />
@@ -368,13 +443,10 @@ function OverviewTab({
                     <span>{s}</span>
                   </div>
                 ))}
-                {matched.length === 0 && (
-                  <p className="text-xs text-[#98A2B3]">No verified skills mapped.</p>
-                )}
+                {matched.length === 0 && <p className="text-xs text-[#98A2B3]">No verified skills mapped.</p>}
               </div>
             </div>
 
-            {/* Missing */}
             <div className="rounded-md border border-[#E4E7EC] bg-[#F7F8FA] p-3 space-y-2">
               <p className="text-xs font-semibold text-[#171717] flex items-center gap-1.5">
                 <XCircle className="h-3.5 w-3.5 text-[#F04438]" />
@@ -387,9 +459,7 @@ function OverviewTab({
                     <span>{s}</span>
                   </div>
                 ))}
-                {missing.length === 0 && (
-                  <p className="text-xs text-[#98A2B3]">No critical skill gaps identified.</p>
-                )}
+                {missing.length === 0 && <p className="text-xs text-[#98A2B3]">No critical skill gaps identified.</p>}
               </div>
             </div>
           </div>
@@ -408,7 +478,6 @@ function OverviewTab({
                 </span>
               )}
             </div>
-
             <p className="text-xs text-[#171717] leading-relaxed font-normal whitespace-pre-wrap">
               {application.analysis.ai_summary}
             </p>
@@ -419,7 +488,390 @@ function OverviewTab({
   );
 }
 
-function ScreeningTab({ data, onReload }: { data: Application360; onReload: () => void }) {
+// ── Tab 2: WhatsApp Outreach Tab ─────────────────────────────────────────
+function WhatsAppTab({ data, onReload }: { data: Application360; onReload: () => void }) {
+  const { application, candidate, job } = data;
+  const messages = data.whatsapp_messages || [];
+  const [messageText, setMessageText] = useState("");
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [successNotice, setSuccessNotice] = useState<string | null>(null);
+
+  const candidateFirstName = (candidate.name || "there").split(" ")[0];
+  const roleName = job?.title || "our open position";
+
+  const QUICK_TEMPLATES = [
+    {
+      label: "Pre-Screening Invite",
+      text: `Hi ${candidateFirstName}, thank you for applying for the ${roleName} role. We loved your background and would like to invite you for a 3-minute voice screening chat. Are you available today?`,
+    },
+    {
+      label: "Interview Confirmation",
+      text: `Hi ${candidateFirstName}, your technical interview round for ${roleName} is confirmed! Please let us know if you have any questions before we connect.`,
+    },
+    {
+      label: "Formal Offer Notice",
+      text: `Congratulations ${candidateFirstName}! We have extended a formal offer for the ${roleName} role. Please check your candidate portal to review the compensation and benefits details.`,
+    },
+    {
+      label: "Quick Availability Check",
+      text: `Hello ${candidateFirstName}, just checking in regarding your availability for next steps on your ${roleName} application. When is the best time to connect this week?`,
+    },
+  ];
+
+  const handleSend = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!messageText.trim()) return;
+
+    setSending(true);
+    setError(null);
+    setSuccessNotice(null);
+
+    try {
+      const res = await sendWhatsAppMessage(application.id, messageText.trim());
+      setMessageText("");
+      if (!res.is_configured) {
+        setSuccessNotice("Message logged & queued. (Meta WhatsApp Cloud API credentials in .env needed to send live to candidate's mobile).");
+      } else {
+        setSuccessNotice("Message sent successfully via Meta WhatsApp Cloud API!");
+      }
+      onReload();
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Informative Guidance Banner */}
+      <div className="rounded-lg border border-[#E4E7EC] bg-[#FAFBFD] p-3.5 flex items-start gap-3 text-xs">
+        <Info className="h-4 w-4 text-[#171717] mt-0.5 shrink-0" />
+        <div className="space-y-0.5 flex-1">
+          <p className="font-semibold text-[#171717]">Direct WhatsApp Candidate Communication</p>
+          <p className="text-[11px] text-[#667085] leading-relaxed">
+            Send real-time updates directly to <strong>{candidate.phone || "the candidate's phone"}</strong>.
+            Outbound messages use Meta Cloud API. If WhatsApp credentials in <code className="bg-[#F2F4F7] px-1 rounded text-[10px]">.env</code> are pending, messages are recorded and queued locally so your audit history stays intact.
+          </p>
+        </div>
+      </div>
+
+      <div className="grid gap-5 lg:grid-cols-3">
+        {/* Left: Chat Thread & History */}
+        <div className="lg:col-span-2 rounded-lg border border-[#E4E7EC] bg-white p-4 sm:p-5 flex flex-col justify-between space-y-4 min-h-[420px]">
+          <div>
+            <div className="flex items-center justify-between border-b border-[#E4E7EC] pb-2.5 mb-3">
+              <div className="flex items-center gap-2">
+                <MessageSquare className="h-4 w-4 text-[#171717]" />
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-[#667085]">
+                  Conversation History ({messages.length})
+                </h3>
+              </div>
+              <span className="text-[11px] text-[#667085] font-medium">
+                To: {candidate.phone || "No phone on record"}
+              </span>
+            </div>
+
+            {messages.length === 0 ? (
+              <div className="text-center py-16 space-y-2">
+                <div className="h-8 w-8 rounded-full bg-[#F2F4F7] flex items-center justify-center mx-auto text-[#667085]">
+                  <MessageSquare className="h-4 w-4" />
+                </div>
+                <p className="text-xs font-medium text-[#171717]">No WhatsApp messages yet</p>
+                <p className="text-[11px] text-[#98A2B3] max-w-xs mx-auto">
+                  Click a template below or type a message to start direct communication with {candidateFirstName}.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-3 max-h-[320px] overflow-y-auto pr-1">
+                {messages.map((m) => {
+                  const isOutbound = m.direction === "outbound";
+                  const time = m.created_at ? new Date(m.created_at) : null;
+                  return (
+                    <div
+                      key={m.id}
+                      className={cn(
+                        "flex flex-col max-w-[82%]",
+                        isOutbound ? "ml-auto items-end" : "mr-auto items-start"
+                      )}
+                    >
+                      <div
+                        className={cn(
+                          "rounded-lg p-3 text-xs leading-relaxed",
+                          isOutbound
+                            ? "bg-[#171717] text-white rounded-br-none"
+                            : "bg-[#F7F8FA] border border-[#E4E7EC] text-[#171717] rounded-bl-none"
+                        )}
+                      >
+                        <p className="whitespace-pre-wrap">{m.body}</p>
+                      </div>
+                      <div className="mt-1 flex items-center gap-1.5 text-[10px] text-[#98A2B3]">
+                        {time && <span>{time.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>}
+                        <span>·</span>
+                        <span className={cn(
+                          "capitalize font-medium",
+                          m.status === "delivered" || m.status === "read" ? "text-[#12B76A]" : m.status === "sent" ? "text-[#171717]" : "text-[#F79009]"
+                        )}>
+                          {m.status}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Quick Message Composer Form */}
+          <form onSubmit={handleSend} className="border-t border-[#E4E7EC] pt-3 space-y-2">
+            {error && <ErrorBanner message={error} />}
+            {successNotice && (
+              <div className="p-2 rounded bg-[#ECFDF3] border border-[#A6F4C5] text-[#027A48] text-[11px] flex items-center gap-1.5">
+                <CheckCircle className="h-3.5 w-3.5 shrink-0" />
+                <span>{successNotice}</span>
+              </div>
+            )}
+            <div className="flex gap-2">
+              <input
+                type="text"
+                placeholder={candidate.phone ? `Type message to ${candidateFirstName}...` : "Candidate missing phone number"}
+                value={messageText}
+                disabled={!candidate.phone || sending}
+                onChange={(e) => setMessageText(e.target.value)}
+                className="flex-1 h-9 rounded-md border border-[#E4E7EC] bg-white px-3 text-xs text-[#171717] placeholder:text-[#98A2B3] focus:border-[#171717] focus:outline-none"
+              />
+              <Button
+                type="submit"
+                size="sm"
+                disabled={!candidate.phone || !messageText.trim() || sending}
+                className="h-9 rounded-md bg-[#171717] text-white px-3.5 text-xs font-medium hover:bg-[#262626]"
+              >
+                {sending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5 mr-1.5" />}
+                Send
+              </Button>
+            </div>
+          </form>
+        </div>
+
+        {/* Right: Quick Template Prompts */}
+        <div className="rounded-lg border border-[#E4E7EC] bg-white p-4 sm:p-5 space-y-3">
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-[#667085]">
+            Quick Message Templates
+          </h3>
+          <p className="text-[11px] text-[#667085]">
+            Click any message below to auto-fill the composer with pre-approved outreach text:
+          </p>
+
+          <div className="space-y-2 pt-1">
+            {QUICK_TEMPLATES.map((tmpl, i) => (
+              <div
+                key={i}
+                onClick={() => setMessageText(tmpl.text)}
+                className="rounded-md border border-[#E4E7EC] bg-[#F7F8FA] p-3 text-xs hover:border-[#171717] hover:bg-white cursor-pointer transition-all space-y-1"
+              >
+                <p className="font-semibold text-[#171717] text-xs flex items-center justify-between">
+                  <span>{tmpl.label}</span>
+                  <span className="text-[10px] text-[#98A2B3]">Click to use</span>
+                </p>
+                <p className="text-[11px] text-[#667085] line-clamp-2">{tmpl.text}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Tab 3: AI Telephonic Screening Call Tab ──────────────────────────────
+function TelephonicTab({ data, onReload }: { data: Application360; onReload: () => void }) {
+  const { application, candidate, job } = data;
+  const calls = data.telephonic_calls || [];
+  const latestCall = calls[0] || null;
+
+  const [calling, setCalling] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const handleCall = async () => {
+    setCalling(true);
+    setError(null);
+    setNotice(null);
+
+    try {
+      const res = await triggerTelephonicCall(application.id);
+      if (!res.is_configured) {
+        setNotice("Telephonic screening evaluated! (Sarvam AI credentials in .env needed to dial real telephone carriers live).");
+      } else {
+        setNotice("Outbound phone call placed successfully via Sarvam AI voice agent!");
+      }
+      onReload();
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setCalling(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Plain Language Explanatory Banner */}
+      <div className="rounded-lg border border-[#E4E7EC] bg-[#FAFBFD] p-3.5 flex items-start gap-3 text-xs">
+        <Bot className="h-4 w-4 text-[#171717] mt-0.5 shrink-0" />
+        <div className="space-y-0.5 flex-1">
+          <p className="font-semibold text-[#171717]">AI Telephonic Voice Pre-Screening</p>
+          <p className="text-[11px] text-[#667085] leading-relaxed">
+            The AI Telephonic agent calls the candidate directly over the phone, asks 3-4 role-specific qualification questions in natural human voice, records the full conversational transcript, and scores their communication fluency, technical relevance, and confidence.
+          </p>
+        </div>
+      </div>
+
+      <div className="grid gap-5 lg:grid-cols-3">
+        {/* Left Column: Call Actions & Scores */}
+        <div className="lg:col-span-1 space-y-4">
+          <div className="rounded-lg border border-[#E4E7EC] bg-white p-4 sm:p-5 space-y-3">
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-[#667085]">
+              Initiate Voice Call
+            </h3>
+            <div className="rounded-md border border-[#E4E7EC] bg-[#F7F8FA] p-3 space-y-1 text-xs">
+              <p className="text-[10px] text-[#98A2B3] uppercase tracking-wider font-semibold">Candidate Phone</p>
+              <p className="font-semibold text-[#171717] text-sm">{candidate.phone || "No phone number available"}</p>
+              <p className="text-[11px] text-[#667085]">Target Role: {job?.title || "Position"}</p>
+            </div>
+
+            <Button
+              onClick={handleCall}
+              disabled={calling || !candidate.phone}
+              className="w-full h-9 rounded-md bg-[#171717] text-white text-xs font-medium hover:bg-[#262626]"
+            >
+              {calling ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
+                  Initiating Call...
+                </>
+              ) : (
+                <>
+                  <PhoneCall className="h-3.5 w-3.5 mr-1.5" />
+                  Call Candidate (AI Voice Agent)
+                </>
+              )}
+            </Button>
+
+            {error && <ErrorBanner message={error} />}
+            {notice && (
+              <div className="p-2 rounded bg-[#ECFDF3] border border-[#A6F4C5] text-[#027A48] text-[11px]">
+                {notice}
+              </div>
+            )}
+          </div>
+
+          {/* Evaluation Scores (if available) */}
+          {latestCall && (
+            <div className="rounded-lg border border-[#E4E7EC] bg-white p-4 sm:p-5 space-y-3">
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-[#667085]">
+                Screening Call Scores
+              </h3>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between p-2 rounded bg-[#F7F8FA] border border-[#E4E7EC] text-xs">
+                  <span className="text-[#667085]">Communication Fluency</span>
+                  <span className="font-semibold text-[#171717] tabular-nums">
+                    {latestCall.communication_score !== null ? `${latestCall.communication_score}%` : "—"}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between p-2 rounded bg-[#F7F8FA] border border-[#E4E7EC] text-xs">
+                  <span className="text-[#667085]">Domain Relevance</span>
+                  <span className="font-semibold text-[#171717] tabular-nums">
+                    {latestCall.relevance_score !== null ? `${latestCall.relevance_score}%` : "—"}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between p-2 rounded bg-[#F7F8FA] border border-[#E4E7EC] text-xs">
+                  <span className="text-[#667085]">Confidence Score</span>
+                  <span className="font-semibold text-[#171717] tabular-nums">
+                    {latestCall.confidence_score !== null ? `${latestCall.confidence_score}%` : "—"}
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Right Column: Audio Call Transcript & Summary */}
+        <div className="lg:col-span-2 rounded-lg border border-[#E4E7EC] bg-white p-4 sm:p-5 space-y-4">
+          <div className="flex items-center justify-between border-b border-[#E4E7EC] pb-2.5">
+            <div>
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-[#667085]">
+                Call Transcript & Audio Log
+              </h3>
+              <p className="text-[11px] text-[#98A2B3]">Turn-by-turn conversational recording</p>
+            </div>
+            {latestCall && (
+              <span className={cn(
+                "rounded px-2 py-0.5 text-[10px] font-semibold uppercase border",
+                latestCall.status === "completed" ? "bg-[#ECFDF3] text-[#12B76A] border-[#A6F4C5]" : "bg-[#FFFAEB] text-[#F79009] border-[#FEDF89]"
+              )}>
+                {latestCall.status}
+              </span>
+            )}
+          </div>
+
+          {!latestCall ? (
+            <div className="text-center py-16 space-y-2 text-xs">
+              <div className="h-8 w-8 rounded-full bg-[#F2F4F7] flex items-center justify-center mx-auto text-[#667085]">
+                <PhoneCall className="h-4 w-4" />
+              </div>
+              <p className="font-medium text-[#171717]">No telephonic screening calls conducted yet</p>
+              <p className="text-[11px] text-[#98A2B3] max-w-xs mx-auto">
+                Click &ldquo;Call Candidate (AI Voice Agent)&rdquo; to place an automated qualification call.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {latestCall.evaluation_summary && (
+                <div className="rounded-md border border-[#E4E7EC] bg-[#F7F8FA] p-3 text-xs space-y-1">
+                  <p className="font-semibold text-[#171717]">Evaluation Summary:</p>
+                  <p className="text-[#667085] leading-relaxed">{latestCall.evaluation_summary}</p>
+                </div>
+              )}
+
+              <div className="space-y-2.5 pt-1">
+                <h4 className="text-[11px] font-semibold text-[#667085] uppercase tracking-wider">
+                  Dialogue Transcript ({latestCall.transcript?.length || 0} turns)
+                </h4>
+                <div className="space-y-2">
+                  {(latestCall.transcript || []).map((turn, idx) => {
+                    const isAgent = turn.role === "agent";
+                    return (
+                      <div
+                        key={idx}
+                        className={cn(
+                          "rounded-md p-3 text-xs space-y-1",
+                          isAgent ? "bg-[#FAFBFD] border border-[#E4E7EC]" : "bg-white border border-[#E4E7EC]"
+                        )}
+                      >
+                        <span className={cn(
+                          "text-[10px] font-semibold uppercase tracking-wider inline-flex items-center gap-1",
+                          isAgent ? "text-[#171717]" : "text-[#027A48]"
+                        )}>
+                          {isAgent ? <Bot className="h-3 w-3" /> : <UserIcon className="h-3 w-3" />}
+                          {isAgent ? "AI Voice Agent" : candidate.name || "Candidate"}
+                        </span>
+                        <p className="text-[#171717] leading-relaxed">{turn.text}</p>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Tab 4: AI Technical Interview Tab ────────────────────────────────────
+function AiInterviewTab({ data, onReload }: { data: Application360; onReload: () => void }) {
   const { application, candidate, screening } = data;
   const [inviting, setInviting] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -450,95 +902,131 @@ function ScreeningTab({ data, onReload }: { data: Application360; onReload: () =
     }
   };
 
+  const results = screening?.results || [];
+
   return (
-    <div className="rounded-lg border border-[#E4E7EC] bg-white p-5 space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#E4E7EC] pb-3">
-        <div>
-          <h3 className="text-sm font-semibold text-[#171717]">Pre-Screening Session</h3>
-          <p className="text-xs text-[#667085]">Voice-based competency pre-qualification</p>
+    <div className="space-y-4">
+      {/* Explanatory Callout Banner */}
+      <div className="rounded-lg border border-[#E4E7EC] bg-[#FAFBFD] p-3.5 flex items-start gap-3 text-xs">
+        <Sparkles className="h-4 w-4 text-[#171717] mt-0.5 shrink-0" />
+        <div className="space-y-0.5 flex-1">
+          <p className="font-semibold text-[#171717]">AI Technical & Scenario Screening</p>
+          <p className="text-[11px] text-[#667085] leading-relaxed">
+            Candidates complete an interactive, online interview session with adaptive technical challenges, automated audio/video proctoring, and instant JD alignment scoring.
+          </p>
         </div>
-        {screening && (
-          <span className="rounded-md border border-[#E4E7EC] bg-[#F7F8FA] px-2.5 py-1 text-xs font-medium text-[#171717] capitalize">
-            Status: {screening.session_status}
-          </span>
-        )}
       </div>
 
-      {screening ? (
-        <div className="space-y-4">
-          <div className="rounded-md bg-[#F7F8FA] border border-[#E4E7EC] p-3.5 space-y-2">
-            <p className="text-xs font-medium text-[#667085]">Screening Link</p>
-            <div className="flex items-center gap-2">
-              <input
-                type="text"
-                readOnly
-                value={interviewLink || ""}
-                className="flex-1 h-8 rounded-md border border-[#E4E7EC] bg-white px-2.5 text-xs text-[#171717] font-mono select-all focus:outline-none"
-              />
-              <Button variant="outline" size="sm" onClick={handleCopyLink} className="h-8 rounded-md border-[#E4E7EC] text-xs font-medium">
-                {copied ? <Check className="h-3 w-3 text-[#12B76A] mr-1" /> : <Copy className="h-3 w-3 mr-1 text-[#667085]" />}
-                {copied ? "Copied" : "Copy"}
-              </Button>
-              {interviewLink && (
-                <a
-                  href={interviewLink}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1.5 h-8 rounded-md bg-[#171717] px-3 text-xs font-medium text-white hover:bg-[#262626]"
-                >
-                  <ExternalLink className="h-3 w-3" />
-                  Open Session
-                </a>
-              )}
-            </div>
+      <div className="rounded-lg border border-[#E4E7EC] bg-white p-4 sm:p-5 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#E4E7EC] pb-3">
+          <div>
+            <h3 className="text-xs font-semibold text-[#171717] uppercase tracking-wider">
+              Technical Screening Session
+            </h3>
+            <p className="text-[11px] text-[#667085]">Adaptive questions, code challenges & proctoring</p>
           </div>
-
-          {screening.results && screening.results.length > 0 && (
-            <div className="space-y-3 pt-2">
-              <h4 className="text-xs font-semibold uppercase tracking-wider text-[#667085]">Screening Results</h4>
-              {screening.results.map((res) => (
-                <div key={res.id} className="rounded-md border border-[#E4E7EC] p-4 space-y-3 bg-[#F7F8FA]">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="text-xs font-semibold text-[#171717]">
-                      Verdict: {res.verdict || "Completed"}
-                    </span>
-                    {res.jd_match_score !== null && (
-                      <span className="text-xs font-semibold text-[#171717] tabular-nums">
-                        Score: {res.jd_match_score}%
-                      </span>
-                    )}
-                  </div>
-                  {res.summary && (
-                    <p className="text-xs text-[#667085] leading-relaxed font-normal">{res.summary}</p>
-                  )}
-                </div>
-              ))}
-            </div>
+          {screening && (
+            <span className="rounded-md border border-[#E4E7EC] bg-[#F7F8FA] px-2.5 py-1 text-xs font-medium text-[#171717] capitalize">
+              Status: {screening.session_status}
+            </span>
           )}
         </div>
-      ) : (
-        <div className="text-center py-8 space-y-3">
-          <div className="max-w-md mx-auto">
-            <h4 className="text-sm font-semibold text-[#171717]">Send Screening Invitation</h4>
-            <p className="mt-0.5 text-xs text-[#667085]">
-              Invites the candidate to an automated technical pre-screening interview.
-            </p>
+
+        {screening ? (
+          <div className="space-y-4">
+            {/* Candidate Link Box */}
+            <div className="rounded-md bg-[#F7F8FA] border border-[#E4E7EC] p-3.5 space-y-2">
+              <p className="text-xs font-medium text-[#667085]">Candidate Interview URL</p>
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  readOnly
+                  value={interviewLink || ""}
+                  className="flex-1 h-8 rounded-md border border-[#E4E7EC] bg-white px-2.5 text-xs text-[#171717] font-mono select-all focus:outline-none"
+                />
+                <Button variant="outline" size="sm" onClick={handleCopyLink} className="h-8 rounded-md border-[#E4E7EC] text-xs font-medium">
+                  {copied ? <Check className="h-3 w-3 text-[#12B76A] mr-1" /> : <Copy className="h-3 w-3 mr-1 text-[#667085]" />}
+                  {copied ? "Copied" : "Copy"}
+                </Button>
+                {interviewLink && (
+                  <a
+                    href={interviewLink}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 h-8 rounded-md bg-[#171717] px-3 text-xs font-medium text-white hover:bg-[#262626]"
+                  >
+                    <ExternalLink className="h-3 w-3" />
+                    Open Session
+                  </a>
+                )}
+              </div>
+            </div>
+
+            {/* Screening Results Report */}
+            {results.length > 0 ? (
+              <div className="space-y-3 pt-2">
+                <h4 className="text-xs font-semibold uppercase tracking-wider text-[#667085]">Evaluation Results</h4>
+                {results.map((res) => (
+                  <div key={res.id} className="rounded-md border border-[#E4E7EC] p-4 space-y-3 bg-[#F7F8FA]">
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#E4E7EC] pb-2">
+                      <span className="text-xs font-semibold text-[#171717]">
+                        Recommendation: <strong className="text-[#027A48]">{res.verdict || "Completed"}</strong>
+                      </span>
+                      {res.jd_match_score !== null && (
+                        <span className="text-xs font-semibold text-[#171717] tabular-nums">
+                          Technical Fit: {res.jd_match_score}%
+                        </span>
+                      )}
+                    </div>
+
+                    {res.summary && (
+                      <p className="text-xs text-[#171717] leading-relaxed font-normal">{res.summary}</p>
+                    )}
+
+                    {res.strengths && res.strengths.length > 0 && (
+                      <div className="space-y-1">
+                        <span className="text-[11px] font-semibold text-[#12B76A]">Demonstrated Strengths:</span>
+                        <ul className="text-xs text-[#667085] space-y-0.5 pl-4 list-disc">
+                          {res.strengths.map((str, i) => (
+                            <li key={i}>{str}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="rounded-md border border-[#E4E7EC] bg-white p-4 text-center text-xs text-[#667085]">
+                Candidate has been invited. Results will appear here once the session is completed.
+              </div>
+            )}
           </div>
-          <Button
-            disabled={inviting || !candidate.email}
-            onClick={handleInvite}
-            className="h-8 rounded-md bg-[#171717] text-xs font-medium text-white hover:bg-[#262626]"
-          >
-            {inviting ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <Send className="h-3.5 w-3.5 mr-1.5" />}
-            Send Screening Invitation
-          </Button>
-        </div>
-      )}
-      {error && <ErrorBanner message={error} className="mt-3" />}
+        ) : (
+          <div className="text-center py-8 space-y-3">
+            <div className="max-w-md mx-auto">
+              <h4 className="text-sm font-semibold text-[#171717]">Send AI Technical Interview Invitation</h4>
+              <p className="mt-0.5 text-xs text-[#667085]">
+                Generates a personalized interview session link for {candidate.email || "the candidate"}.
+              </p>
+            </div>
+            <Button
+              disabled={inviting || !candidate.email}
+              onClick={handleInvite}
+              className="h-8 rounded-md bg-[#171717] text-xs font-medium text-white hover:bg-[#262626]"
+            >
+              {inviting ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <Send className="h-3.5 w-3.5 mr-1.5" />}
+              Generate Interview Link & Email Invite
+            </Button>
+          </div>
+        )}
+        {error && <ErrorBanner message={error} className="mt-3" />}
+      </div>
     </div>
   );
 }
 
+// ── Tab 5: Panel Interviews Tab ──────────────────────────────────────────
 function InterviewsTab({ data, onReload }: { data: Application360; onReload: () => void }) {
   const { application, interviews } = data;
   const [showSchedule, setShowSchedule] = useState(false);
@@ -578,8 +1066,8 @@ function InterviewsTab({ data, onReload }: { data: Application360; onReload: () 
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="text-sm font-semibold text-[#171717]">Team Interviews</h3>
-          <p className="text-xs text-[#667085]">Coordinated video and technical rounds</p>
+          <h3 className="text-sm font-semibold text-[#171717]">Panel & Team Interviews</h3>
+          <p className="text-xs text-[#667085]">Coordinated video and hiring manager rounds</p>
         </div>
         <Button
           size="sm"
@@ -632,7 +1120,7 @@ function InterviewsTab({ data, onReload }: { data: Application360; onReload: () 
 
       {interviews.length === 0 ? (
         <div className="rounded-lg border border-[#E4E7EC] bg-white p-8 text-center text-xs text-[#667085]">
-          No interviews scheduled yet.
+          No team interviews scheduled yet.
         </div>
       ) : (
         <div className="space-y-2">
@@ -652,7 +1140,7 @@ function InterviewsTab({ data, onReload }: { data: Application360; onReload: () 
                   className="inline-flex items-center gap-1 h-7 rounded-md border border-[#E4E7EC] bg-white px-2.5 text-xs font-medium text-[#171717] hover:bg-[#F2F4F7]"
                 >
                   <ExternalLink className="h-3 w-3 text-[#667085]" />
-                  Join Meeting
+                  Join Google Meet
                 </a>
               )}
             </div>
@@ -663,6 +1151,167 @@ function InterviewsTab({ data, onReload }: { data: Application360; onReload: () 
   );
 }
 
+// ── Tab 6: Job Offers Tab ────────────────────────────────────────────────
+function OffersTab({ data, onReload }: { data: Application360; onReload: () => void }) {
+  const { application, candidate, job } = data;
+  const offers = data.offers || [];
+  const [showCreate, setShowCreate] = useState(false);
+  const [salary, setSalary] = useState<number | "">("");
+  const [currency, setCurrency] = useState("USD");
+  const [equity, setEquity] = useState("");
+  const [startDate, setStartDate] = useState("");
+  const [notes, setNotes] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleCreate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError(null);
+    try {
+      await createOffer(application.id, {
+        salary: salary ? Number(salary) : undefined,
+        currency,
+        equity: equity || undefined,
+        role_title: job?.title || "Role",
+        start_date: startDate || undefined,
+        notes: notes || undefined,
+      });
+      setShowCreate(false);
+      onReload();
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleStatusChange = async (offerId: string, status: string) => {
+    try {
+      await updateOffer(offerId, { status });
+      onReload();
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-sm font-semibold text-[#171717]">Offer Letters & Terms</h3>
+          <p className="text-xs text-[#667085]">Compensation packages and acceptance status</p>
+        </div>
+        <Button
+          size="sm"
+          onClick={() => setShowCreate(!showCreate)}
+          className="h-8 rounded-md bg-[#171717] text-xs font-medium text-white hover:bg-[#262626]"
+        >
+          <Plus className="h-3.5 w-3.5 mr-1" />
+          Create Formal Offer
+        </Button>
+      </div>
+
+      {showCreate && (
+        <form onSubmit={handleCreate} className="rounded-lg border border-[#E4E7EC] bg-white p-4 space-y-3">
+          <h4 className="text-xs font-semibold uppercase tracking-wider text-[#667085]">Offer Details</h4>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <div>
+              <label className="block text-xs font-medium text-[#171717] mb-1">Annual Salary</label>
+              <input
+                type="number"
+                placeholder="e.g. 150000"
+                value={salary}
+                onChange={(e) => setSalary(e.target.value ? Number(e.target.value) : "")}
+                className="w-full h-8 rounded-md border border-[#E4E7EC] px-2.5 text-xs text-[#171717] focus:border-[#171717] focus:outline-none"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-[#171717] mb-1">Currency</label>
+              <select
+                value={currency}
+                onChange={(e) => setCurrency(e.target.value)}
+                className="w-full h-8 rounded-md border border-[#E4E7EC] px-2 text-xs text-[#171717] focus:border-[#171717] focus:outline-none"
+              >
+                <option value="USD">USD ($)</option>
+                <option value="EUR">EUR (€)</option>
+                <option value="GBP">GBP (£)</option>
+                <option value="INR">INR (₹)</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-[#171717] mb-1">Equity</label>
+              <input
+                type="text"
+                placeholder="e.g. 0.25% or 10,000 RSUs"
+                value={equity}
+                onChange={(e) => setEquity(e.target.value)}
+                className="w-full h-8 rounded-md border border-[#E4E7EC] px-2.5 text-xs text-[#171717] focus:border-[#171717] focus:outline-none"
+              />
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-[#171717] mb-1">Target Start Date</label>
+            <input
+              type="date"
+              value={startDate}
+              onChange={(e) => setStartDate(e.target.value)}
+              className="w-full h-8 rounded-md border border-[#E4E7EC] px-2.5 text-xs text-[#171717] focus:border-[#171717] focus:outline-none"
+            />
+          </div>
+          {error && <ErrorBanner message={error} />}
+          <div className="flex justify-end gap-2 pt-2 border-t border-[#E4E7EC]">
+            <Button type="button" variant="outline" size="sm" onClick={() => setShowCreate(false)} className="h-8 rounded-md border-[#E4E7EC] text-xs">
+              Cancel
+            </Button>
+            <Button type="submit" size="sm" disabled={loading} className="h-8 rounded-md bg-[#171717] text-xs font-medium text-white hover:bg-[#262626]">
+              {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <DollarSign className="h-3.5 w-3.5 mr-1" />}
+              Save & Extend Offer
+            </Button>
+          </div>
+        </form>
+      )}
+
+      {offers.length === 0 ? (
+        <div className="rounded-lg border border-[#E4E7EC] bg-white p-8 text-center text-xs text-[#667085]">
+          No formal offers generated yet.
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {offers.map((offer) => (
+            <div key={offer.id} className="rounded-lg border border-[#E4E7EC] bg-white p-4 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#E4E7EC] pb-2.5">
+                <div>
+                  <h4 className="text-xs font-semibold text-[#171717]">{offer.role_title}</h4>
+                  <p className="text-[11px] text-[#667085]">
+                    {offer.currency} {offer.salary ? offer.salary.toLocaleString() : "—"}/yr
+                    {offer.equity ? ` · Equity: ${offer.equity}` : ""}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="rounded px-2 py-0.5 text-[10px] font-semibold uppercase bg-[#F2F4F7] text-[#171717]">
+                    {offer.status}
+                  </span>
+                  {offer.status !== "accepted" && (
+                    <Button
+                      size="sm"
+                      onClick={() => handleStatusChange(offer.id, "accepted")}
+                      className="h-7 rounded-md bg-[#12B76A] text-white text-xs font-medium hover:bg-[#027A48]"
+                    >
+                      Mark Accepted (Hire)
+                    </Button>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Main Page Component ──────────────────────────────────────────────────
 export default function CandidateDetailPage() {
   const params = useParams<{ jobId: string; appId: string }>();
   const { jobId, appId } = params;
@@ -794,17 +1443,39 @@ export default function CandidateDetailPage() {
         </div>
       </div>
 
+      {/* Chronological Hiring Stepper */}
+      <ChronologicalHiringJourney
+        stage={data.application.stage}
+        hasWhatsApp={Boolean(data.whatsapp_messages && data.whatsapp_messages.length > 0)}
+        hasPhoneCall={Boolean(data.telephonic_calls && data.telephonic_calls.length > 0)}
+        hasScreening={Boolean(data.screening)}
+        hasInterviews={Boolean(data.interviews && data.interviews.length > 0)}
+        hasOffers={Boolean(data.offers && data.offers.length > 0)}
+      />
+
       {/* Tabs Navigation */}
       <Tabs defaultValue="overview" className="space-y-4">
         <TabsList className="flex flex-wrap gap-1 rounded-md bg-[#F2F4F7] p-1 border border-[#E4E7EC]">
           <TabsTrigger value="overview" className="rounded px-3 py-1.5 text-xs font-medium transition-colors data-[state=active]:bg-white data-[state=active]:text-[#171717]">
-            Overview & Evaluation
+            1. Overview & Resume
           </TabsTrigger>
-          <TabsTrigger value="screening" className="rounded px-3 py-1.5 text-xs font-medium transition-colors data-[state=active]:bg-white data-[state=active]:text-[#171717]">
-            Voice Screening
+          <TabsTrigger value="whatsapp" className="rounded px-3 py-1.5 text-xs font-medium transition-colors data-[state=active]:bg-white data-[state=active]:text-[#171717] flex items-center gap-1.5">
+            <MessageSquare className="h-3.5 w-3.5" />
+            2. WhatsApp Outreach {Boolean(data.whatsapp_messages?.length) && `(${data.whatsapp_messages?.length})`}
+          </TabsTrigger>
+          <TabsTrigger value="telephonic" className="rounded px-3 py-1.5 text-xs font-medium transition-colors data-[state=active]:bg-white data-[state=active]:text-[#171717] flex items-center gap-1.5">
+            <PhoneCall className="h-3.5 w-3.5" />
+            3. AI Phone Screening {Boolean(data.telephonic_calls?.length) && `(${data.telephonic_calls?.length})`}
+          </TabsTrigger>
+          <TabsTrigger value="screening" className="rounded px-3 py-1.5 text-xs font-medium transition-colors data-[state=active]:bg-white data-[state=active]:text-[#171717] flex items-center gap-1.5">
+            <Sparkles className="h-3.5 w-3.5" />
+            4. AI Tech Interview
           </TabsTrigger>
           <TabsTrigger value="interviews" className="rounded px-3 py-1.5 text-xs font-medium transition-colors data-[state=active]:bg-white data-[state=active]:text-[#171717]">
-            Interviews ({data.interviews.length})
+            5. Panel Interviews ({data.interviews.length})
+          </TabsTrigger>
+          <TabsTrigger value="offers" className="rounded px-3 py-1.5 text-xs font-medium transition-colors data-[state=active]:bg-white data-[state=active]:text-[#171717]">
+            6. Offers ({data.offers?.length || 0})
           </TabsTrigger>
           <TabsTrigger value="activity" className="rounded px-3 py-1.5 text-xs font-medium transition-colors data-[state=active]:bg-white data-[state=active]:text-[#171717]">
             Audit Trail ({data.activity.length})
@@ -814,11 +1485,20 @@ export default function CandidateDetailPage() {
         <TabsContent value="overview">
           <OverviewTab data={data} onStageChange={handleStageChange} onReload={reload} />
         </TabsContent>
+        <TabsContent value="whatsapp">
+          <WhatsAppTab data={data} onReload={reload} />
+        </TabsContent>
+        <TabsContent value="telephonic">
+          <TelephonicTab data={data} onReload={reload} />
+        </TabsContent>
         <TabsContent value="screening">
-          <ScreeningTab data={data} onReload={reload} />
+          <AiInterviewTab data={data} onReload={reload} />
         </TabsContent>
         <TabsContent value="interviews">
           <InterviewsTab data={data} onReload={reload} />
+        </TabsContent>
+        <TabsContent value="offers">
+          <OffersTab data={data} onReload={reload} />
         </TabsContent>
         <TabsContent value="activity">
           <div className="rounded-lg border border-[#E4E7EC] bg-white p-5 space-y-4">

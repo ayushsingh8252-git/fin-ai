@@ -266,3 +266,67 @@ def test_workflows_templates_and_run(client, db):
     res_runs = c.get(f"/api/v1/recruitment/workflows/runs?job_id={job.id}")
     assert res_runs.status_code == 200
     assert len(res_runs.json()["runs"]) >= 1
+
+
+def test_whatsapp_messaging_lifecycle(client, db, monkeypatch):
+    from app.services import whatsapp_service
+    monkeypatch.setattr(whatsapp_service, "send_text_message", lambda to, body: {"messages": [{"id": "wamid.test.123"}]})
+
+    c, user = client
+    job = make_job(db, user)
+    cand, application = make_candidate_and_app(db, job)
+
+    # 1. Send WhatsApp message
+    res_send = c.post(f"/api/v1/recruitment/applications/{application.id}/whatsapp", json={
+        "message": "Hello! Your application for Senior Backend Engineer has been received.",
+    })
+    assert res_send.status_code == 200
+    body = res_send.json()
+    assert "1234567890" in body["to_number"]
+    assert "Hello!" in body["body"]
+    assert body["status"] in ("sent", "queued")
+
+    # 2. Retrieve WhatsApp messages
+    res_get = c.get(f"/api/v1/recruitment/applications/{application.id}/whatsapp")
+    assert res_get.status_code == 200
+    items = res_get.json()["items"]
+    assert len(items) >= 1
+    assert "1234567890" in items[0]["to_number"]
+
+    # 3. Check candidate 360 includes whatsapp_messages
+    res_360 = c.get(f"/api/v1/recruitment/applications/{application.id}/360")
+    assert res_360.status_code == 200
+    assert "whatsapp_messages" in res_360.json()
+    assert len(res_360.json()["whatsapp_messages"]) >= 1
+
+
+def test_telephonic_call_lifecycle(client, db, monkeypatch):
+    from app.api import telephonic
+    monkeypatch.setattr(telephonic, "_dial", lambda **kw: None)
+
+    c, user = client
+    job = make_job(db, user)
+    cand, application = make_candidate_and_app(db, job)
+
+    # 1. Trigger telephonic screening call
+    res_call = c.post(f"/api/v1/recruitment/applications/{application.id}/telephonic", json={
+        "objective": "screening",
+    })
+    assert res_call.status_code == 200
+    call_body = res_call.json()
+    assert "1234567890" in call_body["to_number"]
+    assert call_body["status"] in ("completed", "in-progress", "queued")
+
+    # 2. Retrieve telephonic calls
+    res_get = c.get(f"/api/v1/recruitment/applications/{application.id}/telephonic")
+    assert res_get.status_code == 200
+    items = res_get.json()["items"]
+    assert len(items) >= 1
+    assert "1234567890" in items[0]["to_number"]
+
+    # 3. Check candidate 360 includes telephonic_calls
+    res_360 = c.get(f"/api/v1/recruitment/applications/{application.id}/360")
+    assert res_360.status_code == 200
+    assert "telephonic_calls" in res_360.json()
+    assert len(res_360.json()["telephonic_calls"]) >= 1
+
