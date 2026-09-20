@@ -7,7 +7,7 @@ import {
   ArrowLeft, CheckSquare, FileUp, Loader2, RefreshCw, Square,
   Users, Search, ChevronRight, X, LayoutGrid, Table as TableIcon,
   GripVertical, CheckCircle2, AlertTriangle, ArrowRight, ShieldAlert,
-  Send, UserCheck, XCircle, SlidersHorizontal
+  Send, UserCheck, XCircle, SlidersHorizontal, Briefcase, Sparkles, Activity, Trash2, MapPin
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ErrorBanner } from "@/components/ui/error-banner";
@@ -17,11 +17,12 @@ import {
 } from "@/components/ui/dialog";
 import {
   errorMessage, getJob, listCandidates, retryUpload,
-  bulkSetStage, bulkAnalyze, setStage,
+  bulkSetStage, bulkAnalyze, setStage, updateJob, deleteJob,
   type CandidatePage, type Job, type Stage, type CandidateApplication
 } from "@/lib/recruitmentApi";
 import { AnalysisIndicator, ScoreCell, StageBadge, PipelineProgressionSvg, EmptyStateGeometricSvg } from "../../_components/indicators";
 import { UploadPanel } from "../../_components/UploadPanel";
+import { JobFormDialog } from "../../_components/JobFormDialog";
 import { useBatchProgress } from "../../_components/useBatchProgress";
 import { useRecruitment } from "../../_components/RecruitmentShell";
 import { STAGE_LABEL } from "../../_components/stages";
@@ -51,84 +52,6 @@ const ALL_STAGES_FILTER: { key: Stage | "ALL"; label: string }[] = [
   { key: "REJECTED", label: "Rejected" },
 ];
 
-function AgenticPipelineTracker({
-  active,
-  counts,
-  total,
-}: {
-  active: boolean;
-  counts?: { parsed: number; processing: number; queued: number; duplicate: number; failed: number };
-  total: number;
-}) {
-  if (!active && (!counts || counts.processing === 0)) return null;
-
-  const currentStep = (counts?.processing ?? 0) > 0 ? 3 : (counts?.queued ?? 0) > 0 ? 2 : 4;
-
-  return (
-    <div className="rounded-lg border border-[#E4E7EC] bg-white p-3.5 space-y-2.5">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <span className="flex h-2 w-2 rounded-full bg-[#12B76A] animate-pulse" />
-          <span className="text-xs font-semibold text-[#171717]">
-            Automated Evaluation Pipeline Active
-          </span>
-        </div>
-        <span className="text-xs text-[#667085] tabular-nums font-medium">
-          {counts ? `${counts.parsed} of ${total} resumes processed` : "Evaluating applicants…"}
-        </span>
-      </div>
-
-      <PipelineProgressionSvg currentStep={currentStep} totalSteps={4} isRunning={true} />
-    </div>
-  );
-}
-
-function JobAgentActivity({ candidates }: { candidates: CandidateApplication[] }) {
-  const recentEvaluated = useMemo(() => {
-    return candidates
-      .filter((c) => c.analysis_status === "completed" || (c.scores.match_score.value !== null && c.scores.match_score.value > 0))
-      .slice(0, 3)
-      .map((c) => {
-        const match = c.scores.match_score.value;
-        const ats = c.scores.ats_score.value;
-        return {
-          id: c.id,
-          name: c.candidate.name || "Candidate",
-          match,
-          ats,
-          stage: c.stage,
-        };
-      });
-  }, [candidates]);
-
-  if (recentEvaluated.length === 0) return null;
-
-  return (
-    <div className="rounded-lg border border-[#E4E7EC] bg-white p-3.5 space-y-2">
-      <div className="flex items-center justify-between border-b border-[#E4E7EC] pb-2">
-        <span className="text-[11px] font-semibold uppercase tracking-wider text-[#667085]">
-          Agent Activity
-        </span>
-        <span className="text-[10px] text-[#12B76A] font-medium flex items-center gap-1">
-          <span className="h-1.5 w-1.5 rounded-full bg-[#12B76A]" /> Factual Audit Log
-        </span>
-      </div>
-      <div className="divide-y divide-[#E4E7EC]">
-        {recentEvaluated.map((item) => (
-          <div key={item.id} className="py-1.5 flex flex-wrap items-center justify-between gap-2 text-xs">
-            <span className="text-[#171717]">
-              Agent evaluated <strong className="font-semibold">{item.name}</strong>
-            </span>
-            <span className="text-[#667085] tabular-nums text-[11px]">
-              {item.match !== null ? `Semantic match: ${item.match}%` : "Requirements verified"} → Routed to <strong className="font-medium text-[#171717]">{STAGE_LABEL[item.stage] || item.stage}</strong>
-            </span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 export default function JobWorkspacePage() {
   const params = useParams<{ jobId: string }>();
   const jobId = params.jobId;
@@ -156,64 +79,70 @@ export default function JobWorkspacePage() {
   const [bulkLoading, setBulkLoading] = useState(false);
   const [bulkError, setBulkError] = useState<string | null>(null);
 
+  // Alteration & Deletion State
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
   // Drag and Drop state
   const [draggedApp, setDraggedApp] = useState<CandidateApplication | null>(null);
   const [dragOverStage, setDragOverStage] = useState<Stage | null>(null);
   const [pendingRejectApp, setPendingRejectApp] = useState<CandidateApplication | null>(null);
-  const [stageUpdating, setStageUpdating] = useState<string | null>(null);
 
   const reload = useCallback(() => setRefresh((n) => n + 1), []);
-  const progress = useBatchProgress(batchId, reload, pollKey);
 
   useEffect(() => {
     let cancelled = false;
-    setSelectedIds(new Set());
-    Promise.all([getJob(jobId), listCandidates(jobId, { pageSize: 100 })])
-      .then(([job, candidates]) => !cancelled && setLoaded({ job, candidates }))
-      .catch((err) => !cancelled && setLoaded({ error: errorMessage(err) }));
-    return () => { cancelled = true; };
+    Promise.all([
+      getJob(jobId),
+      listCandidates(jobId, { page: 1, pageSize: 100 }),
+    ])
+      .then(([job, candidates]) => {
+        if (!cancelled) setLoaded({ job, candidates });
+      })
+      .catch((err) => {
+        if (!cancelled) setLoaded({ error: errorMessage(err) });
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [jobId, refresh]);
 
-  const candidatesList = loaded && "candidates" in loaded ? loaded.candidates.items : [];
+  const progress = useBatchProgress(batchId, reload, pollKey);
 
-  // Filter & sort candidates
-  const filteredCandidates = useMemo(() => {
-    return candidatesList.filter((app) => {
-      // Stage filter (only in table view)
-      if (viewMode === "table" && activeStageTab !== "ALL" && app.stage !== activeStageTab) return false;
+  const handleStatusToggle = async (newStatus: "open" | "closed") => {
+    if (!loaded || !("job" in loaded)) return;
+    try {
+      await updateJob(jobId, { status: newStatus });
+      toast("success", `Position marked as ${newStatus === "open" ? "Active" : "Closed"}.`);
+      reload();
+    } catch (err) {
+      toast("error", errorMessage(err));
+    }
+  };
 
-      // Min match score filter
-      if (minScoreFilter > 0) {
-        const score = app.scores.match_score.value ?? 0;
-        if (score < minScoreFilter) return false;
-      }
+  const handleConfirmDelete = async () => {
+    setDeleting(true);
+    try {
+      await deleteJob(jobId);
+      toast("success", "Position removed successfully.");
+      router.push("/recruitment");
+    } catch (err) {
+      toast("error", errorMessage(err));
+      setDeleting(false);
+    }
+  };
 
-      // Search query
-      if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase();
-        const name = app.candidate.name?.toLowerCase() || "";
-        const email = app.candidate.email?.toLowerCase() || "";
-        const role = app.candidate.current_role?.toLowerCase() || "";
-        if (!name.includes(q) && !email.includes(q) && !role.includes(q)) return false;
-      }
+  // Candidates list derived
+  const candidatesList = useMemo(() => {
+    if (!loaded || !("candidates" in loaded)) return [];
+    return loaded.candidates.items;
+  }, [loaded]);
 
-      return true;
-    }).sort((a, b) => {
-      if (sortBy === "match_desc") {
-        return (b.scores.match_score.value ?? 0) - (a.scores.match_score.value ?? 0);
-      }
-      if (sortBy === "ats_desc") {
-        return (b.scores.ats_score.value ?? 0) - (a.scores.ats_score.value ?? 0);
-      }
-      return (a.candidate.name || "").localeCompare(b.candidate.name || "");
-    });
-  }, [candidatesList, viewMode, activeStageTab, minScoreFilter, searchQuery, sortBy]);
-
-  // Group by stage for board view
   const candidatesByStage = useMemo(() => {
     const map: Record<Stage, CandidateApplication[]> = {
-      APPLIED: [],
       PROCESSING: [],
+      APPLIED: [],
       SCREENING: [],
       SHORTLISTED: [],
       INTERVIEW: [],
@@ -223,17 +152,42 @@ export default function JobWorkspacePage() {
       REJECTED: [],
       WITHDRAWN: [],
     };
-    filteredCandidates.forEach((c) => {
-      if (map[c.stage]) {
-        map[c.stage].push(c);
-      } else {
-        map.APPLIED.push(c);
-      }
+    candidatesList.forEach((c) => {
+      if (map[c.stage]) map[c.stage].push(c);
     });
     return map;
-  }, [filteredCandidates]);
+  }, [candidatesList]);
 
-  const allSelected = filteredCandidates.length > 0 && selectedIds.size === filteredCandidates.length;
+  const filteredCandidates = useMemo(() => {
+    return candidatesList.filter((app) => {
+      if (activeStageTab !== "ALL" && app.stage !== activeStageTab) return false;
+      if (minScoreFilter > 0) {
+        const val = app.scores.match_score.value;
+        if (val === null || val < minScoreFilter) return false;
+      }
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase();
+        const nameMatch = app.candidate.name?.toLowerCase().includes(q);
+        const emailMatch = app.candidate.email?.toLowerCase().includes(q);
+        const roleMatch = app.candidate.current_role?.toLowerCase().includes(q);
+        if (!nameMatch && !emailMatch && !roleMatch) return false;
+      }
+      return true;
+    }).sort((a, b) => {
+      if (sortBy === "match_desc") {
+        return (b.scores.match_score.value ?? -1) - (a.scores.match_score.value ?? -1);
+      }
+      if (sortBy === "ats_desc") {
+        return (b.scores.ats_score.value ?? -1) - (a.scores.ats_score.value ?? -1);
+      }
+      if (sortBy === "name") {
+        return (a.candidate.name || "").localeCompare(b.candidate.name || "");
+      }
+      return 0;
+    });
+  }, [candidatesList, activeStageTab, minScoreFilter, searchQuery, sortBy]);
+
+  const allSelected = filteredCandidates.length > 0 && filteredCandidates.every((c) => selectedIds.has(c.id));
 
   const toggleSelectAll = () => {
     if (allSelected) {
@@ -243,56 +197,23 @@ export default function JobWorkspacePage() {
     }
   };
 
-  const toggleSelectOne = (id: string, e: React.MouseEvent) => {
+  const toggleSelect = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
+    const next = new Set(selectedIds);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setSelectedIds(next);
   };
 
-  // Drag & Drop Handler
-  const executeStageMove = async (appId: string, targetStage: Stage) => {
-    setStageUpdating(appId);
-    try {
-      await setStage(appId, targetStage);
-      toast("success", `Candidate moved to ${STAGE_LABEL[targetStage] || targetStage}`);
-      reload();
-    } catch (err) {
-      toast("error", `Failed to move candidate: ${errorMessage(err)}`);
-    } finally {
-      setStageUpdating(null);
-      setDraggedApp(null);
-      setDragOverStage(null);
-    }
-  };
-
-  const handleDropOnStage = (targetStage: Stage) => {
-    if (!draggedApp) return;
-    if (draggedApp.stage === targetStage) {
-      setDraggedApp(null);
-      setDragOverStage(null);
-      return;
-    }
-
-    if (targetStage === "REJECTED") {
-      setPendingRejectApp(draggedApp);
-      setDragOverStage(null);
-      return;
-    }
-
-    executeStageMove(draggedApp.id, targetStage);
-  };
-
-  const handleBulkStage = async (stage: Stage) => {
+  const handleBulkStage = async (targetStage: Stage) => {
     if (selectedIds.size === 0) return;
     setBulkLoading(true);
     setBulkError(null);
     try {
-      await bulkSetStage(Array.from(selectedIds), stage);
-      toast("success", `Moved ${selectedIds.size} candidates to ${STAGE_LABEL[stage] || stage}.`);
+      const ids = Array.from(selectedIds);
+      const res = await bulkSetStage(ids, targetStage);
+      const successCount = res.results.filter((r) => r.status === "ok").length;
+      toast("success", `Moved ${successCount} candidates to ${STAGE_LABEL[targetStage]}.`);
       setSelectedIds(new Set());
       reload();
     } catch (err) {
@@ -307,8 +228,9 @@ export default function JobWorkspacePage() {
     setBulkLoading(true);
     setBulkError(null);
     try {
-      await bulkAnalyze(Array.from(selectedIds));
-      toast("success", `Queued re-evaluation for ${selectedIds.size} candidates.`);
+      const ids = Array.from(selectedIds);
+      await bulkAnalyze(ids);
+      toast("success", `Requested re-evaluation for ${ids.length} candidates.`);
       setSelectedIds(new Set());
       reload();
     } catch (err) {
@@ -318,17 +240,53 @@ export default function JobWorkspacePage() {
     }
   };
 
+  const handleDropOnStage = async (targetStage: Stage) => {
+    if (!draggedApp) return;
+    const appId = draggedApp.id;
+    const candidateName = draggedApp.candidate.name || "Candidate";
+
+    if (targetStage === "REJECTED") {
+      setPendingRejectApp(draggedApp);
+      setDraggedApp(null);
+      setDragOverStage(null);
+      return;
+    }
+
+    setDraggedApp(null);
+    setDragOverStage(null);
+
+    try {
+      await setStage(appId, targetStage);
+      toast("success", `Moved ${candidateName} to ${STAGE_LABEL[targetStage]}.`);
+      reload();
+    } catch (err) {
+      toast("error", `Could not move candidate: ${errorMessage(err)}`);
+    }
+  };
+
+  const confirmRejection = async () => {
+    if (!pendingRejectApp) return;
+    try {
+      await setStage(pendingRejectApp.id, "REJECTED", "Moved to Rejected via pipeline board");
+      toast("success", `Candidate moved to Rejected.`);
+      setPendingRejectApp(null);
+      reload();
+    } catch (err) {
+      toast("error", errorMessage(err));
+    }
+  };
+
   if (loaded === null) {
     return (
-      <div className="space-y-5">
-        <Skeleton className="h-6 w-36 rounded bg-[#E4E7EC]" />
-        <Skeleton className="h-8 w-64 rounded-md bg-[#E4E7EC]" />
+      <div className="space-y-6">
+        <Skeleton className="h-6 w-36 rounded bg-zinc-200" />
+        <Skeleton className="h-10 w-64 rounded-xl bg-zinc-200" />
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           {[0, 1, 2, 3].map((i) => (
-            <Skeleton key={i} className="h-20 rounded-lg bg-[#E4E7EC]" />
+            <Skeleton key={i} className="h-20 rounded-xl bg-zinc-200" />
           ))}
         </div>
-        <Skeleton className="h-96 rounded-lg bg-[#E4E7EC]" />
+        <Skeleton className="h-96 rounded-xl bg-zinc-200" />
       </div>
     );
   }
@@ -337,7 +295,7 @@ export default function JobWorkspacePage() {
     return (
       <div className="max-w-md space-y-3 py-12">
         <ErrorBanner message={loaded.error} />
-        <Button variant="outline" size="sm" onClick={reload} className="rounded-md border-[#E4E7EC]">
+        <Button variant="outline" size="sm" onClick={reload} className="rounded-xl border-zinc-200">
           Try again
         </Button>
       </div>
@@ -349,56 +307,84 @@ export default function JobWorkspacePage() {
   const isPipelineActive = Boolean(progress && !progress.status.done);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5 pb-12">
       {/* Workspace Header */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between border-b border-[#E4E7EC] pb-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between border-b border-zinc-200/80 pb-5">
         <div>
           <Link
             href="/recruitment"
-            className="mb-1.5 inline-flex items-center gap-1 text-xs font-medium text-[#667085] hover:text-[#171717] transition-colors"
+            className="mb-1.5 inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-500 hover:text-zinc-900 transition-colors"
           >
-            <ArrowLeft className="h-3.5 w-3.5" /> All Positions
+            <ArrowLeft className="h-3.5 w-3.5" /> Positions
           </Link>
-          <div className="flex items-center gap-2.5">
-            <h1 className="text-xl sm:text-2xl font-semibold tracking-tight text-[#171717]">
+          <div className="flex flex-wrap items-center gap-2.5">
+            <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-zinc-900">
               {job.title}
             </h1>
-            <span className="inline-flex items-center gap-1.5 rounded-md border border-[#E4E7EC] bg-white px-2 py-0.5 text-xs font-medium text-[#171717]">
+            <span className={cn(
+              "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-semibold capitalize",
+              job.status === "open" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-zinc-100 text-zinc-600 border-zinc-200"
+            )}>
               <span className={cn(
                 "h-1.5 w-1.5 rounded-full",
-                job.status === "open" ? "bg-[#12B76A]" : job.status === "closed" ? "bg-[#F04438]" : "bg-[#98A2B3]"
+                job.status === "open" ? "bg-emerald-500" : "bg-zinc-400"
               )} />
-              <span className="capitalize">{job.status}</span>
+              <span>{job.status === "open" ? "Active" : "Closed"}</span>
             </span>
           </div>
-          <div className="mt-1.5 flex flex-wrap items-center gap-2 text-xs text-[#667085]">
-            {job.department && <span>{job.department}</span>}
+          <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+            {job.department && (
+              <span className="font-medium text-zinc-700">
+                {job.department}
+              </span>
+            )}
             {job.location && (
-              <>
-                <span className="text-[#E4E7EC]">·</span>
-                <span>{job.location}</span>
-              </>
+              <span className="flex items-center gap-1 text-zinc-500">
+                <span className="text-zinc-300">·</span>
+                <MapPin className="h-3 w-3 text-zinc-400" />
+                {job.location}
+              </span>
             )}
             {job.min_experience_years !== null && (
-              <>
-                <span className="text-[#E4E7EC]">·</span>
-                <span>{job.min_experience_years}+ years experience</span>
-              </>
+              <span className="text-zinc-500">
+                <span className="text-zinc-300">·</span>
+                {job.min_experience_years}+ yrs exp
+              </span>
             )}
           </div>
         </div>
 
         {/* Action Controls */}
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
+          <button
+            onClick={() => handleStatusToggle(job.status === "open" ? "closed" : "open")}
+            className="h-8 px-2.5 rounded-lg border border-zinc-200 text-xs font-semibold text-zinc-700 hover:bg-zinc-100 transition-colors"
+          >
+            {job.status === "open" ? "Close Role" : "Reopen Role"}
+          </button>
+          <button
+            onClick={() => setEditDialogOpen(true)}
+            className="h-8 px-2.5 rounded-lg border border-zinc-200 text-xs font-semibold text-zinc-700 hover:bg-zinc-100 transition-colors"
+          >
+            Edit
+          </button>
+          <button
+            onClick={() => setDeleteConfirmOpen(true)}
+            className="h-8 px-2 rounded-lg border border-zinc-200 text-xs font-semibold text-zinc-500 hover:bg-rose-50 hover:text-rose-600 hover:border-rose-200 transition-colors"
+            title="Delete position"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+
           {/* View Mode Switcher */}
-          <div className="flex items-center rounded-md border border-[#E4E7EC] bg-white p-0.5">
+          <div className="flex items-center rounded-lg border border-zinc-200/80 bg-white p-0.5 shadow-2xs">
             <button
               type="button"
               onClick={() => setViewMode("table")}
               title="Table View"
               className={cn(
-                "flex items-center gap-1 px-2.5 py-1 rounded text-xs font-medium transition-colors",
-                viewMode === "table" ? "bg-[#171717] text-white" : "text-[#667085] hover:text-[#171717]"
+                "flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold transition-all",
+                viewMode === "table" ? "bg-zinc-900 text-white shadow-xs" : "text-zinc-600 hover:text-zinc-900"
               )}
             >
               <TableIcon className="h-3.5 w-3.5" />
@@ -407,14 +393,14 @@ export default function JobWorkspacePage() {
             <button
               type="button"
               onClick={() => setViewMode("board")}
-              title="Pipeline Board View (Drag & Drop)"
+              title="Board View"
               className={cn(
-                "flex items-center gap-1 px-2.5 py-1 rounded text-xs font-medium transition-colors",
-                viewMode === "board" ? "bg-[#171717] text-white" : "text-[#667085] hover:text-[#171717]"
+                "flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold transition-all",
+                viewMode === "board" ? "bg-zinc-900 text-white shadow-xs" : "text-zinc-600 hover:text-zinc-900"
               )}
             >
               <LayoutGrid className="h-3.5 w-3.5" />
-              <span>Pipeline Board</span>
+              <span>Board</span>
             </button>
           </div>
 
@@ -422,9 +408,9 @@ export default function JobWorkspacePage() {
             variant="outline"
             size="sm"
             onClick={reload}
-            className="h-8 rounded-md border-[#E4E7EC] text-xs font-medium text-[#667085] hover:bg-[#F2F4F7]"
+            className="h-8 rounded-lg border-zinc-200 text-xs font-semibold text-zinc-700 hover:bg-zinc-100 shadow-2xs"
           >
-            <RefreshCw className="mr-1.5 h-3.5 w-3.5 text-[#98A2B3]" />
+            <RefreshCw className="mr-1 h-3.5 w-3.5 text-zinc-400" />
             Refresh
           </Button>
 
@@ -432,218 +418,206 @@ export default function JobWorkspacePage() {
             <Button
               size="sm"
               onClick={() => setUploadOpen(true)}
-              className="h-8 rounded-md bg-[#171717] text-xs font-medium text-white hover:bg-[#262626]"
+              className="h-8 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-white text-xs font-semibold shadow-2xs px-3"
             >
-              <FileUp className="mr-1.5 h-3.5 w-3.5" />
-              Upload Resumes
+              <FileUp className="mr-1 h-3.5 w-3.5" />
+              Add Candidates
             </Button>
           )}
         </div>
       </div>
 
-      {/* KPI Stats Strip */}
+      {/* Sleek KPI Stats Strip */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <div className="rounded-lg border border-[#E4E7EC] bg-white p-3.5">
-          <p className="text-xs font-medium text-[#667085]">Total Candidates</p>
-          <p className="mt-1 text-2xl font-semibold text-[#171717] tabular-nums">{job.total_candidates}</p>
+        <div className="rounded-xl border border-zinc-200/80 bg-white p-3.5 shadow-2xs">
+          <span className="text-[11px] font-bold uppercase tracking-wider text-zinc-500">Total Candidates</span>
+          <p className="mt-1 text-xl sm:text-2xl font-bold text-zinc-900 font-mono">{job.total_candidates}</p>
         </div>
-        <div className="rounded-lg border border-[#E4E7EC] bg-white p-3.5">
-          <p className="text-xs font-medium text-[#667085]">Shortlisted</p>
-          <p className="mt-1 text-2xl font-semibold text-[#171717] tabular-nums">{pipeline.SHORTLISTED ?? 0}</p>
+        <div className="rounded-xl border border-zinc-200/80 bg-white p-3.5 shadow-2xs">
+          <span className="text-[11px] font-bold uppercase tracking-wider text-zinc-500">Shortlisted</span>
+          <p className="mt-1 text-xl sm:text-2xl font-bold text-zinc-900 font-mono">{pipeline.SHORTLISTED ?? 0}</p>
         </div>
-        <div className="rounded-lg border border-[#E4E7EC] bg-white p-3.5">
-          <p className="text-xs font-medium text-[#667085]">Interview</p>
-          <p className="mt-1 text-2xl font-semibold text-[#171717] tabular-nums">{pipeline.INTERVIEW ?? 0}</p>
+        <div className="rounded-xl border border-zinc-200/80 bg-white p-3.5 shadow-2xs">
+          <span className="text-[11px] font-bold uppercase tracking-wider text-zinc-500">In Interview</span>
+          <p className="mt-1 text-xl sm:text-2xl font-bold text-zinc-900 font-mono">{pipeline.INTERVIEW ?? 0}</p>
         </div>
-        <div className="rounded-lg border border-[#E4E7EC] bg-white p-3.5">
-          <p className="text-xs font-medium text-[#667085]">Offer / Hired</p>
-          <p className="mt-1 text-2xl font-semibold text-[#171717] tabular-nums">{(pipeline.OFFER ?? 0) + (pipeline.HIRED ?? 0)}</p>
+        <div className="rounded-xl border border-zinc-200/80 bg-white p-3.5 shadow-2xs">
+          <span className="text-[11px] font-bold uppercase tracking-wider text-zinc-500">Offers & Hired</span>
+          <p className="mt-1 text-xl sm:text-2xl font-bold text-emerald-700 font-mono">{(pipeline.OFFER ?? 0) + (pipeline.HIRED ?? 0)}</p>
         </div>
       </div>
 
       {/* Live Agentic Execution Tracker */}
-      <AgenticPipelineTracker
-        active={isPipelineActive}
-        counts={progress?.status.counts}
-        total={progress?.status.total ?? job.total_candidates}
-      />
+      {isPipelineActive && (
+        <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-3.5 flex items-center justify-between text-xs">
+          <div className="flex items-center gap-2">
+            <span className="flex h-2 w-2 rounded-full bg-blue-600 animate-pulse" />
+            <span className="font-semibold text-zinc-800">Processing Resumes</span>
+          </div>
+          <span className="font-mono text-zinc-600">
+            {progress?.status.counts.parsed || 0} of {progress?.status.total || job.total_candidates} evaluated
+          </span>
+        </div>
+      )}
 
-      {/* Factual Agent Activity Log */}
-      <JobAgentActivity candidates={candidatesList} />
+      {/* Single Consolidated Search & Stage Toolbar */}
+      <div className="space-y-2.5">
+        {/* Stage Filter Pills in Table Mode */}
+        {viewMode === "table" && (
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar">
+            {ALL_STAGES_FILTER.map((st) => {
+              const count = st.key === "ALL" ? job.total_candidates : (pipeline[st.key] ?? 0);
+              const active = activeStageTab === st.key;
+              const isDropTarget = st.key !== "ALL" && dragOverStage === st.key;
 
-      {/* Stage Drop Target Bar (Visible when dragging or filtering) */}
-      <div className="flex items-center gap-1 overflow-x-auto pb-1 no-scrollbar border-b border-[#E4E7EC]">
-        {ALL_STAGES_FILTER.map((st) => {
-          const count = st.key === "ALL" ? job.total_candidates : (pipeline[st.key] ?? 0);
-          const active = activeStageTab === st.key;
-          const isDropTarget = st.key !== "ALL" && dragOverStage === st.key;
-
-          return (
-            <div
-              key={st.key}
-              onDragOver={(e) => {
-                if (st.key !== "ALL") {
-                  e.preventDefault();
-                  setDragOverStage(st.key as Stage);
-                }
-              }}
-              onDragLeave={() => {
-                if (dragOverStage === st.key) setDragOverStage(null);
-              }}
-              onDrop={(e) => {
-                e.preventDefault();
-                if (st.key !== "ALL") handleDropOnStage(st.key as Stage);
-              }}
-              className="relative"
-            >
-              <button
-                type="button"
-                onClick={() => setActiveStageTab(st.key)}
-                className={cn(
-                  "inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 -mb-px transition-all whitespace-nowrap",
-                  isDropTarget
-                    ? "border-[#171717] bg-[#F2F4F7] text-[#171717] font-semibold scale-105"
-                    : active
-                    ? "border-[#171717] text-[#171717] font-semibold"
-                    : "border-transparent text-[#667085] hover:text-[#171717] hover:border-[#E4E7EC]"
-                )}
-              >
-                <span>{st.label}</span>
-                <span
+              return (
+                <button
+                  key={st.key}
+                  type="button"
+                  onDragOver={(e) => {
+                    if (st.key !== "ALL") {
+                      e.preventDefault();
+                      setDragOverStage(st.key as Stage);
+                    }
+                  }}
+                  onDragLeave={() => {
+                    if (dragOverStage === st.key) setDragOverStage(null);
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    if (st.key !== "ALL") handleDropOnStage(st.key as Stage);
+                  }}
+                  onClick={() => setActiveStageTab(st.key)}
                   className={cn(
-                    "rounded px-1.5 py-0.2 text-[10px] font-medium tabular-nums transition-colors",
+                    "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap",
                     isDropTarget
-                      ? "bg-[#171717] text-white"
+                      ? "bg-blue-100 text-blue-900 ring-2 ring-blue-500"
                       : active
-                      ? "bg-[#171717] text-white"
-                      : count > 0
-                      ? "bg-[#F2F4F7] text-[#667085]"
-                      : "bg-transparent text-[#98A2B3]"
+                      ? "bg-zinc-900 text-white shadow-xs"
+                      : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900"
                   )}
                 >
-                  {count}
-                </span>
+                  <span>{st.label}</span>
+                  <span
+                    className={cn(
+                      "rounded-full px-1.5 py-0.2 text-[10px] font-bold tabular-nums",
+                      active
+                        ? "bg-zinc-800 text-white"
+                        : count > 0
+                        ? "bg-zinc-200 text-zinc-700"
+                        : "bg-transparent text-zinc-400"
+                    )}
+                  >
+                    {count}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Search & Score Controls */}
+        <div className="flex flex-col gap-2 rounded-xl border border-zinc-200/80 bg-white p-2 sm:flex-row sm:items-center sm:justify-between shadow-2xs">
+          <div className="relative flex-1">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search candidates by name, email, or role..."
+              className="w-full rounded-lg border border-zinc-200/80 bg-zinc-50/60 py-1.5 pl-8 pr-7 text-xs text-zinc-900 placeholder:text-zinc-400 focus:outline-none focus:bg-white"
+            />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery("")}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-700"
+              >
+                <X className="h-3.5 w-3.5" />
               </button>
-            </div>
-          );
-        })}
-      </div>
+            )}
+          </div>
 
-      {/* Search & Score Filters Bar */}
-      <div className="flex flex-col gap-2.5 rounded-lg border border-[#E4E7EC] bg-white p-2.5 sm:flex-row sm:items-center sm:justify-between">
-        {/* Search Input */}
-        <div className="relative flex-1">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#98A2B3]" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search candidates by name, email, or current role..."
-            className="w-full rounded-md border border-[#E4E7EC] bg-[#F7F8FA] py-1.5 pl-8 pr-7 text-xs font-normal text-[#171717] placeholder:text-[#98A2B3] focus:border-[#171717] focus:bg-white focus:outline-none"
-          />
-          {searchQuery && (
-            <button
-              onClick={() => setSearchQuery("")}
-              className="absolute right-2 top-1/2 -translate-y-1/2 text-[#98A2B3] hover:text-[#171717]"
+          <div className="flex items-center gap-2">
+            <select
+              value={minScoreFilter}
+              onChange={(e) => setMinScoreFilter(Number(e.target.value))}
+              className="h-8 rounded-lg border border-zinc-200/80 bg-zinc-50 px-2.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-100 focus:outline-none"
             >
-              <X className="h-3.5 w-3.5" />
-            </button>
-          )}
-        </div>
+              <option value={0}>All Match Scores</option>
+              <option value={80}>≥ 80% Match</option>
+              <option value={70}>≥ 70% Match</option>
+              <option value={50}>≥ 50% Match</option>
+            </select>
 
-        {/* Filter & Sort Controls */}
-        <div className="flex flex-wrap items-center gap-2 border-t border-[#E4E7EC] pt-2 sm:border-t-0 sm:pt-0">
-          <select
-            value={minScoreFilter}
-            onChange={(e) => setMinScoreFilter(Number(e.target.value))}
-            className="h-8 rounded-md border border-[#E4E7EC] bg-[#F7F8FA] px-2.5 text-xs font-medium text-[#171717] hover:bg-[#F2F4F7] focus:outline-none"
-          >
-            <option value={0}>All Match Scores</option>
-            <option value={80}>≥ 80% Match</option>
-            <option value={70}>≥ 70% Match</option>
-            <option value={50}>≥ 50% Match</option>
-          </select>
-
-          <select
-            value={sortBy}
-            onChange={(e) => setSortBy(e.target.value as any)}
-            className="h-8 rounded-md border border-[#E4E7EC] bg-[#F7F8FA] px-2.5 text-xs font-medium text-[#171717] hover:bg-[#F2F4F7] focus:outline-none"
-          >
-            <option value="match_desc">Sort: Semantic Fit</option>
-            <option value="ats_desc">Sort: Hard Requirements</option>
-            <option value="name">Sort: Candidate Name</option>
-          </select>
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value as any)}
+              className="h-8 rounded-lg border border-zinc-200/80 bg-zinc-50 px-2.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-100 focus:outline-none"
+            >
+              <option value="match_desc">Sort: Match Score</option>
+              <option value="ats_desc">Sort: ATS Score</option>
+              <option value="name">Sort: Name</option>
+            </select>
+          </div>
         </div>
       </div>
 
       {bulkError && <ErrorBanner message={bulkError} />}
 
-      {/* VIEW 1: TABLE VIEW WITH ROW DRAG & DROP */}
+      {/* VIEW 1: TABLE VIEW */}
       {viewMode === "table" && (
-        <section className="overflow-hidden rounded-lg border border-[#E4E7EC] bg-white">
-          <div className="flex items-center justify-between border-b border-[#E4E7EC] bg-[#F7F8FA] px-4 py-2.5">
-            <div className="flex items-center gap-2.5">
-              <h2 className="text-xs font-semibold uppercase tracking-wider text-[#667085]">
-                Candidate Roster ({filteredCandidates.length})
-              </h2>
-              {draggedApp && (
-                <span className="text-xs text-[#2E90FA] font-medium">
-                  Drop candidate on any stage tab above to move
-                </span>
-              )}
-            </div>
-          </div>
-
+        <section className="overflow-hidden rounded-xl border border-zinc-200/80 bg-white shadow-2xs">
           {filteredCandidates.length === 0 ? (
             <div className="p-12 text-center">
-              <EmptyStateGeometricSvg className="mx-auto h-10 w-10 text-[#98A2B3]" />
-              <h3 className="mt-2 text-sm font-semibold text-[#171717]">No candidates found</h3>
-              <p className="mx-auto mt-1 max-w-sm text-xs text-[#667085]">
+              <Users className="mx-auto h-8 w-8 text-zinc-300" />
+              <h3 className="mt-2 text-sm font-bold text-zinc-800">No Candidates Found</h3>
+              <p className="mx-auto mt-1 max-w-sm text-xs text-zinc-500">
                 {candidatesList.length === 0
-                  ? "No resumes have been uploaded for this role. Click 'Upload Resumes' to ingest candidate documents."
-                  : "No candidates match the active search and filter criteria."}
+                  ? "No resumes have been uploaded for this position. Click 'Add Candidates' to upload resumes."
+                  : "No candidates match the active search or filters."}
               </p>
               {candidatesList.length === 0 && can("upload") && (
                 <Button
                   size="sm"
                   onClick={() => setUploadOpen(true)}
-                  className="mt-3 h-8 rounded-md bg-[#171717] text-xs font-medium text-white hover:bg-[#262626]"
+                  className="mt-4 h-8 rounded-lg bg-zinc-900 text-xs font-semibold text-white"
                 >
                   <FileUp className="mr-1.5 h-3.5 w-3.5" />
-                  Upload Resumes
+                  Add Candidates
                 </Button>
               )}
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[800px] text-left text-xs">
-                <thead className="bg-[#F7F8FA] text-[11px] font-medium uppercase tracking-wider text-[#667085] border-b border-[#E4E7EC]">
+              <table className="w-full min-w-[700px] text-left text-xs">
+                <thead className="bg-zinc-50/70 text-[10px] font-bold uppercase tracking-wider text-zinc-500 border-b border-zinc-100">
                   <tr>
-                    <th className="w-8 px-2 py-2.5 text-center text-[#98A2B3]">
+                    <th className="w-8 px-3 py-3 text-center text-zinc-400">
                       <span className="sr-only">Drag</span>
                     </th>
-                    <th className="w-10 px-3 py-2.5">
+                    <th className="w-10 px-3 py-3">
                       <button
                         type="button"
                         onClick={toggleSelectAll}
-                        className="flex items-center text-[#98A2B3] hover:text-[#171717] focus:outline-none"
+                        className="flex items-center text-zinc-400 hover:text-zinc-800 focus:outline-none"
                       >
-                        {allSelected ? <CheckSquare className="h-4 w-4 text-[#171717]" /> : <Square className="h-4 w-4" />}
+                        {allSelected ? <CheckSquare className="h-4 w-4 text-zinc-900" /> : <Square className="h-4 w-4" />}
                       </button>
                     </th>
-                    <th className="px-3 py-2.5 font-medium">Candidate</th>
-                    <th className="px-3 py-2.5 font-medium">Experience</th>
-                    <th className="px-3 py-2.5 font-medium">Qualifications</th>
-                    <th className="px-3 py-2.5 font-medium">Role Fit</th>
-                    <th className="px-3 py-2.5 font-medium">Stage</th>
-                    <th className="px-3 py-2.5 text-right font-medium">Action</th>
+                    <th className="px-4 py-3">Candidate</th>
+                    <th className="px-4 py-3">Experience</th>
+                    <th className="px-4 py-3">ATS Score</th>
+                    <th className="px-4 py-3">Match Score</th>
+                    <th className="px-4 py-3">Stage</th>
+                    <th className="px-5 py-3 text-right">Action</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-[#E4E7EC]">
+                <tbody className="divide-y divide-zinc-100">
                   {filteredCandidates.map((app) => {
                     const isSelected = selectedIds.has(app.id);
                     const isBeingDragged = draggedApp?.id === app.id;
                     const matchVal = app.scores.match_score.value;
+                    const atsVal = app.scores.ats_score.value;
                     const expYears = app.candidate.experience_years;
                     const name = app.candidate.name || "Candidate";
                     const initials = name
@@ -662,32 +636,34 @@ export default function JobWorkspacePage() {
                         onClick={() => router.push(`/recruitment/jobs/${jobId}/candidates/${app.id}`)}
                         className={cn(
                           "group cursor-pointer transition-colors duration-150",
-                          isBeingDragged ? "opacity-40 bg-[#F2F4F7]" : isSelected ? "bg-[#F2F4F7]" : "hover:bg-[#F7F8FA]"
+                          isBeingDragged ? "opacity-40 bg-zinc-100" : isSelected ? "bg-zinc-50" : "hover:bg-zinc-50/70"
                         )}
                       >
                         {/* Drag Handle */}
-                        <td className="w-8 px-2 py-3.5 text-center text-[#98A2B3] group-hover:text-[#171717] cursor-grab">
+                        <td className="w-8 px-3 py-3.5 text-center text-zinc-300 group-hover:text-zinc-600 cursor-grab">
                           <GripVertical className="h-3.5 w-3.5 mx-auto" />
                         </td>
 
                         {/* Checkbox */}
-                        <td className="w-10 px-3 py-3.5" onClick={(e) => toggleSelectOne(app.id, e)}>
-                          <button type="button" className="flex items-center text-[#98A2B3] hover:text-[#171717] focus:outline-none">
-                            {isSelected ? <CheckSquare className="h-4 w-4 text-[#171717]" /> : <Square className="h-4 w-4" />}
+                        <td className="w-10 px-3 py-3.5">
+                          <button
+                            type="button"
+                            onClick={(e) => toggleSelect(app.id, e)}
+                            className="flex items-center text-zinc-400 hover:text-zinc-800"
+                          >
+                            {isSelected ? <CheckSquare className="h-4 w-4 text-zinc-900" /> : <Square className="h-4 w-4" />}
                           </button>
                         </td>
 
-                        {/* Candidate Name & Avatar */}
-                        <td className="px-3 py-3.5">
-                          <div className="flex items-center gap-2.5 min-w-0">
-                            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#171717] text-white font-semibold text-[10px]">
+                        {/* Candidate Name & Role */}
+                        <td className="px-4 py-3.5">
+                          <div className="flex items-center gap-2.5">
+                            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-zinc-900 text-white font-bold text-[10px]">
                               {initials}
                             </div>
                             <div className="min-w-0">
-                              <p className="font-semibold text-xs text-[#171717] group-hover:text-[#2563EB] transition-colors truncate">
-                                {name}
-                              </p>
-                              <p className="truncate text-[11px] text-[#667085] font-normal">
+                              <p className="font-bold text-xs text-zinc-900 truncate">{name}</p>
+                              <p className="text-[11px] text-zinc-500 truncate font-medium">
                                 {app.candidate.current_role || app.candidate.email || "Applicant"}
                               </p>
                             </div>
@@ -695,47 +671,39 @@ export default function JobWorkspacePage() {
                         </td>
 
                         {/* Experience */}
-                        <td className="px-3 py-3.5 text-xs text-[#667085]">
-                          {expYears !== null && expYears !== undefined ? (
-                            <span className="font-medium text-[#171717]">{expYears} yrs</span>
-                          ) : (
-                            <span className="text-[#98A2B3]">—</span>
-                          )}
+                        <td className="px-4 py-3.5 text-xs text-zinc-600 font-medium">
+                          {expYears !== null && expYears !== undefined ? `${expYears}y exp` : "—"}
                         </td>
 
-                        {/* Qualifications / Hard Requirements */}
-                        <td className="px-3 py-3.5">
-                          <ScoreCell score={app.scores.ats_score} />
+                        {/* ATS Score */}
+                        <td className="px-4 py-3.5 font-mono text-xs font-semibold text-zinc-700">
+                          {atsVal !== null ? `${atsVal}%` : "—"}
                         </td>
 
-                        {/* Semantic Role Fit */}
-                        <td className="px-3 py-3.5">
+                        {/* Match Fit Score */}
+                        <td className="px-4 py-3.5">
                           {matchVal !== null ? (
                             <span className={cn(
-                              "inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs font-semibold tabular-nums border",
-                              matchVal >= 80
-                                ? "bg-[#ECFDF3] text-[#12B76A] border-[#A6F4C5]"
-                                : matchVal >= 65
-                                ? "bg-[#F7F8FA] text-[#171717] border-[#E4E7EC]"
-                                : "bg-[#FFFAEB] text-[#B54708] border-[#FEDF89]"
+                              "font-bold font-mono text-xs px-2 py-0.5 rounded-full border",
+                              matchVal >= 80 ? "bg-emerald-50 text-emerald-700 border-emerald-200" : matchVal >= 60 ? "bg-blue-50 text-blue-700 border-blue-200" : "bg-amber-50 text-amber-700 border-amber-200"
                             )}>
-                              {matchVal >= 85 ? "Strong Fit" : matchVal >= 70 ? "Good Fit" : "Moderate"} · {matchVal}%
+                              {matchVal}%
                             </span>
                           ) : (
-                            <span className="text-xs text-[#98A2B3]">—</span>
+                            <span className="text-xs text-zinc-400 font-mono">—</span>
                           )}
                         </td>
 
                         {/* Stage */}
-                        <td className="px-3 py-3.5">
+                        <td className="px-4 py-3.5">
                           <StageBadge stage={app.stage} />
                         </td>
 
                         {/* Action */}
-                        <td className="px-3 py-3.5 text-right">
-                          <span className="inline-flex items-center gap-1 text-xs font-medium text-[#171717] bg-white border border-[#E4E7EC] hover:bg-[#F2F4F7] px-2 py-0.5 rounded transition-colors">
+                        <td className="px-5 py-3.5 text-right">
+                          <span className="inline-flex items-center gap-1 text-xs font-semibold text-zinc-700 hover:text-zinc-900">
                             Profile
-                            <ChevronRight className="h-3 w-3 text-[#667085]" />
+                            <ChevronRight className="h-3 w-3" />
                           </span>
                         </td>
                       </tr>
@@ -750,7 +718,7 @@ export default function JobWorkspacePage() {
 
       {/* VIEW 2: INTERACTIVE PIPELINE KANBAN BOARD */}
       {viewMode === "board" && (
-        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-7 gap-3 overflow-x-auto pb-4">
+        <div className="flex gap-3 overflow-x-auto pb-6 scrollbar-thin">
           {BOARD_STAGES.map((stage) => {
             const list = candidatesByStage[stage] || [];
             const isTarget = dragOverStage === stage;
@@ -770,18 +738,18 @@ export default function JobWorkspacePage() {
                   handleDropOnStage(stage);
                 }}
                 className={cn(
-                  "flex flex-col rounded-lg border bg-[#F7F8FA] p-2.5 min-w-[200px] transition-all min-h-[420px]",
+                  "flex flex-col rounded-xl border bg-zinc-50/70 p-3 w-72 shrink-0 min-h-[480px] shadow-2xs transition-all",
                   isTarget
-                    ? "border-[#171717] bg-[#F2F4F7] ring-1 ring-[#171717]"
-                    : "border-[#E4E7EC]"
+                    ? "border-zinc-900 bg-zinc-100 ring-2 ring-zinc-900/20"
+                    : "border-zinc-200/80"
                 )}
               >
                 {/* Stage Header */}
-                <div className="flex items-center justify-between pb-2 border-b border-[#E4E7EC] mb-2 px-1">
-                  <span className="text-[11px] font-semibold text-[#171717] uppercase tracking-wider">
+                <div className="flex items-center justify-between pb-2.5 border-b border-zinc-200/70 mb-2.5 px-0.5">
+                  <span className="text-xs font-bold text-zinc-800 uppercase tracking-wider">
                     {STAGE_LABEL[stage] || stage}
                   </span>
-                  <span className="rounded bg-white border border-[#E4E7EC] px-1.5 py-0.2 text-[10px] font-semibold text-[#667085] tabular-nums">
+                  <span className="rounded-full bg-white border border-zinc-200 px-2 py-0.2 text-[10px] font-bold text-zinc-600 font-mono">
                     {list.length}
                   </span>
                 </div>
@@ -807,36 +775,36 @@ export default function JobWorkspacePage() {
                         onDragEnd={() => setDraggedApp(null)}
                         onClick={() => router.push(`/recruitment/jobs/${jobId}/candidates/${app.id}`)}
                         className={cn(
-                          "rounded-md border bg-white p-2.5 shadow-2xs cursor-grab active:cursor-grabbing transition-all hover:border-[#D0D5DD]",
-                          isBeingDragged ? "opacity-30 border-dashed border-[#171717]" : "border-[#E4E7EC]"
+                          "rounded-lg border bg-white p-3 shadow-2xs cursor-grab active:cursor-grabbing transition-all hover:border-zinc-400",
+                          isBeingDragged ? "opacity-30 border-dashed border-zinc-500" : "border-zinc-200/80"
                         )}
                       >
                         <div className="flex items-center justify-between gap-1.5">
-                          <div className="flex items-center gap-1.5 min-w-0">
-                            <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#171717] text-white font-semibold text-[9px]">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-zinc-900 text-white font-bold text-[10px]">
                               {initials}
                             </div>
-                            <p className="text-xs font-semibold text-[#171717] truncate">
+                            <p className="text-xs font-bold text-zinc-900 truncate">
                               {name}
                             </p>
                           </div>
-                          <GripVertical className="h-3 w-3 text-[#98A2B3] shrink-0" />
+                          <GripVertical className="h-3 w-3 text-zinc-300 shrink-0" />
                         </div>
 
-                        <p className="text-[10px] text-[#667085] truncate mt-1">
+                        <p className="text-[11px] text-zinc-500 truncate mt-1 font-medium">
                           {app.candidate.current_role || "Applicant"}
                         </p>
 
-                        <div className="mt-2 flex items-center justify-between border-t border-[#E4E7EC] pt-1.5 text-[10px]">
-                          <span className="text-[#667085]">
+                        <div className="mt-2 flex items-center justify-between border-t border-zinc-100 pt-1.5 text-[10px]">
+                          <span className="text-zinc-500 font-medium">
                             {app.candidate.experience_years !== null ? `${app.candidate.experience_years}y exp` : "—"}
                           </span>
                           {matchVal !== null && (
                             <span className={cn(
-                              "font-semibold tabular-nums px-1.5 py-0.2 rounded",
-                              matchVal >= 80 ? "bg-[#ECFDF3] text-[#12B76A]" : "bg-[#F2F4F7] text-[#171717]"
+                              "font-bold font-mono px-1.5 py-0.2 rounded-full border",
+                              matchVal >= 80 ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-blue-50 text-blue-700 border-blue-200"
                             )}>
-                              {matchVal}% Fit
+                              {matchVal}%
                             </span>
                           )}
                         </div>
@@ -845,8 +813,8 @@ export default function JobWorkspacePage() {
                   })}
 
                   {list.length === 0 && (
-                    <div className="flex h-24 items-center justify-center rounded border border-dashed border-[#E4E7EC] text-[11px] text-[#98A2B3]">
-                      Drop candidate here
+                    <div className="flex h-24 items-center justify-center rounded-lg border border-dashed border-zinc-200 text-xs text-zinc-400 font-medium">
+                      No candidates
                     </div>
                   )}
                 </div>
@@ -858,16 +826,16 @@ export default function JobWorkspacePage() {
 
       {/* Floating Bulk Action Dock */}
       {selectedIds.size > 0 && (
-        <div className="fixed bottom-5 inset-x-0 z-40 mx-auto max-w-md px-4">
-          <div className="flex items-center justify-between gap-3 rounded-lg border border-[#171717] bg-[#171717] px-4 py-2.5 text-white shadow-lg">
+        <div className="fixed bottom-6 inset-x-0 z-40 mx-auto max-w-md px-4">
+          <div className="flex items-center justify-between gap-3 rounded-xl border border-zinc-700 bg-zinc-900 px-4 py-2.5 text-white shadow-xl">
             <div className="flex items-center gap-2.5">
-              <span className="text-xs font-medium text-[#F2F4F7]">
+              <span className="text-xs font-bold text-white">
                 {selectedIds.size} selected
               </span>
               <button
                 type="button"
                 onClick={() => setSelectedIds(new Set())}
-                className="text-xs text-[#98A2B3] hover:text-white transition-colors"
+                className="text-xs text-zinc-400 hover:text-white transition-colors"
               >
                 Clear
               </button>
@@ -881,7 +849,7 @@ export default function JobWorkspacePage() {
                   const stage = e.target.value as Stage;
                   if (stage) handleBulkStage(stage);
                 }}
-                className="h-7 rounded-md border border-[#262626] bg-[#262626] px-2 text-xs font-medium text-white hover:bg-[#333333] focus:outline-none"
+                className="h-8 rounded-lg border border-zinc-700 bg-zinc-800 px-2 text-xs font-semibold text-white focus:outline-none"
               >
                 <option value="" disabled>Move to stage…</option>
                 <option value="SHORTLISTED">Shortlist</option>
@@ -896,7 +864,7 @@ export default function JobWorkspacePage() {
                 size="sm"
                 disabled={bulkLoading}
                 onClick={handleBulkAnalyze}
-                className="h-7 rounded-md border-[#262626] bg-[#262626] text-xs font-medium text-white hover:bg-[#333333]"
+                className="h-8 rounded-lg border-zinc-700 bg-zinc-800 text-xs font-semibold text-white hover:bg-zinc-700"
               >
                 {bulkLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : "Re-evaluate"}
               </Button>
@@ -908,30 +876,26 @@ export default function JobWorkspacePage() {
       {/* Confirmation Dialog for Destructive Rejection Drag */}
       {pendingRejectApp && (
         <Dialog open={Boolean(pendingRejectApp)} onOpenChange={(open) => !open && setPendingRejectApp(null)}>
-          <DialogContent className="sm:max-w-md rounded-lg border-[#E4E7EC] bg-white p-5 shadow-lg">
+          <DialogContent className="sm:max-w-md rounded-xl border-zinc-200 bg-white p-5 shadow-xl">
             <DialogHeader>
-              <DialogTitle className="text-base font-semibold text-[#171717]">Confirm Candidate Rejection</DialogTitle>
-              <DialogDescription className="text-xs text-[#667085]">
-                Are you sure you want to move <strong className="text-[#171717]">{pendingRejectApp.candidate.name}</strong> to the Rejected stage?
+              <DialogTitle className="text-base font-bold text-zinc-900">Confirm Rejection</DialogTitle>
+              <DialogDescription className="text-xs text-zinc-600 mt-1">
+                Move <strong className="text-zinc-900">{pendingRejectApp.candidate.name}</strong> to the Rejected stage?
               </DialogDescription>
             </DialogHeader>
-            <DialogFooter className="pt-2 border-t border-[#E4E7EC] flex items-center justify-end gap-2">
+            <DialogFooter className="pt-3 border-t border-zinc-100 flex items-center justify-end gap-2">
               <Button
                 variant="outline"
                 size="sm"
                 onClick={() => setPendingRejectApp(null)}
-                className="h-8 rounded-md border-[#E4E7EC] text-xs font-medium text-[#667085] hover:bg-[#F2F4F7]"
+                className="h-8 rounded-lg border-zinc-200 text-xs font-semibold text-zinc-700 hover:bg-zinc-100"
               >
                 Cancel
               </Button>
               <Button
                 size="sm"
-                onClick={() => {
-                  const id = pendingRejectApp.id;
-                  setPendingRejectApp(null);
-                  executeStageMove(id, "REJECTED");
-                }}
-                className="h-8 rounded-md bg-[#F04438] text-xs font-medium text-white hover:bg-[#D92D20]"
+                onClick={confirmRejection}
+                className="h-8 rounded-lg bg-rose-600 hover:bg-rose-700 text-xs font-semibold text-white"
               >
                 Confirm Reject
               </Button>
@@ -960,6 +924,51 @@ export default function JobWorkspacePage() {
           }}
           onStartNew={() => setBatchId(null)}
         />
+      )}
+
+      {/* Edit Position Dialog */}
+      <JobFormDialog
+        open={editDialogOpen}
+        job={job}
+        onOpenChange={setEditDialogOpen}
+        onSaved={() => {
+          setEditDialogOpen(false);
+          reload();
+        }}
+      />
+
+      {/* Delete Position Confirmation Dialog */}
+      {deleteConfirmOpen && (
+        <Dialog open={deleteConfirmOpen} onOpenChange={(open) => !open && !deleting && setDeleteConfirmOpen(false)}>
+          <DialogContent className="sm:max-w-md rounded-xl border-zinc-200 bg-white p-5 shadow-lg">
+            <DialogHeader>
+              <DialogTitle className="text-base font-bold text-zinc-900">Remove Position</DialogTitle>
+              <DialogDescription className="text-xs text-zinc-600 mt-1">
+                Are you sure you want to remove <strong className="text-zinc-900">{job.title}</strong>? This will permanently delete this role and its associated applications.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter className="pt-3 border-t border-zinc-100 flex items-center justify-end gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={deleting}
+                onClick={() => setDeleteConfirmOpen(false)}
+                className="h-8 rounded-lg border-zinc-200 text-xs font-semibold text-zinc-600 hover:bg-zinc-100"
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                disabled={deleting}
+                onClick={handleConfirmDelete}
+                className="h-8 rounded-lg bg-rose-600 hover:bg-rose-700 text-xs font-semibold text-white"
+              >
+                {deleting && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
+                Remove Position
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       )}
     </div>
   );

@@ -5,7 +5,8 @@ import Link from "next/link";
 import {
   AlertTriangle, ArrowRight, CheckCircle2,
   Clock, Filter, RefreshCw, ShieldAlert,
-  Briefcase, CheckSquare, Square, X
+  Briefcase, CheckSquare, Square, X,
+  User, Check, ChevronRight, Sparkles, HelpCircle
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ErrorBanner } from "@/components/ui/error-banner";
@@ -83,12 +84,23 @@ export default function RecruitmentInboxPage() {
     });
   };
 
+  const handleSingleAction = async (appId: string, stage: Stage, e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      await bulkSetStage([appId], stage);
+      toast("success", `Candidate moved to ${stage}`);
+      setRefresh((n) => n + 1);
+    } catch (err) {
+      toast("error", `Action failed: ${err instanceof Error ? err.message : "Unknown error"}`);
+    }
+  };
+
   const handleBulkAction = async (stage: Stage) => {
     if (selectedIds.size === 0) return;
     setBulkLoading(true);
     try {
       await bulkSetStage(Array.from(selectedIds), stage);
-      toast("success", `Updated ${selectedIds.size} candidates to ${stage}`);
+      toast("success", `Updated ${selectedIds.size} candidate(s) to ${stage}`);
       setSelectedIds(new Set());
       setRefresh((n) => n + 1);
     } catch (err) {
@@ -99,15 +111,15 @@ export default function RecruitmentInboxPage() {
   };
 
   return (
-    <div className="space-y-6">
-      {/* Enterprise Header */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b border-[#E4E7EC] pb-5">
+    <div className="space-y-6 pb-12">
+      {/* Friendly Non-Tech Header */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b border-zinc-200/80 pb-5">
         <div>
-          <h1 className="text-xl sm:text-2xl font-semibold tracking-tight text-[#171717]">
+          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-zinc-900">
             Review Inbox
           </h1>
-          <p className="mt-0.5 text-xs sm:text-sm text-[#667085]">
-            {data ? `${data.total_count} candidates require recruiter review or verification` : "Triage queue"}
+          <p className="mt-1 text-xs sm:text-sm text-zinc-500">
+            {data ? `${data.total_count} candidate applications waiting for your hiring decision.` : "Loading candidate queue..."}
           </p>
         </div>
 
@@ -117,100 +129,105 @@ export default function RecruitmentInboxPage() {
             size="sm"
             onClick={() => setRefresh((n) => n + 1)}
             disabled={loading}
-            className="h-8 rounded-md border-[#E4E7EC] text-xs font-medium text-[#667085] hover:bg-[#F2F4F7]"
+            className="h-8 rounded-lg border-zinc-200 text-xs font-semibold text-zinc-700 hover:bg-zinc-100 shadow-2xs cursor-pointer"
           >
-            <RefreshCw className={cn("h-3.5 w-3.5 mr-1.5 text-[#98A2B3]", loading && "animate-spin")} />
+            <RefreshCw className={cn("h-3.5 w-3.5 mr-1.5 text-zinc-400", loading && "animate-spin")} />
             Sync Queue
           </Button>
         </div>
       </div>
 
-      {/* Triage Summary Metrics */}
+      {/* Triage Summary Cards in Plain English */}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <div
           onClick={() => setActiveFilter("all")}
           className={cn(
-            "rounded-lg border p-4 transition-colors cursor-pointer bg-white",
+            "rounded-xl border p-4 transition-all cursor-pointer bg-white shadow-2xs space-y-1",
             activeFilter === "all"
-              ? "border-[#171717]"
-              : "border-[#E4E7EC] hover:border-[#D0D5DD]"
+              ? "border-zinc-900 ring-1 ring-zinc-900/10"
+              : "border-zinc-200/80 hover:border-zinc-300"
           )}
         >
-          <span className="text-xs font-medium text-[#667085]">Total Queue</span>
-          <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-2xl font-semibold tracking-tight text-[#171717] tabular-nums">
+          <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider">All Decisions</span>
+          <div className="flex items-baseline gap-2 pt-1">
+            <span className="text-2xl sm:text-3xl font-bold font-mono text-zinc-900">
               {data ? data.total_count : "—"}
             </span>
           </div>
-          <p className="mt-1 text-[11px] text-[#98A2B3]">All pending review items</p>
-        </div>
-
-        <div
-          onClick={() => setActiveFilter("urgent")}
-          className={cn(
-            "rounded-lg border p-4 transition-colors cursor-pointer bg-white",
-            activeFilter === "urgent"
-              ? "border-[#171717]"
-              : "border-[#E4E7EC] hover:border-[#D0D5DD]"
-          )}
-        >
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-[#667085]">Document Integrity</span>
-            {urgentCount > 0 && (
-              <span className="h-2 w-2 rounded-full bg-[#F04438]" />
-            )}
-          </div>
-          <div className="mt-2 flex items-baseline gap-2">
-            <span className={cn("text-2xl font-semibold tracking-tight tabular-nums", urgentCount > 0 ? "text-[#F04438]" : "text-[#171717]")}>
-              {data ? urgentCount : "—"}
-            </span>
-          </div>
-          <p className="mt-1 text-[11px] text-[#98A2B3]">Discrepancies detected</p>
+          <p className="text-[11px] text-zinc-500">Total waiting candidates</p>
         </div>
 
         <div
           onClick={() => setActiveFilter("high_match")}
           className={cn(
-            "rounded-lg border p-4 transition-colors cursor-pointer bg-white",
+            "rounded-xl border p-4 transition-all cursor-pointer bg-white shadow-2xs space-y-1",
             activeFilter === "high_match"
-              ? "border-[#171717]"
-              : "border-[#E4E7EC] hover:border-[#D0D5DD]"
+              ? "border-zinc-900 ring-1 ring-zinc-900/10"
+              : "border-zinc-200/80 hover:border-zinc-300"
           )}
         >
-          <span className="text-xs font-medium text-[#667085]">High Confidence</span>
-          <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-2xl font-semibold tracking-tight text-[#171717] tabular-nums">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider">Top Matches</span>
+            <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.2 rounded-full border border-emerald-200">
+              High Fit
+            </span>
+          </div>
+          <div className="flex items-baseline gap-2 pt-1">
+            <span className="text-2xl sm:text-3xl font-bold font-mono text-zinc-900">
               {data ? highMatchCount : "—"}
             </span>
           </div>
-          <p className="mt-1 text-[11px] text-[#98A2B3]">≥ 85% match for interview</p>
+          <p className="text-[11px] text-zinc-500">Ready for interview invite</p>
         </div>
 
         <div
           onClick={() => setActiveFilter("screening_ready")}
           className={cn(
-            "rounded-lg border p-4 transition-colors cursor-pointer bg-white",
+            "rounded-xl border p-4 transition-all cursor-pointer bg-white shadow-2xs space-y-1",
             activeFilter === "screening_ready"
-              ? "border-[#171717]"
-              : "border-[#E4E7EC] hover:border-[#D0D5DD]"
+              ? "border-zinc-900 ring-1 ring-zinc-900/10"
+              : "border-zinc-200/80 hover:border-zinc-300"
           )}
         >
-          <span className="text-xs font-medium text-[#667085]">Screening Pending</span>
-          <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-2xl font-semibold tracking-tight text-[#171717] tabular-nums">
+          <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider">Pre-Screen Ready</span>
+          <div className="flex items-baseline gap-2 pt-1">
+            <span className="text-2xl sm:text-3xl font-bold font-mono text-zinc-900">
               {data ? screeningCount : "—"}
             </span>
           </div>
-          <p className="mt-1 text-[11px] text-[#98A2B3]">Ready for pre-screen call</p>
+          <p className="text-[11px] text-zinc-500">Ready for voice/phone call</p>
+        </div>
+
+        <div
+          onClick={() => setActiveFilter("urgent")}
+          className={cn(
+            "rounded-xl border p-4 transition-all cursor-pointer bg-white shadow-2xs space-y-1",
+            activeFilter === "urgent"
+              ? "border-zinc-900 ring-1 ring-zinc-900/10"
+              : "border-zinc-200/80 hover:border-zinc-300"
+          )}
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider">Document Checks</span>
+            {urgentCount > 0 && (
+              <span className="h-2 w-2 rounded-full bg-rose-500" />
+            )}
+          </div>
+          <div className="flex items-baseline gap-2 pt-1">
+            <span className={cn("text-2xl sm:text-3xl font-bold font-mono", urgentCount > 0 ? "text-rose-600" : "text-zinc-900")}>
+              {data ? urgentCount : "—"}
+            </span>
+          </div>
+          <p className="text-[11px] text-zinc-500">Formatting / integrity notices</p>
         </div>
       </div>
 
-      {/* Filter Tabs Toolbar */}
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#E4E7EC] pb-2">
-        <div className="flex flex-wrap items-center gap-1">
-          {(["all", "urgent", "high_match", "screening_ready"] as const).map((filter) => {
-            const label = filter === "all" ? "All" : filter === "urgent" ? "Integrity Alerts" : filter === "high_match" ? "High Fit" : "Screening";
-            const count = filter === "all" ? (data?.total_count || 0) : filter === "urgent" ? urgentCount : filter === "high_match" ? highMatchCount : screeningCount;
+      {/* Filter Tabs */}
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-200/80 pb-3">
+        <div className="flex flex-wrap items-center gap-1.5">
+          {(["all", "high_match", "screening_ready", "urgent"] as const).map((filter) => {
+            const label = filter === "all" ? "All" : filter === "high_match" ? "Top Matches" : filter === "screening_ready" ? "Pre-Screen" : "Document Warnings";
+            const count = filter === "all" ? (data?.total_count || 0) : filter === "high_match" ? highMatchCount : filter === "screening_ready" ? screeningCount : urgentCount;
             const active = activeFilter === filter;
 
             return (
@@ -219,14 +236,14 @@ export default function RecruitmentInboxPage() {
                 type="button"
                 onClick={() => setActiveFilter(filter)}
                 className={cn(
-                  "inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-colors",
+                  "inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer",
                   active
-                    ? "bg-[#171717] text-white"
-                    : "text-[#667085] hover:bg-[#F2F4F7] hover:text-[#171717]"
+                    ? "bg-zinc-900 text-white shadow-2xs"
+                    : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900"
                 )}
               >
                 <span>{label}</span>
-                <span className={cn("rounded px-1.5 py-0.2 text-[10px] tabular-nums font-medium", active ? "bg-[#262626] text-white" : "bg-[#F2F4F7] text-[#667085]")}>
+                <span className={cn("rounded-full px-1.5 py-0.2 text-[10px] font-bold font-mono", active ? "bg-zinc-800 text-white" : "bg-zinc-200 text-zinc-700")}>
                   {count}
                 </span>
               </button>
@@ -234,135 +251,140 @@ export default function RecruitmentInboxPage() {
           })}
         </div>
 
-        <span className="text-xs text-[#667085]">
-          Showing <strong className="text-[#171717]">{filteredItems.length}</strong> candidates
+        <span className="text-xs text-zinc-500">
+          Showing <strong className="text-zinc-900">{filteredItems.length}</strong> candidates
         </span>
       </div>
 
       {error && <ErrorBanner message={error} />}
 
-      {/* Table of Review Queue */}
-      <div className="rounded-lg border border-[#E4E7EC] bg-white overflow-hidden">
+      {/* Simple Candidate Review Cards / List */}
+      <div className="space-y-3">
         {loading ? (
-          <div className="p-4 space-y-3">
-            {[1, 2, 3, 4].map((i) => (
-              <Skeleton key={i} className="h-12 w-full rounded-md bg-[#E4E7EC]" />
+          <div className="space-y-3">
+            {[1, 2, 3].map((i) => (
+              <Skeleton key={i} className="h-24 w-full rounded-xl bg-zinc-200" />
             ))}
           </div>
         ) : filteredItems.length === 0 ? (
-          <div className="p-12 text-center text-xs text-[#667085]">
-            <CheckCircle2 className="h-6 w-6 text-[#12B76A] mx-auto mb-2" />
-            <p className="font-semibold text-[#171717]">Queue is clear</p>
-            <p className="mt-0.5 text-[#98A2B3]">No candidates currently requiring action in this category.</p>
+          <div className="rounded-xl border border-zinc-200/80 bg-white p-12 text-center text-xs shadow-2xs space-y-2">
+            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-50 text-emerald-600 mx-auto">
+              <CheckCircle2 className="h-5 w-5" />
+            </div>
+            <p className="font-bold text-zinc-900 text-sm">Inbox is completely clear</p>
+            <p className="text-zinc-500 max-w-sm mx-auto">
+              No candidates in this category require action right now. New submissions will show up here automatically.
+            </p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="border-b border-[#E4E7EC] bg-[#F7F8FA] text-[11px] font-medium uppercase tracking-wider text-[#667085]">
-                <tr>
-                  <th className="w-10 px-4 py-2.5">
-                    <button
-                      type="button"
-                      onClick={toggleSelectAll}
-                      className="flex items-center text-[#98A2B3] hover:text-[#171717] focus:outline-none"
-                    >
-                      {allSelected ? <CheckSquare className="h-4 w-4 text-[#171717]" /> : <Square className="h-4 w-4" />}
-                    </button>
-                  </th>
-                  <th className="px-3 py-2.5">Candidate</th>
-                  <th className="px-3 py-2.5">Reason for Review</th>
-                  <th className="px-3 py-2.5">Position</th>
-                  <th className="px-3 py-2.5">Priority</th>
-                  <th className="px-3 py-2.5 text-right">Action</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[#E4E7EC]">
-                {filteredItems.map((item: InboxItem) => {
-                  const isSelected = selectedIds.has(item.application_id);
-                  const isUrgent = item.priority === "urgent";
+          filteredItems.map((item: InboxItem) => {
+            const isSelected = selectedIds.has(item.application_id);
+            const isUrgent = item.priority === "urgent";
+            const candidateName = item.title.replace(/^Review:\s*/, "");
+            const initials = candidateName
+              .split(/[\s@._-]+/)
+              .filter(Boolean)
+              .slice(0, 2)
+              .map((p) => p[0].toUpperCase())
+              .join("") || "C";
 
-                  return (
-                    <tr
-                      key={item.id}
-                      className={cn(
-                        "group hover:bg-[#F7F8FA] transition-colors",
-                        isSelected && "bg-[#F2F4F7]"
-                      )}
-                    >
-                      {/* Checkbox */}
-                      <td className="w-10 px-4 py-3.5" onClick={(e) => toggleSelectOne(item.application_id, e)}>
-                        <button type="button" className="flex items-center text-[#98A2B3] hover:text-[#171717] focus:outline-none">
-                          {isSelected ? <CheckSquare className="h-4 w-4 text-[#171717]" /> : <Square className="h-4 w-4" />}
-                        </button>
-                      </td>
+            return (
+              <div
+                key={item.id}
+                className={cn(
+                  "rounded-xl border bg-white p-4 shadow-2xs transition-all hover:border-zinc-300 flex flex-col sm:flex-row sm:items-center justify-between gap-4",
+                  isSelected ? "border-zinc-900 ring-1 ring-zinc-900/10 bg-zinc-50/50" : "border-zinc-200/80"
+                )}
+              >
+                {/* Checkbox & Candidate Details */}
+                <div className="flex items-start gap-3 min-w-0">
+                  <button
+                    type="button"
+                    onClick={(e) => toggleSelectOne(item.application_id, e)}
+                    className="mt-1 text-zinc-400 hover:text-zinc-900 focus:outline-none cursor-pointer"
+                  >
+                    {isSelected ? <CheckSquare className="h-4 w-4 text-zinc-900" /> : <Square className="h-4 w-4" />}
+                  </button>
 
-                      {/* Candidate */}
-                      <td className="px-3 py-3.5">
-                        <Link
-                          href={`/recruitment/jobs/${item.job_id}/candidates/${item.application_id}`}
-                          className="font-semibold text-xs text-[#171717] group-hover:text-[#2563EB] transition-colors block"
-                        >
-                          {item.title.replace(/^Review:\s*/, "")}
-                        </Link>
-                      </td>
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-zinc-700 to-zinc-800 text-white font-semibold text-xs border border-zinc-600/30 shadow-2xs">
+                    {initials}
+                  </div>
 
-                      {/* Reason */}
-                      <td className="px-3 py-3.5 text-xs text-[#667085] max-w-sm truncate">
-                        {item.description}
-                      </td>
-
-                      {/* Job */}
-                      <td className="px-3 py-3.5 text-xs text-[#667085]">
+                  <div className="min-w-0 space-y-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Link
+                        href={`/recruitment/jobs/${item.job_id}/candidates/${item.application_id}`}
+                        className="font-bold text-sm text-zinc-900 hover:underline"
+                      >
+                        {candidateName}
+                      </Link>
+                      <span className="text-xs text-zinc-500 font-medium">for</span>
+                      <span className="text-xs font-semibold text-zinc-700 truncate max-w-[200px]">
                         {item.job_title}
-                      </td>
-
-                      {/* Priority */}
-                      <td className="px-3 py-3.5">
-                        <span
-                          className={cn(
-                            "inline-flex items-center gap-1 rounded px-2 py-0.5 text-[10px] font-medium uppercase",
-                            isUrgent
-                              ? "bg-[#FEF3F2] text-[#F04438] border border-[#FECDCA]"
-                              : item.priority === "high"
-                              ? "bg-[#FFFAEB] text-[#F79009] border border-[#FEDF89]"
-                              : "bg-[#F2F4F7] text-[#667085]"
-                          )}
-                        >
-                          {item.priority}
+                      </span>
+                      {isUrgent ? (
+                        <span className="rounded-full bg-rose-50 border border-rose-200 text-rose-700 px-2 py-0.2 text-[10px] font-bold">
+                          Warning Alert
                         </span>
-                      </td>
+                      ) : (
+                        <span className="rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 px-2 py-0.2 text-[10px] font-bold">
+                          Qualified Fit
+                        </span>
+                      )}
+                    </div>
 
-                      {/* Action */}
-                      <td className="px-3 py-3.5 text-right">
-                        <Link
-                          href={`/recruitment/jobs/${item.job_id}/candidates/${item.application_id}`}
-                          className="inline-flex items-center gap-1 text-xs font-medium text-[#667085] hover:text-[#171717] transition-colors"
-                        >
-                          Review
-                          <ArrowRight className="h-3 w-3" />
-                        </Link>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+                    <p className="text-xs text-zinc-600 leading-relaxed">
+                      {item.description}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Quick Action Decision Controls */}
+                <div className="flex items-center gap-2 self-end sm:self-center shrink-0 border-t sm:border-t-0 pt-2 sm:pt-0 w-full sm:w-auto justify-end">
+                  <Button
+                    size="sm"
+                    onClick={(e) => handleSingleAction(item.application_id, "INTERVIEW", e)}
+                    className="h-8 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-white text-xs font-semibold px-3 shadow-2xs cursor-pointer"
+                  >
+                    <Check className="h-3.5 w-3.5 mr-1 text-emerald-400" />
+                    Approve to Interview
+                  </Button>
+
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={(e) => handleSingleAction(item.application_id, "REJECTED", e)}
+                    className="h-8 rounded-lg border-zinc-200 text-xs font-semibold text-rose-600 hover:bg-rose-50 hover:border-rose-200 cursor-pointer"
+                  >
+                    Reject
+                  </Button>
+
+                  <Link
+                    href={`/recruitment/jobs/${item.job_id}/candidates/${item.application_id}`}
+                    className="inline-flex items-center gap-1 text-xs font-semibold text-zinc-600 hover:text-zinc-900 px-2 py-1.5 rounded-lg hover:bg-zinc-100 transition-colors"
+                  >
+                    View 360
+                    <ChevronRight className="h-3 w-3 text-zinc-400" />
+                  </Link>
+                </div>
+              </div>
+            );
+          })
         )}
       </div>
 
       {/* Floating Bulk Action Bar */}
       {selectedIds.size > 0 && (
-        <div className="fixed bottom-5 inset-x-0 z-40 mx-auto max-w-lg px-4">
-          <div className="flex items-center justify-between gap-3 rounded-lg border border-[#171717] bg-[#171717] px-4 py-2.5 text-white shadow-lg">
+        <div className="fixed bottom-6 inset-x-0 z-40 mx-auto max-w-md px-4">
+          <div className="flex items-center justify-between gap-3 rounded-xl border border-zinc-800 bg-zinc-900 px-4 py-2.5 text-white shadow-xl">
             <div className="flex items-center gap-2.5">
-              <span className="text-xs font-medium text-[#F2F4F7]">
+              <span className="text-xs font-bold text-white">
                 {selectedIds.size} selected
               </span>
               <button
                 type="button"
                 onClick={() => setSelectedIds(new Set())}
-                className="text-xs text-[#98A2B3] hover:text-white transition-colors"
+                className="text-xs text-zinc-400 hover:text-white transition-colors cursor-pointer"
               >
                 Clear
               </button>
@@ -370,20 +392,19 @@ export default function RecruitmentInboxPage() {
 
             <div className="flex items-center gap-2">
               <Button
-                variant="outline"
                 size="sm"
                 disabled={bulkLoading}
                 onClick={() => handleBulkAction("SHORTLISTED")}
-                className="h-7 rounded-md border-[#262626] bg-[#262626] text-xs font-medium text-white hover:bg-[#333333]"
+                className="h-7 rounded-lg bg-white text-zinc-900 hover:bg-zinc-100 text-xs font-semibold cursor-pointer"
               >
-                Approve to Interview
+                Approve ({selectedIds.size})
               </Button>
               <Button
                 variant="outline"
                 size="sm"
                 disabled={bulkLoading}
                 onClick={() => handleBulkAction("REJECTED")}
-                className="h-7 rounded-md border-[#262626] bg-[#262626] text-xs font-medium text-[#F04438] hover:bg-[#333333]"
+                className="h-7 rounded-lg border-zinc-700 bg-zinc-800 text-xs font-semibold text-rose-400 hover:bg-zinc-700 cursor-pointer"
               >
                 Reject
               </Button>

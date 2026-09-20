@@ -6,13 +6,16 @@ import { useRouter } from "next/navigation";
 import {
   Briefcase, Search, Plus, MapPin, Users,
   ArrowRight, Loader2, CheckCircle2,
-  Building2, Database, X, ChevronRight, Clock,
-  Activity, ShieldCheck, UserCheck, AlertTriangle
+  X, Clock, Activity, Download,
+  Layers, Inbox, ArrowUpRight, Trash2, Edit2
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ErrorBanner } from "@/components/ui/error-banner";
 import { Skeleton } from "@/components/ui/skeleton";
-import { errorMessage, listJobs, seedDemoPipeline, type Job } from "@/lib/recruitmentApi";
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
+import { errorMessage, listJobs, seedDemoPipeline, updateJob, deleteJob, type Job } from "@/lib/recruitmentApi";
 import { JobFormDialog } from "./_components/JobFormDialog";
 import { useRecruitment } from "./_components/RecruitmentShell";
 import { useToast } from "@/components/ui/toast";
@@ -20,245 +23,173 @@ import { cn } from "@/lib/utils";
 
 type Loaded = { jobs: Job[] } | { error: string } | null;
 
-interface MetricCardProps {
+// ── Metric Card ─────────────────────────────────────────────────────────────
+function MetricCard({
+  label,
+  value,
+  subtext,
+}: {
   label: string;
   value: string | number;
   subtext: string;
-  badge?: string;
-}
-
-function MetricCard({ label, value, subtext, badge }: MetricCardProps) {
+}) {
   return (
-    <div className="rounded-lg border border-[#E4E7EC] bg-white p-4">
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-xs font-medium text-[#667085]">{label}</span>
-        {badge && (
-          <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium bg-[#F2F4F7] text-[#171717]">
-            {badge}
-          </span>
-        )}
-      </div>
-      <div className="mt-2 flex items-baseline gap-2">
-        <span className="text-2xl font-semibold tracking-tight text-[#171717] tabular-nums">{value}</span>
-      </div>
-      <p className="mt-1 text-[11px] text-[#98A2B3] font-normal">{subtext}</p>
-    </div>
-  );
-}
-
-function OverallPipelineFunnel({ pipeline, total }: { pipeline: Record<string, number>; total: number }) {
-  const stages = [
-    { key: "APPLIED", label: "1. Applied", count: pipeline.APPLIED || 0 },
-    { key: "SHORTLISTED", label: "2. Shortlisted", count: pipeline.SHORTLISTED || 0 },
-    { key: "INTERVIEW", label: "3. Interview", count: pipeline.INTERVIEW || 0 },
-    { key: "OFFER", label: "4. Offer", count: pipeline.OFFER || 0 },
-    { key: "HIRED", label: "5. Hired", count: pipeline.HIRED || 0 },
-  ];
-
-  return (
-    <div className="rounded-lg border border-[#E4E7EC] bg-white p-4 sm:p-5">
-      <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-[#E4E7EC]">
-        <div>
-          <h2 className="text-xs font-semibold text-[#171717] uppercase tracking-wider">Candidate Progression Funnel</h2>
-          <p className="text-[11px] text-[#667085] mt-0.5">Live conversion rates across all open requisitions</p>
-        </div>
-        <span className="text-xs font-semibold text-[#171717] tabular-nums bg-[#F7F8FA] border border-[#E4E7EC] rounded px-2.5 py-1">
-          {total} Total Applicants
+    <div className="rounded-xl border border-zinc-200/80 bg-white p-4 shadow-2xs">
+      <span className="text-[11px] font-bold uppercase tracking-wider text-zinc-500">
+        {label}
+      </span>
+      <div className="mt-2 flex items-baseline justify-between">
+        <span className="text-2xl font-bold tracking-tight text-zinc-900 font-mono">
+          {value}
         </span>
       </div>
-
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 sm:gap-3 pt-4">
-        {stages.map((stage) => {
-          const pct = total > 0 ? Math.round((stage.count / total) * 100) : 0;
-          return (
-            <div key={stage.key} className="relative rounded-lg bg-[#F7F8FA] p-3 border border-[#E4E7EC] transition-all duration-150 hover:border-[#D0D5DD]">
-              <div className="text-[11px] font-medium text-[#667085] uppercase tracking-wider">{stage.label}</div>
-              <div className="mt-1.5 flex items-baseline gap-2">
-                <span className="text-2xl font-semibold text-[#171717] tabular-nums">{stage.count}</span>
-                <span className="text-[11px] text-[#98A2B3] font-medium tabular-nums">{pct}%</span>
-              </div>
-              <div className="mt-2.5 h-1.5 w-full rounded-full bg-[#E4E7EC] overflow-hidden">
-                <div
-                  className="h-full rounded-full bg-[#171717] transition-all duration-300"
-                  style={{ width: `${pct}%` }}
-                />
-              </div>
-            </div>
-          );
-        })}
-      </div>
+      <p className="mt-1 text-xs text-zinc-500">{subtext}</p>
     </div>
   );
 }
 
-function AgentActivityFeed() {
-  const activities = [
-    {
-      time: "10:42 AM",
-      actor: "Evaluation Agent",
-      title: "Evaluated Dr. Marcus Chen",
-      detail: "Semantic fit 94% · Hard match 92% · Auto-routed to Shortlist",
-      status: "completed",
-      icon: CheckCircle2,
-    },
-    {
-      time: "10:38 AM",
-      actor: "Document Parser",
-      title: "Batch Ingestion Completed",
-      detail: "Lead AI / ML Systems Engineer · 4 candidate profiles parsed",
-      status: "completed",
-      icon: ShieldCheck,
-    },
-    {
-      time: "10:31 AM",
-      actor: "Screening Agent",
-      title: "Pre-screen Invited: Elena Rostova",
-      detail: "Technical competency voice screening session initialized",
-      status: "info",
-      icon: Activity,
-    },
-    {
-      time: "09:55 AM",
-      actor: "Integrity Monitor",
-      title: "Document Verification Scan Completed",
-      detail: "No hidden text tampering detected across active applicants",
-      status: "completed",
-      icon: ShieldCheck,
-    },
-  ];
-
-  return (
-    <div className="rounded-lg border border-[#E4E7EC] bg-white p-4 sm:p-5 space-y-3">
-      <div className="flex items-center justify-between border-b border-[#E4E7EC] pb-2.5">
-        <div>
-          <h2 className="text-xs font-semibold uppercase tracking-wider text-[#667085]">Agent Operational Activity</h2>
-          <p className="text-[11px] text-[#98A2B3]">Factual audit log of autonomous candidate evaluations and pipeline events</p>
-        </div>
-        <span className="text-xs text-[#12B76A] font-medium flex items-center gap-1.5">
-          <span className="h-1.5 w-1.5 rounded-full bg-[#12B76A]" />
-          Engine Running
-        </span>
-      </div>
-
-      <div className="divide-y divide-[#E4E7EC]">
-        {activities.map((act, i) => {
-          const Icon = act.icon;
-          return (
-            <div key={i} className="py-2.5 flex items-start gap-3 text-xs">
-              <div className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded bg-[#F7F8FA] text-[#171717] border border-[#E4E7EC]">
-                <Icon className="h-3.5 w-3.5" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center justify-between gap-2">
-                  <p className="font-semibold text-[#171717] truncate">{act.title}</p>
-                  <span className="text-[10px] text-[#98A2B3] shrink-0 tabular-nums">{act.time}</span>
-                </div>
-                <p className="text-[#667085] text-[11px] mt-0.5">{act.detail}</p>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function JobTableRow({ job }: { job: Job }) {
+// ── Requisition Table Row ───────────────────────────────────────────────────
+function JobTableRow({
+  job,
+  code,
+  onEdit,
+  onStatusToggle,
+  onDelete,
+}: {
+  job: Job;
+  code: string;
+  onEdit: (job: Job) => void;
+  onStatusToggle: (job: Job, newStatus: "open" | "closed") => void;
+  onDelete: (job: Job) => void;
+}) {
   const isOpen = job.status === "open";
   const p = job.pipeline;
-  const applied = p.APPLIED ?? 0;
-  const shortlisted = p.SHORTLISTED ?? 0;
-  const interview = p.INTERVIEW ?? 0;
-  const offer = (p.OFFER ?? 0) + (p.HIRED ?? 0);
+  const total = job.total_candidates || 0;
+  const inReview = (p.APPLIED ?? 0) + (p.SHORTLISTED ?? 0);
+  const inInterview = p.INTERVIEW ?? 0;
+  const inClosing = (p.OFFER ?? 0) + (p.HIRED ?? 0);
 
   return (
-    <tr className="group hover:bg-[#F7F8FA] transition-colors">
-      <td className="px-4 py-3.5">
-        <Link href={`/recruitment/jobs/${job.id}`} className="block">
-          <p className="font-semibold text-xs text-[#171717] group-hover:text-[#2563EB] transition-colors">
-            {job.title}
-          </p>
-          <div className="flex items-center gap-2 text-[11px] text-[#667085] mt-1">
+    <tr className="group hover:bg-zinc-50/70 transition-colors border-b border-zinc-100 last:border-0">
+      <td className="px-5 py-4">
+        <div className="space-y-1">
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-[10px] font-bold text-zinc-500 bg-zinc-100 px-1.5 py-0.5 rounded">
+              {code}
+            </span>
+            <Link
+              href={`/recruitment/jobs/${job.id}`}
+              className="font-bold text-xs text-zinc-900 hover:text-blue-600 transition-colors truncate max-w-sm block"
+            >
+              {job.title}
+            </Link>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-500">
             {job.department && (
-              <span className="rounded bg-[#F2F4F7] px-1.5 py-0.2 font-medium text-[#171717]">
+              <span className="rounded bg-zinc-100 px-2 py-0.5 font-medium text-zinc-600 text-[11px]">
                 {job.department}
               </span>
             )}
             {job.location && (
-              <span className="flex items-center gap-1 text-[#667085]">
-                <MapPin className="h-3 w-3 text-[#98A2B3]" />
+              <span className="flex items-center gap-0.5 text-zinc-400 text-[11px]">
+                <MapPin className="h-3 w-3" />
                 {job.location}
               </span>
             )}
           </div>
-        </Link>
+        </div>
       </td>
-      <td className="px-3 py-3.5 text-xs text-[#667085]">
+
+      <td className="px-4 py-4 text-xs text-zinc-600 font-medium whitespace-nowrap">
         {job.min_experience_years !== null ? (
-          <span className="font-medium text-[#171717]">{job.min_experience_years}+ years</span>
+          <span className="font-mono text-xs font-semibold text-zinc-800">
+            {job.min_experience_years}+ yrs
+          </span>
         ) : (
-          <span className="text-[#98A2B3]">Flexible</span>
+          <span className="text-zinc-400 text-xs">Flexible</span>
         )}
       </td>
-      <td className="px-3 py-3.5">
-        <div className="flex flex-wrap items-center gap-1.5 text-xs">
-          <span className="rounded bg-[#171717] text-white px-2 py-0.5 text-[11px] font-semibold tabular-nums">
-            {job.total_candidates} total
-          </span>
-          {shortlisted > 0 && (
-            <span className="rounded bg-[#F2F4F7] border border-[#E4E7EC] px-1.5 py-0.5 text-[10px] text-[#171717] font-medium">
-              {shortlisted} shortlisted
-            </span>
-          )}
-          {interview > 0 && (
-            <span className="rounded bg-[#FFFAEB] border border-[#FEDF89] px-1.5 py-0.5 text-[10px] text-[#B54708] font-medium">
-              {interview} in interview
-            </span>
-          )}
-          {offer > 0 && (
-            <span className="rounded bg-[#ECFDF3] border border-[#A6F4C5] px-1.5 py-0.5 text-[10px] text-[#027A48] font-medium">
-              {offer} offer/hired
-            </span>
-          )}
-        </div>
-      </td>
-      <td className="px-3 py-3.5">
-        <div className="flex items-center gap-1.5">
-          <span
-            className={cn(
-              "h-2 w-2 rounded-full",
-              isOpen ? "bg-[#12B76A]" : job.status === "closed" ? "bg-[#F04438]" : "bg-[#98A2B3]"
+
+      <td className="px-4 py-4 whitespace-nowrap">
+        <div className="space-y-1">
+          <div className="flex items-center gap-2">
+            <span className="font-mono font-bold text-xs text-zinc-900">{total} candidates</span>
+          </div>
+          <div className="text-[11px] text-zinc-500 flex items-center gap-1.5 font-medium">
+            {total === 0 ? (
+              <span className="text-zinc-400">No applicants yet</span>
+            ) : (
+              <span>
+                {inReview > 0 && `${inReview} review · `}
+                {inInterview > 0 && `${inInterview} interview · `}
+                {inClosing > 0 && `${inClosing} offer/hired`}
+                {inReview === 0 && inInterview === 0 && inClosing === 0 && `${total} total`}
+              </span>
             )}
-          />
-          <span className="text-xs font-medium text-[#171717] capitalize">
-            {isOpen ? "Active Role" : job.status}
-          </span>
+          </div>
         </div>
       </td>
-      <td className="px-3 py-3.5 text-right">
-        <Link
-          href={`/recruitment/jobs/${job.id}`}
-          className="inline-flex items-center gap-1 text-xs font-medium text-[#171717] bg-white border border-[#E4E7EC] hover:bg-[#F2F4F7] px-2.5 py-1 rounded transition-colors"
+
+      <td className="px-4 py-4 whitespace-nowrap">
+        <button
+          onClick={() => onStatusToggle(job, isOpen ? "closed" : "open")}
+          title={`Click to mark as ${isOpen ? "Closed" : "Active"}`}
+          className={cn(
+            "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold border transition-all",
+            isOpen
+              ? "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100"
+              : "bg-zinc-100 text-zinc-600 border-zinc-200 hover:bg-zinc-200"
+          )}
         >
-          View Pipeline
-          <ChevronRight className="h-3 w-3 text-[#667085]" />
-        </Link>
+          <span className={cn("h-1.5 w-1.5 rounded-full", isOpen ? "bg-emerald-500" : "bg-zinc-400")} />
+          <span>{isOpen ? "Active" : "Closed"}</span>
+        </button>
+      </td>
+
+      <td className="px-5 py-4 text-right whitespace-nowrap">
+        <div className="flex items-center justify-end gap-1.5">
+          <button
+            onClick={() => onEdit(job)}
+            title="Edit position"
+            className="h-8 px-2.5 rounded-lg border border-zinc-200 text-xs font-semibold text-zinc-700 hover:bg-zinc-100 transition-colors"
+          >
+            Edit
+          </button>
+          <button
+            onClick={() => onDelete(job)}
+            title="Delete position"
+            className="h-8 px-2 rounded-lg border border-zinc-200 text-zinc-500 hover:bg-rose-50 hover:text-rose-600 hover:border-rose-200 transition-colors"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+          <Link
+            href={`/recruitment/jobs/${job.id}`}
+            className="inline-flex items-center gap-1 h-8 px-3 rounded-lg bg-zinc-900 text-white text-xs font-semibold hover:bg-zinc-800 transition-all shadow-2xs"
+          >
+            <span>Pipeline</span>
+            <ArrowRight className="h-3.5 w-3.5" />
+          </Link>
+        </div>
       </td>
     </tr>
   );
 }
 
+// ── Main Positions Dashboard ───────────────────────────────────────────────
 export default function JobsPage() {
   const { can, triggerRefresh, refreshCount } = useRecruitment();
   const router = useRouter();
   const [loaded, setLoaded] = useState<Loaded>(null);
   const [attempt, setAttempt] = useState(0);
-  const [creating, setCreating] = useState(false);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [editingJob, setEditingJob] = useState<Job | undefined>(undefined);
   const [formKey, setFormKey] = useState(0);
   const [searchQuery, setSearchQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"all" | "open" | "draft" | "closed">("all");
+  const [statusFilter, setStatusFilter] = useState<"all" | "open" | "closed">("all");
   const [selectedDept, setSelectedDept] = useState<string>("all");
-  const [seeding, setSeeding] = useState(false);
+  const [selectedStage, setSelectedStage] = useState<string | null>(null);
+  const [pendingDeleteJob, setPendingDeleteJob] = useState<Job | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -271,25 +202,69 @@ export default function JobsPage() {
     };
   }, [attempt, refreshCount]);
 
-  const openForm = () => {
+  const openCreateForm = () => {
+    setEditingJob(undefined);
     setFormKey((k) => k + 1);
-    setCreating(true);
+    setDialogOpen(true);
   };
 
-  const handleSeedDemo = async () => {
-    setSeeding(true);
+  const openEditForm = (job: Job) => {
+    setEditingJob(job);
+    setFormKey((k) => k + 1);
+    setDialogOpen(true);
+  };
+
+  const handleStatusToggle = async (job: Job, newStatus: "open" | "closed") => {
     try {
-      const res = await seedDemoPipeline();
-      toast("success", res.message || "Demo dataset seeded successfully.");
+      await updateJob(job.id, { status: newStatus });
+      toast("success", `Position marked as ${newStatus === "open" ? "Active" : "Closed"}.`);
       triggerRefresh();
     } catch (err) {
-      toast("error", `Seeding failed: ${errorMessage(err)}`);
-    } finally {
-      setSeeding(false);
+      toast("error", errorMessage(err));
     }
   };
 
-  // Extract unique departments
+  const handleConfirmDelete = async () => {
+    if (!pendingDeleteJob) return;
+    setDeleting(true);
+    try {
+      await deleteJob(pendingDeleteJob.id);
+      toast("success", `Position "${pendingDeleteJob.title}" removed.`);
+      setPendingDeleteJob(null);
+      triggerRefresh();
+    } catch (err) {
+      toast("error", errorMessage(err));
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const handleExportCsv = () => {
+    if (!loaded || !("jobs" in loaded)) return;
+    const headers = [
+      "Code", "Title", "Department", "Location", "Min Experience", "Candidates", "Status"
+    ];
+    const rows = loaded.jobs.map((j, idx) => [
+      `REQ-${String(idx + 1040)}`,
+      `"${j.title.replace(/"/g, '""')}"`,
+      `"${j.department || ""}"`,
+      `"${j.location || ""}"`,
+      j.min_experience_years ?? "Flexible",
+      j.total_candidates,
+      j.status,
+    ]);
+
+    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `Positions_Report_${new Date().toISOString().slice(0, 10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    toast("success", "Exported CSV.");
+  };
+
   const departments = useMemo(() => {
     if (!loaded || !("jobs" in loaded)) return [];
     const set = new Set<string>();
@@ -299,25 +274,24 @@ export default function JobsPage() {
     return Array.from(set);
   }, [loaded]);
 
-  // Aggregate metrics & pipeline distribution
   const { metrics, pipelineTotals } = useMemo(() => {
     if (!loaded || !("jobs" in loaded)) {
       return {
-        metrics: { activeJobs: 0, totalCandidates: 0, totalReviews: 0, totalOffers: 0 },
+        metrics: { activeJobs: 0, totalCandidates: 0, inScreening: 0, offers: 0 },
         pipelineTotals: { APPLIED: 0, SHORTLISTED: 0, INTERVIEW: 0, OFFER: 0, HIRED: 0 }
       };
     }
     const jobs = loaded.jobs;
     const activeJobs = jobs.filter((j) => j.status === "open").length;
     let totalCandidates = 0;
-    let totalReviews = 0;
-    let totalOffers = 0;
+    let inScreening = 0;
+    let offers = 0;
     const pipelineTotals: Record<string, number> = { APPLIED: 0, SHORTLISTED: 0, INTERVIEW: 0, OFFER: 0, HIRED: 0 };
 
     jobs.forEach((j) => {
       totalCandidates += j.total_candidates;
-      totalReviews += (j.pipeline.SCREENING ?? 0) + (j.pipeline.SHORTLISTED ?? 0);
-      totalOffers += (j.pipeline.OFFER ?? 0) + (j.pipeline.HIRED ?? 0);
+      inScreening += (j.pipeline.SCREENING ?? 0) + (j.pipeline.SHORTLISTED ?? 0) + (j.pipeline.INTERVIEW ?? 0);
+      offers += (j.pipeline.OFFER ?? 0) + (j.pipeline.HIRED ?? 0);
       Object.entries(j.pipeline).forEach(([k, v]) => {
         if (pipelineTotals[k] !== undefined) {
           pipelineTotals[k] += (v || 0);
@@ -326,12 +300,11 @@ export default function JobsPage() {
     });
 
     return {
-      metrics: { activeJobs, totalCandidates, totalReviews, totalOffers },
+      metrics: { activeJobs, totalCandidates, inScreening, offers },
       pipelineTotals
     };
   }, [loaded]);
 
-  // Filtered jobs
   const filteredJobs = useMemo(() => {
     if (!loaded || !("jobs" in loaded)) return [];
     return loaded.jobs.filter((j) => {
@@ -344,109 +317,154 @@ export default function JobsPage() {
       }
       if (statusFilter !== "all" && j.status !== statusFilter) return false;
       if (selectedDept !== "all" && j.department !== selectedDept) return false;
+      if (selectedStage && (j.pipeline[selectedStage as keyof typeof j.pipeline] || 0) === 0) return false;
       return true;
     });
-  }, [loaded, searchQuery, statusFilter, selectedDept]);
+  }, [loaded, searchQuery, statusFilter, selectedDept, selectedStage]);
+
+  const STAGE_FILTERS = [
+    { key: "APPLIED", label: "Applied", count: pipelineTotals.APPLIED },
+    { key: "SHORTLISTED", label: "Shortlisted", count: pipelineTotals.SHORTLISTED },
+    { key: "INTERVIEW", label: "Interview", count: pipelineTotals.INTERVIEW },
+    { key: "OFFER", label: "Offer", count: pipelineTotals.OFFER },
+    { key: "HIRED", label: "Hired", count: pipelineTotals.HIRED },
+  ];
 
   return (
-    <div className="space-y-6">
-      {/* Enterprise Header */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b border-[#E4E7EC] pb-5">
+    <div className="space-y-6 pb-12">
+      {/* Executive Clean Header */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b border-zinc-200/80 pb-5">
         <div>
-          <h1 className="text-xl sm:text-2xl font-semibold tracking-tight text-[#171717]">
-            Recruitment
+          <h1 className="text-xl font-bold tracking-tight text-zinc-900">
+            Positions
           </h1>
-          <p className="mt-0.5 text-xs sm:text-sm text-[#667085]">
-            Hiring pipeline and candidate evaluation operations
+          <p className="text-xs text-zinc-500 mt-0.5">
+            {metrics.activeJobs} active requisitions · {metrics.totalCandidates} candidates in pipeline
           </p>
         </div>
 
         <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleExportCsv}
+            disabled={!loaded || !("jobs" in loaded) || loaded.jobs.length === 0}
+            className="h-8 rounded-lg border-zinc-200 text-xs font-semibold text-zinc-700 hover:bg-zinc-100"
+          >
+            <Download className="h-3.5 w-3.5 mr-1 text-zinc-500" />
+            Export CSV
+          </Button>
+
           {can("create_job") && (
             <Button
               size="sm"
-              onClick={openForm}
-              className="h-8 rounded-md bg-[#171717] text-xs font-medium text-white hover:bg-[#262626]"
+              onClick={openCreateForm}
+              className="h-8 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-white font-semibold text-xs inline-flex items-center gap-1.5 px-3 shadow-2xs"
             >
-              <Plus className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-              Create Job
+              <Plus className="h-3.5 w-3.5" />
+              <span>New Position</span>
             </Button>
           )}
         </div>
       </div>
 
-      {/* KEY METRICS */}
+      {/* 4 Clean Metric Tiles */}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <MetricCard
-          label="Active Positions"
+          label="Active Roles"
           value={metrics.activeJobs}
-          subtext="Open requisitions receiving applicants"
-          badge={metrics.activeJobs > 0 ? "Open" : undefined}
+          subtext="Positions open for sourcing"
         />
         <MetricCard
           label="Candidates"
           value={metrics.totalCandidates}
-          subtext="Total applicants in pool"
+          subtext="Total applicants in pipeline"
         />
         <MetricCard
-          label="Pending Review"
-          value={metrics.totalReviews}
-          subtext="Awaiting recruiter review"
+          label="In Evaluation"
+          value={metrics.inScreening}
+          subtext="Screening and panel interviews"
         />
         <MetricCard
-          label="Offers / Hired"
-          value={metrics.totalOffers}
-          subtext="Final stage candidates"
-          badge={metrics.totalOffers > 0 ? "Active" : undefined}
+          label="Offers & Hired"
+          value={metrics.offers}
+          subtext="Closing and onboarded"
         />
       </div>
 
-      {/* PIPELINE FUNNEL */}
-      {loaded && "jobs" in loaded && loaded.jobs.length > 0 && (
-        <OverallPipelineFunnel pipeline={pipelineTotals} total={metrics.totalCandidates} />
-      )}
+      {/* Filter Toolbar with Integrated Stage Funnel */}
+      <div className="space-y-3">
+        {/* Pipeline Stage Quick Tabs */}
+        {metrics.totalCandidates > 0 && (
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar">
+            <button
+              onClick={() => setSelectedStage(null)}
+              className={cn(
+                "px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all",
+                selectedStage === null
+                  ? "bg-zinc-900 text-white shadow-xs"
+                  : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900"
+              )}
+            >
+              All Stages ({metrics.totalCandidates})
+            </button>
+            {STAGE_FILTERS.map((st) => (
+              <button
+                key={st.key}
+                onClick={() => setSelectedStage(selectedStage === st.key ? null : st.key)}
+                className={cn(
+                  "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all",
+                  selectedStage === st.key
+                    ? "bg-zinc-900 text-white shadow-xs"
+                    : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900"
+                )}
+              >
+                <span>{st.label}</span>
+                <span className={cn(
+                  "rounded-full px-1.5 py-0.2 text-[10px] font-bold tabular-nums",
+                  selectedStage === st.key ? "bg-zinc-800 text-zinc-200" : "bg-zinc-100 text-zinc-600"
+                )}>
+                  {st.count}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
 
-      {/* AGENT ACTIVITY FEED */}
-      <AgentActivityFeed />
-
-      {/* OPEN POSITIONS SECTION */}
-      <div className="space-y-4">
-        {/* Controls Bar */}
-        <div className="flex flex-col gap-2.5 rounded-lg border border-[#E4E7EC] bg-white p-2.5 sm:flex-row sm:items-center sm:justify-between">
-          {/* Search Input */}
+        {/* Search & Filter Bar */}
+        <div className="flex flex-col gap-2.5 rounded-xl border border-zinc-200/80 bg-white p-2 sm:flex-row sm:items-center sm:justify-between shadow-2xs">
           <div className="relative flex-1">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#98A2B3]" />
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search positions by title, department, or skill..."
-              className="w-full rounded-md border border-[#E4E7EC] bg-[#F7F8FA] py-1.5 pl-8 pr-7 text-xs font-normal text-[#171717] placeholder:text-[#98A2B3] focus:border-[#171717] focus:bg-white focus:outline-none"
+              placeholder="Search positions by title, department, or required skill..."
+              className="w-full rounded-lg border border-zinc-200/80 bg-zinc-50/60 py-1.5 pl-8 pr-7 text-xs text-zinc-900 placeholder:text-zinc-400 focus:outline-none focus:bg-white"
             />
             {searchQuery && (
               <button
                 onClick={() => setSearchQuery("")}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-[#98A2B3] hover:text-[#171717]"
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-700"
               >
                 <X className="h-3.5 w-3.5" />
               </button>
             )}
           </div>
 
-          {/* Status & Department Filters */}
-          <div className="flex flex-wrap items-center gap-1.5 border-t border-[#E4E7EC] pt-2 sm:border-t-0 sm:pt-0">
-            {(["all", "open", "draft", "closed"] as const).map((status) => (
+          <div className="flex flex-wrap items-center gap-1.5">
+            {(["all", "open", "closed"] as const).map((status) => (
               <button
                 key={status}
                 onClick={() => setStatusFilter(status)}
                 className={cn(
-                  "rounded-md px-2.5 py-1 text-xs font-medium capitalize transition-colors",
+                  "rounded-md px-2.5 py-1 text-xs font-semibold capitalize transition-all",
                   statusFilter === status
-                    ? "bg-[#171717] text-white"
-                    : "text-[#667085] hover:bg-[#F2F4F7] hover:text-[#171717]"
+                    ? "bg-zinc-900 text-white"
+                    : "text-zinc-600 hover:bg-zinc-100"
                 )}
               >
-                {status === "all" ? "All Positions" : status}
+                {status === "all" ? "All Status" : status === "open" ? "Active" : "Closed"}
               </button>
             ))}
 
@@ -454,7 +472,7 @@ export default function JobsPage() {
               <select
                 value={selectedDept}
                 onChange={(e) => setSelectedDept(e.target.value)}
-                className="rounded-md border border-[#E4E7EC] bg-[#F7F8FA] px-2.5 py-1 text-xs font-medium text-[#171717] hover:bg-[#F2F4F7] focus:outline-none"
+                className="rounded-md border border-zinc-200/80 bg-zinc-50 px-2 py-1 text-xs font-semibold text-zinc-700 focus:outline-none"
               >
                 <option value="all">All Departments</option>
                 {departments.map((d) => (
@@ -465,18 +483,18 @@ export default function JobsPage() {
           </div>
         </div>
 
-        {/* Loading State */}
+        {/* Loading Skeleton */}
         {loaded === null && (
-          <div className="rounded-lg border border-[#E4E7EC] bg-white p-4 space-y-3">
+          <div className="rounded-xl border border-zinc-200/80 bg-white p-5 space-y-2.5">
             {[0, 1, 2, 3].map((i) => (
-              <Skeleton key={i} className="h-12 w-full rounded-md bg-[#E4E7EC]" />
+              <Skeleton key={i} className="h-12 w-full rounded-lg bg-zinc-100" />
             ))}
           </div>
         )}
 
-        {/* Error State */}
+        {/* Error Message */}
         {loaded && "error" in loaded && (
-          <div className="max-w-lg space-y-3">
+          <div className="space-y-2">
             <ErrorBanner message={loaded.error} />
             <Button
               variant="outline"
@@ -485,7 +503,7 @@ export default function JobsPage() {
                 setLoaded(null);
                 setAttempt((n) => n + 1);
               }}
-              className="rounded-md border-[#E4E7EC] text-xs"
+              className="rounded-lg border-zinc-200 text-xs font-semibold"
             >
               Try again
             </Button>
@@ -494,32 +512,17 @@ export default function JobsPage() {
 
         {/* Empty State */}
         {loaded && "jobs" in loaded && loaded.jobs.length === 0 && (
-          <div className="rounded-lg border border-dashed border-[#E4E7EC] bg-white p-12 text-center">
-            <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-md bg-[#F2F4F7] text-[#171717]">
-              <Briefcase className="h-5 w-5" />
-            </div>
-            <h2 className="mt-3 text-sm font-semibold text-[#171717]">No Positions Posted</h2>
-            <p className="mx-auto mt-1 max-w-sm text-xs text-[#667085]">
-              Create a job opening to begin candidate intake and automated evaluation.
-            </p>
-            <div className="mt-4 flex flex-wrap justify-center gap-2">
+          <div className="rounded-xl border border-dashed border-zinc-200 bg-white p-12 text-center">
+            <Briefcase className="h-7 w-7 text-zinc-400 mx-auto" />
+            <p className="mt-2.5 text-xs font-bold text-zinc-900">No Positions Found</p>
+            <p className="mt-1 text-xs text-zinc-500">Create a job requisition to start sourcing and evaluating candidates.</p>
+            <div className="mt-4 flex justify-center">
               <Button
                 size="sm"
-                onClick={openForm}
-                className="h-8 rounded-md bg-[#171717] text-xs font-medium text-white hover:bg-[#262626]"
+                onClick={openCreateForm}
+                className="h-8 rounded-lg bg-zinc-900 text-xs font-semibold text-white"
               >
-                <Plus className="mr-1.5 h-3.5 w-3.5" />
-                Post New Role
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleSeedDemo}
-                disabled={seeding}
-                className="h-8 rounded-md border-[#E4E7EC] text-xs font-medium text-[#667085] hover:bg-[#F2F4F7]"
-              >
-                {seeding ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Database className="mr-1.5 h-3.5 w-3.5 text-[#98A2B3]" />}
-                Seed Demo Data
+                Create Position
               </Button>
             </div>
           </div>
@@ -527,32 +530,33 @@ export default function JobsPage() {
 
         {/* Positions Table */}
         {loaded && "jobs" in loaded && loaded.jobs.length > 0 && (
-          <div className="rounded-lg border border-[#E4E7EC] bg-white overflow-hidden">
-            <div className="flex items-center justify-between border-b border-[#E4E7EC] px-4 py-3 bg-[#F7F8FA]">
-              <h2 className="text-xs font-semibold uppercase tracking-wider text-[#667085]">
-                Open Positions ({filteredJobs.length})
-              </h2>
-            </div>
-
+          <div className="rounded-xl border border-zinc-200/80 bg-white overflow-hidden shadow-2xs">
             {filteredJobs.length === 0 ? (
-              <div className="p-8 text-center text-xs text-[#667085]">
-                No positions matching your filters.
+              <div className="p-8 text-center text-xs text-zinc-500">
+                No positions matching the selected filters.
               </div>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs">
-                  <thead className="border-b border-[#E4E7EC] bg-[#F7F8FA] text-[11px] font-medium uppercase tracking-wider text-[#667085]">
+                  <thead className="border-b border-zinc-100 bg-zinc-50/70 text-[10px] font-bold uppercase tracking-wider text-zinc-500">
                     <tr>
-                      <th className="px-4 py-2.5">Position & Department</th>
-                      <th className="px-3 py-2.5">Experience</th>
-                      <th className="px-3 py-2.5">Candidates</th>
-                      <th className="px-3 py-2.5">Status</th>
-                      <th className="px-3 py-2.5 text-right">Action</th>
+                      <th className="px-5 py-3">Position</th>
+                      <th className="px-4 py-3">Experience</th>
+                      <th className="px-4 py-3">Candidate Pipeline</th>
+                      <th className="px-4 py-3">Status</th>
+                      <th className="px-5 py-3 text-right">Actions</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-[#E4E7EC]">
-                    {filteredJobs.map((job) => (
-                      <JobTableRow key={job.id} job={job} />
+                  <tbody className="divide-y divide-zinc-100">
+                    {filteredJobs.map((job, idx) => (
+                      <JobTableRow
+                        key={job.id}
+                        job={job}
+                        code={`REQ-${1040 + idx}`}
+                        onEdit={openEditForm}
+                        onStatusToggle={handleStatusToggle}
+                        onDelete={setPendingDeleteJob}
+                      />
                     ))}
                   </tbody>
                 </table>
@@ -562,16 +566,51 @@ export default function JobsPage() {
         )}
       </div>
 
-      {/* Modal to create a new job */}
+      {/* Modal for Creating / Editing Job */}
       <JobFormDialog
         key={formKey}
-        open={creating}
-        onOpenChange={setCreating}
-        onSaved={(job: Job) => {
-          setCreating(false);
-          router.push(`/recruitment/jobs/${job.id}`);
+        open={dialogOpen}
+        job={editingJob}
+        onOpenChange={setDialogOpen}
+        onSaved={() => {
+          setDialogOpen(false);
+          triggerRefresh();
         }}
       />
+
+      {/* Remove Position Confirmation Dialog */}
+      {pendingDeleteJob && (
+        <Dialog open={Boolean(pendingDeleteJob)} onOpenChange={(open) => !open && !deleting && setPendingDeleteJob(null)}>
+          <DialogContent className="sm:max-w-md rounded-xl border-zinc-200 bg-white p-5 shadow-lg">
+            <DialogHeader>
+              <DialogTitle className="text-base font-bold text-zinc-900">Remove Position</DialogTitle>
+              <DialogDescription className="text-xs text-zinc-600 mt-1">
+                Are you sure you want to remove <strong className="text-zinc-900">{pendingDeleteJob.title}</strong>? This will permanently remove this requisition and candidate reviews for this role.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter className="pt-3 border-t border-zinc-100 flex items-center justify-end gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={deleting}
+                onClick={() => setPendingDeleteJob(null)}
+                className="h-8 rounded-lg border-zinc-200 text-xs font-semibold text-zinc-600 hover:bg-zinc-100"
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                disabled={deleting}
+                onClick={handleConfirmDelete}
+                className="h-8 rounded-lg bg-rose-600 hover:bg-rose-700 text-xs font-semibold text-white"
+              >
+                {deleting && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
+                Remove Position
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   );
 }

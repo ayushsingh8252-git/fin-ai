@@ -460,6 +460,8 @@ export const createJob = (body: JobInput) =>
   request<Job>("/jobs", { method: "POST", body: JSON.stringify(body) });
 export const updateJob = (jobId: string, body: Partial<JobInput>) =>
   request<Job>(`/jobs/${jobId}`, { method: "PATCH", body: JSON.stringify(body) });
+export const deleteJob = (jobId: string) =>
+  request<{ status: string; message: string }>(`/jobs/${jobId}`, { method: "DELETE" });
 
 export function listCandidates(jobId: string, q: CandidateQuery = {}, signal?: AbortSignal) {
   return request<CandidatePage>(

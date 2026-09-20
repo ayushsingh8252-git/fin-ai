@@ -250,6 +250,32 @@ def update_job(job_id: str, body: JobPatch, db: Session = Depends(get_db), user:
     return _job_out(job, rs.pipeline_counts(db, user, [job.id]).get(job.id))
 
 
+@router.delete("/jobs/{job_id}")
+def delete_job(job_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    job = rs.get_job_for_user(db, user, job_id, rs.ACTION_EDIT_JOB)
+    
+    # 1. Activities and linked items for this job
+    db.query(CandidateActivity).filter(CandidateActivity.job_id == job.id).delete()
+    
+    app_ids = [a[0] for a in db.query(Application.id).filter(Application.job_id == job.id).all()]
+    if app_ids:
+        db.query(CandidateActivity).filter(CandidateActivity.application_id.in_(app_ids)).delete(synchronize_session=False)
+        db.query(models.Interview).filter(models.Interview.application_id.in_(app_ids)).delete(synchronize_session=False)
+        db.query(models.Offer).filter(models.Offer.application_id.in_(app_ids)).delete(synchronize_session=False)
+    
+    # 2. Uploads and batches
+    db.query(ResumeUpload).filter(ResumeUpload.job_id == job.id).delete()
+    db.query(ResumeBatch).filter(ResumeBatch.job_id == job.id).delete()
+    
+    # 3. Applications
+    db.query(Application).filter(Application.job_id == job.id).delete()
+    
+    # 4. Remove Role
+    db.delete(job)
+    db.commit()
+    return {"status": "ok", "message": f"Position '{job.title}' removed successfully."}
+
+
 # ── Resume upload ────────────────────────────────────────────────────────
 
 def _looks_like_pdf(content: bytes) -> bool:
