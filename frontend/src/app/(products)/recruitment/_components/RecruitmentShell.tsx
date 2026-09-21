@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { ErrorBanner } from "@/components/ui/error-banner";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ToastProvider, useToast } from "@/components/ui/toast";
-import { errorMessage, getMe, seedDemoPipeline, type Me, type UserRole } from "@/lib/recruitmentApi";
+import { errorMessage, getMe, seedDemoPipeline, DEMO_USER, type Me, type UserRole } from "@/lib/recruitmentApi";
 import { cn } from "@/lib/utils";
 
 const ROLE_LABEL: Record<UserRole, string> = {
@@ -244,17 +244,29 @@ function ShellContent({ children }: { children: React.ReactNode }) {
         {loaded && "error" in loaded && (
           <div className="mx-auto max-w-md space-y-4 py-16 text-center">
             <ErrorBanner message={loaded.error} className="text-left" />
-            <Button
-              variant="outline"
-              onClick={() => {
-                setLoaded(null);
-                setAttempt((n) => n + 1);
-              }}
-              className="rounded-lg border-zinc-200 text-xs font-medium"
-            >
-              <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
-              Try again
-            </Button>
+            <div className="flex items-center justify-center gap-2.5">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setLoaded(null);
+                  setAttempt((n) => n + 1);
+                }}
+                className="rounded-lg border-zinc-200 text-xs font-medium"
+              >
+                <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+                Try again
+              </Button>
+              <Button
+                onClick={() => {
+                  setLoaded({ me: DEMO_USER });
+                  toast("success", "Loaded Demo Workspace. You can explore jobs, candidates, and pipeline stages.");
+                }}
+                className="rounded-lg bg-zinc-900 text-white text-xs font-medium hover:bg-zinc-800 shadow-2xs"
+              >
+                <Sparkles className="mr-1.5 h-3.5 w-3.5 text-amber-400" />
+                Explore Demo Mode
+              </Button>
+            </div>
           </div>
         )}
 

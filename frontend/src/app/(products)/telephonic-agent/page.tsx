@@ -14,8 +14,9 @@ import { StatusPill, type StatusTone } from "@/components/ui/status-pill";
 import { getLlmopsHeaders } from "@/lib/llmopsIdentity";
 import { getAuthHeaders } from "@/lib/auth";
 import FeedbackButtons from "@/components/FeedbackButtons";
+import { getApiBaseUrl } from "@/lib/apiConfig";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_URL = getApiBaseUrl();
 
 /* ═══════════════════════════════════════════════════════════
    DATA

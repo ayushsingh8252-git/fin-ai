@@ -21,6 +21,9 @@ import RagExecutionTrace, { type LiveTraceSnapshot } from "@/components/ai-assis
 import { getLlmopsHeaders } from "@/lib/llmopsIdentity";
 import { getAuthHeaders } from "@/lib/auth";
 import FeedbackButtons from "@/components/FeedbackButtons";
+import { getApiBaseUrl } from "@/lib/apiConfig";
+
+const API_URL = getApiBaseUrl();
 
 function liveTraceNeedsRefresh(snapshot: LiveTraceSnapshot | null): boolean {
   return snapshot === null || snapshot.status === "running";
@@ -518,7 +521,7 @@ export default function RAGPage() {
       formData.append("file", audioBlob, "recording.webm");
 
       try {
-        const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+        const apiUrl = API_URL;
         const res = await fetch(`${apiUrl}/api/v1/transcribe`, {
           method: "POST",
           body: formData,
@@ -743,7 +746,7 @@ export default function RAGPage() {
   const fetchRules = async (docIdOverride?: string | null) => {
     const targetDocId = docIdOverride !== undefined ? docIdOverride : currentDocId;
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      const apiUrl = API_URL;
       const url = targetDocId
         ? `${apiUrl}/api/v1/rules?document_id=${targetDocId}`
         : `${apiUrl}/api/v1/rules`;
@@ -804,7 +807,7 @@ export default function RAGPage() {
   const retryDocument = async (docId: string) => {
     setIsRetryingDoc(true);
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      const apiUrl = API_URL;
       const res = await fetch(`${apiUrl}/api/v1/documents/${docId}/reprocess`, { method: "POST", headers: getAuthHeaders() });
       if (res.ok) {
         setDocStatus("uploaded");
@@ -853,7 +856,7 @@ export default function RAGPage() {
     formData.append("files", file);
 
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      const apiUrl = API_URL;
       const res = await fetch(`${apiUrl}/api/v1/upload`, {
         method: "POST",
         headers: getAuthHeaders(),
@@ -937,7 +940,7 @@ export default function RAGPage() {
     setMessages((prev) => [...prev, { id: Date.now().toString(), role: "user", content: `Crawl link: ${url}` }]);
 
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      const apiUrl = API_URL;
       const res = await fetch(`${apiUrl}/api/v1/upload-url`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...getAuthHeaders() },
@@ -1046,7 +1049,7 @@ export default function RAGPage() {
     setIsLoading(true);
     setLastQueryFailed(false);
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      const apiUrl = API_URL;
       const res = await fetch(`${apiUrl}/api/v1/mcp/connectors/github/tools/${tool}/call`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...getAuthHeaders() },
@@ -1096,7 +1099,7 @@ export default function RAGPage() {
 
   const startLivePoll = (requestId: string) => {
     stopLivePoll();
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+    const apiUrl = API_URL;
     let ticks = 0;
     const MAX_TICKS = 150; // ~60s safety cutoff at 400ms/tick
     livePollRef.current = setInterval(async () => {
@@ -1199,7 +1202,7 @@ export default function RAGPage() {
     startLivePoll(requestId);
 
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      const apiUrl = API_URL;
       const res = await fetch(`${apiUrl}/api/v1/query`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...getLlmopsHeaders() },

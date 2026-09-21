@@ -18,6 +18,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { X, Send, Mic, Square, Volume2, VolumeX } from "lucide-react";
 import ChatMarkdown from "../ChatMarkdown";
 import AgentLatencyAnimation from "./AgentLatencyAnimation";
+import { getApiBaseUrl } from "@/lib/apiConfig";
 
 /** Fired by anything on the page (e.g. the hero's floating topic doodles) to open
  *  the assistant pre-loaded with a question — window-level so callers don't need
@@ -98,7 +99,7 @@ interface SpeechRecognitionLike {
 }
 type SpeechRecognitionCtor = new () => SpeechRecognitionLike;
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_URL = getApiBaseUrl();
 
 export default function AIAssistantWidget({ config = ASSISTANT_CONFIG }: { config?: AIAssistantConfig }) {
   // /rag is already a dedicated full-screen chat workspace — skip the floating

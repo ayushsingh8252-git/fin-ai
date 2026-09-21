@@ -32,9 +32,10 @@ import {
 } from "lucide-react";
 import { askAssistant } from "@/components/ai-assistant/AIAssistantWidget";
 import { getAuthHeaders } from "@/lib/auth";
+import { getApiBaseUrl } from "@/lib/apiConfig";
 import InterviewRoom from "./_components/InterviewRoom";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_URL = getApiBaseUrl();
 const INTERVIEWER_NAME = "Ayush";
 
 /* ═══════════════════════════════════════════════════════════

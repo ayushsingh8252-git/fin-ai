@@ -8,6 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
 import { getAuthHeaders } from "@/lib/auth";
+import { getApiBaseUrl } from "@/lib/apiConfig";
 
 type RuleItem = {
   id: string;
@@ -27,7 +28,7 @@ export default function RulesExplorerPage() {
   const fetchRules = async () => {
     setIsLoading(true);
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      const apiUrl = getApiBaseUrl();
       const res = await fetch(`${apiUrl}/api/v1/rules`, { headers: getAuthHeaders() });
       if (res.ok) {
         const data = await res.json();

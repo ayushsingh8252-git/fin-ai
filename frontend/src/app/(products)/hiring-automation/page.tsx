@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { writeSyncedHires, clearSyncedHires } from "@/lib/hiringSync";
 import { getAuthHeaders } from "@/lib/auth";
+import { getApiBaseUrl } from "@/lib/apiConfig";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { StatusPill, type StatusTone } from "@/components/ui/status-pill";
 
@@ -41,7 +42,7 @@ import { StatusPill, type StatusTone } from "@/components/ui/status-pill";
    auto-chaining — nothing downstream of HR approval fires without an
    explicit click. */
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_URL = getApiBaseUrl();
 
 const AVATAR_PALETTE = [
   { bg: "bg-blue-50 border-blue-200", text: "text-blue-600" },

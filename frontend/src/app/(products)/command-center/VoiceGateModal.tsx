@@ -20,10 +20,9 @@ interface Props {
   onAuthenticated: (speakerName: string) => void;
 }
 
-// NEXT_PUBLIC_API_URL is baked in at build time (see Dockerfile ARG).
-// Local dev fallback: port 8001 (POLICY_BACKEND_PORT in root .env).
-// Docker: the build arg sets it to http://localhost:8080 (nginx proxy).
-const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/api\/v1$/, "");
+import { getApiBaseUrl } from "@/lib/apiConfig";
+
+const API_URL = getApiBaseUrl().replace(/\/api\/v1$/, "");
 
 /** Password tab — POSTs to the server-side /command-center/unlock check
  * (api/command_center.py) and never compares the password itself; the

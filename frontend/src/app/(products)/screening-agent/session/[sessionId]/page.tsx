@@ -5,8 +5,9 @@ import { AlertTriangle, Loader2, Video } from "lucide-react";
 import InterviewRoom from "../../_components/InterviewRoom";
 import InterviewReport from "../../_components/InterviewReport";
 import type { EvaluationResult } from "../../_components/types";
+import { getApiBaseUrl } from "@/lib/apiConfig";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_URL = getApiBaseUrl();
 
 interface SessionData {
   session_id: string;

@@ -4,6 +4,7 @@ import { useState } from "react";
 import { ThumbsUp, ThumbsDown } from "lucide-react";
 import { getLlmopsHeaders } from "@/lib/llmopsIdentity";
 import { getAuthHeaders } from "@/lib/auth";
+import { getApiBaseUrl } from "@/lib/apiConfig";
 
 type Rating = "up" | "down";
 
@@ -26,7 +27,7 @@ export default function FeedbackButtons({ workflowType, subjectId, className = "
     if (voted) return;
     setVoted(rating); // optimistic — a failed POST below shouldn't undo the click
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      const apiUrl = getApiBaseUrl();
       await fetch(`${apiUrl}/api/v1/feedback/events`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...getLlmopsHeaders(), ...getAuthHeaders() },

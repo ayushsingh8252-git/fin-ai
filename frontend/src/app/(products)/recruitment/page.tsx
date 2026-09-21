@@ -7,7 +7,7 @@ import {
   Briefcase, Search, Plus, MapPin, Users,
   ArrowRight, Loader2, CheckCircle2,
   X, Clock, Activity, Download,
-  Layers, Inbox, ArrowUpRight, Trash2, Edit2
+  Layers, Inbox, ArrowUpRight, Trash2, Edit2, Sparkles
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ErrorBanner } from "@/components/ui/error-banner";
@@ -15,7 +15,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
-import { errorMessage, listJobs, seedDemoPipeline, updateJob, deleteJob, type Job } from "@/lib/recruitmentApi";
+import { errorMessage, listJobs, seedDemoPipeline, updateJob, deleteJob, DEMO_JOBS, type Job } from "@/lib/recruitmentApi";
 import { JobFormDialog } from "./_components/JobFormDialog";
 import { useRecruitment } from "./_components/RecruitmentShell";
 import { useToast } from "@/components/ui/toast";
@@ -494,19 +494,32 @@ export default function JobsPage() {
 
         {/* Error Message */}
         {loaded && "error" in loaded && (
-          <div className="space-y-2">
+          <div className="space-y-3">
             <ErrorBanner message={loaded.error} />
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                setLoaded(null);
-                setAttempt((n) => n + 1);
-              }}
-              className="rounded-lg border-zinc-200 text-xs font-semibold"
-            >
-              Try again
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setLoaded(null);
+                  setAttempt((n) => n + 1);
+                }}
+                className="rounded-lg border-zinc-200 text-xs font-semibold"
+              >
+                Try again
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => {
+                  setLoaded({ jobs: DEMO_JOBS });
+                  toast("success", "Loaded demo requisitions. You can filter, search, and view pipeline states.");
+                }}
+                className="rounded-lg bg-zinc-900 text-white text-xs font-semibold hover:bg-zinc-800"
+              >
+                <Sparkles className="mr-1.5 h-3.5 w-3.5 text-amber-400" />
+                Load Demo Positions
+              </Button>
+            </div>
           </div>
         )}
 

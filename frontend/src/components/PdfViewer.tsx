@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { FileText, Crosshair, AlertTriangle, ExternalLink, ZoomIn, ZoomOut, Maximize2 } from "lucide-react";
+import { getApiBaseUrl } from "@/lib/apiConfig";
 
 type Source = {
   document_id?: string;
@@ -48,7 +49,7 @@ export default function PdfViewer({
     );
   }
 
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+  const apiUrl = getApiBaseUrl();
   const pdfUrl = fileName ? `${apiUrl}/uploads/${fileName}` : null;
 
   const bboxText = source.bbox ? `[${source.bbox.map(n => Math.round(n)).join(", ")}]` : null;

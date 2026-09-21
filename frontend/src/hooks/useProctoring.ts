@@ -4,6 +4,7 @@ import {
   FilesetResolver,
   type FaceLandmarkerResult,
 } from "@mediapipe/tasks-vision";
+import { getApiBaseUrl } from "@/lib/apiConfig";
 
 /**
  * Client-side interview proctoring: face presence / multi-face detection,
@@ -740,7 +741,7 @@ export function useProctoring(sessionId?: string) {
   // Periodic Telemetry sync to Backend
   useEffect(() => {
     if (state.status !== "live" || !sessionId) return;
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+    const apiUrl = getApiBaseUrl();
 
     const syncTelemetry = async () => {
       try {

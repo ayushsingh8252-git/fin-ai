@@ -7,8 +7,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { getAuthHeaders } from "@/lib/auth";
+import { getApiBaseUrl } from "@/lib/apiConfig";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_URL = getApiBaseUrl();
 
 type UploadStatus = "idle" | "uploading" | "success" | "error";
 

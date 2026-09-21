@@ -7,9 +7,12 @@
  * codes. */
 
 import { getAuthHeaders } from "@/lib/auth";
+import { getApiBaseUrl } from "@/lib/apiConfig";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-const BASE = `${API_URL}/api/v1/recruitment`;
+export function getBase(): string {
+  const api = getApiBaseUrl();
+  return api ? `${api}/api/v1/recruitment` : "/api/v1/recruitment";
+}
 
 // ── Types ───────────────────────────────────────────────────────────────
 
@@ -425,7 +428,7 @@ async function request<T>(path: string, init: RequestInit = {}, timeoutMs = REQU
   const controller = new AbortController();
   const timer = window.setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch(`${BASE}${path}`, {
+    const res = await fetch(`${getBase()}${path}`, {
       ...init,
       signal: init.signal ?? controller.signal,
       headers: {
@@ -602,7 +605,7 @@ export function uploadResumes(
     if (batchId) form.append("batch_id", batchId);
 
     const xhr = new XMLHttpRequest();
-    xhr.open("POST", `${BASE}/jobs/${jobId}/resumes`);
+    xhr.open("POST", `${getBase()}/jobs/${jobId}/resumes`);
     for (const [k, v] of Object.entries(getAuthHeaders())) xhr.setRequestHeader(k, v);
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable) onProgress(e.loaded, e.total);
@@ -633,7 +636,7 @@ export function uploadResumes(
  * so it needs the Authorization header, which a plain <a href> cannot send:
  * fetch it as a blob and open that. */
 export async function openResume(candidateId: string): Promise<void> {
-  const res = await fetch(`${BASE}/candidates/${candidateId}/resume`, { headers: getAuthHeaders() });
+  const res = await fetch(`${getBase()}/candidates/${candidateId}/resume`, { headers: getAuthHeaders() });
   if (!res.ok) throw await parseError(res);
   const url = URL.createObjectURL(await res.blob());
   window.open(url, "_blank", "noopener");
@@ -641,11 +644,117 @@ export async function openResume(candidateId: string): Promise<void> {
 }
 
 export async function seedDemoPipeline(): Promise<{ message: string; jobs_count: number; candidates_count: number }> {
-  const res = await fetch(`${BASE}/seed-demo`, {
+  const res = await fetch(`${getBase()}/seed-demo`, {
     method: "POST",
     headers: { Accept: "application/json", ...getAuthHeaders() },
   });
   if (!res.ok) throw await parseError(res);
   return res.json();
 }
+
+// ── Demo Fallback Objects ─────────────────────────────────────────────────
+
+export const DEMO_USER: Me = {
+  id: "demo-hr-admin",
+  email: "hr.admin@agenticflow.ai",
+  name: "Sarah Jenkins",
+  role: "hr_admin",
+  permissions: [
+    "recruitment:read",
+    "recruitment:write",
+    "jobs:create",
+    "jobs:edit",
+    "candidates:view",
+    "candidates:move",
+    "candidates:upload",
+    "screening:invite",
+    "telephonic:call",
+    "whatsapp:send",
+  ],
+};
+
+export const DEMO_JOBS: Job[] = [
+  {
+    id: "demo-job-1",
+    title: "Senior AI Engineer (LLMOps & Agents)",
+    department: "AI Engineering",
+    location: "San Francisco, CA (Hybrid)",
+    description: "Lead design of LLM orchestration, hybrid retrieval, and agent evaluation loops.",
+    jd_text: "Seeking Senior AI Engineer with Python, FastAPI, LangGraph, and Vector DB experience.",
+    min_experience_years: 5,
+    must_have_skills: ["Python", "FastAPI", "RAG", "Vector DB"],
+    preferred_skills: ["Docker", "Kubernetes", "LangChain", "PyTorch"],
+    status: "open",
+    created_by: "Sarah Jenkins",
+    created_at: new Date(Date.now() - 86400000 * 3).toISOString(),
+    pipeline: {
+      PROCESSING: 0,
+      APPLIED: 12,
+      SCREENING: 5,
+      SHORTLISTED: 3,
+      INTERVIEW: 2,
+      SELECTED: 1,
+      OFFER: 1,
+      HIRED: 1,
+      REJECTED: 4,
+      WITHDRAWN: 0,
+    },
+    total_candidates: 29,
+  },
+  {
+    id: "demo-job-2",
+    title: "Staff Full-Stack Frontend Engineer",
+    department: "Product Engineering",
+    location: "Remote",
+    description: "Architect high-performance interactive canvases, real-time audio waveforms, and design systems.",
+    jd_text: "React 19, Next.js, TypeScript, TailwindCSS, WebSockets, Web Audio API.",
+    min_experience_years: 6,
+    must_have_skills: ["React", "Next.js", "TypeScript", "TailwindCSS"],
+    preferred_skills: ["WebSockets", "Web Audio API", "GraphQL"],
+    status: "open",
+    created_by: "Sarah Jenkins",
+    created_at: new Date(Date.now() - 86400000 * 7).toISOString(),
+    pipeline: {
+      PROCESSING: 0,
+      APPLIED: 8,
+      SCREENING: 4,
+      SHORTLISTED: 2,
+      INTERVIEW: 1,
+      SELECTED: 0,
+      OFFER: 0,
+      HIRED: 0,
+      REJECTED: 2,
+      WITHDRAWN: 0,
+    },
+    total_candidates: 17,
+  },
+  {
+    id: "demo-job-3",
+    title: "Security & Fraud Detection Lead",
+    department: "InfoSec",
+    location: "New York, NY",
+    description: "Develop biometric fraud models, audio deepfake detection, and policy compliance engines.",
+    jd_text: "Experience in fraud detection, voice biometrics, spectral analysis, and zero-trust security.",
+    min_experience_years: 4,
+    must_have_skills: ["Python", "Cybersecurity", "Audio Processing", "ML"],
+    preferred_skills: ["TorchAudio", "Zero-Trust", "FastAPI"],
+    status: "open",
+    created_by: "Sarah Jenkins",
+    created_at: new Date(Date.now() - 86400000 * 12).toISOString(),
+    pipeline: {
+      PROCESSING: 0,
+      APPLIED: 6,
+      SCREENING: 3,
+      SHORTLISTED: 1,
+      INTERVIEW: 1,
+      SELECTED: 1,
+      OFFER: 0,
+      HIRED: 0,
+      REJECTED: 1,
+      WITHDRAWN: 0,
+    },
+    total_candidates: 12,
+  },
+];
+
 

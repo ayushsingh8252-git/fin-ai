@@ -11,8 +11,9 @@ import {
 import { getLlmopsHeaders, getLlmopsSessionId, getLlmopsUserId } from "@/lib/llmopsIdentity";
 import { getAuthHeaders, loadStoredSession } from "@/lib/auth";
 import FeedbackButtons from "@/components/FeedbackButtons";
+import { getApiBaseUrl } from "@/lib/apiConfig";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_URL = getApiBaseUrl();
 const ACCEPTED_EXTENSIONS = [".pdf", ".jpg", ".jpeg", ".png"];
 const IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png"];
 

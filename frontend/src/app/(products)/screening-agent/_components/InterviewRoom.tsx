@@ -14,8 +14,9 @@ import { Toast, type ToastState } from "./Toast";
 import InterviewReport from "./InterviewReport";
 import { getLlmopsHeaders } from "@/lib/llmopsIdentity";
 import { getAuthHeaders } from "@/lib/auth";
+import { getApiBaseUrl } from "@/lib/apiConfig";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_URL = getApiBaseUrl();
 const INTERVIEWER_NAME = "Ayush";
 const DEFAULT_ROLE = "Backend Engineer";
 
@@ -163,7 +164,7 @@ export default function InterviewRoom({
     if (!wsRef.current || wsRef.current.readyState === WebSocket.CLOSED) {
       try {
         const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-        const wsHost = (API_URL || "http://localhost:8000").replace(/^https?:\/\//, "");
+        const wsHost = (API_URL || (typeof window !== "undefined" ? window.location.host : "localhost:8000")).replace(/^https?:\/\//, "");
         // Deliberately unauthenticated — a candidate on an invite link was
         // never a signed-in platform user, and the session_id itself is the
         // access control (see api/interview.py's WS route docstring).

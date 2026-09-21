@@ -15,8 +15,9 @@ import {
   saveStoredSession,
   type AuthUser,
 } from "@/lib/auth";
+import { getApiBaseUrl } from "@/lib/apiConfig";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_URL = getApiBaseUrl();
 export const GOOGLE_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || "";
 
 // Single kill switch for the whole login feature. Was off while login only
