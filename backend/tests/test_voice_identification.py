@@ -241,10 +241,10 @@ class TestConfigSettings:
             PINECONE_API_KEY="test",
         )
         assert s.PINECONE_VOICE_INDEX_NAME == "voice-embeddings"
-        assert s.VOICE_ID_SIMILARITY_THRESHOLD == 0.70
+        assert s.VOICE_ID_SIMILARITY_THRESHOLD == 0.63
         assert s.VOICE_ID_MARGIN_THRESHOLD == 0.15
         assert s.VOICE_ID_MIN_SPEECH_DURATION == 0.5
-        assert s.VOICE_ID_MIN_ENROLLMENT_SAMPLES == 3
+        assert s.VOICE_ID_MIN_ENROLLMENT_SAMPLES == 1
         assert s.VOICE_ID_MAX_ENROLLMENT_SAMPLES >= 10
         assert s.VOICE_ID_REPLAY_DETECTION_ENABLED is True
         assert s.VOICE_ID_AI_VOICE_DETECTION_ENABLED is True

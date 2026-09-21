@@ -547,7 +547,7 @@ def application_360(
     # ── AI analysis ──
     ai_summary_prov = rs.score_view(app, "ai_summary")
     analysis = {
-        "ai_summary": app.ai_summary if ai_summary_prov.get("status") == "computed" else None,
+        "ai_summary": app.ai_summary or cand.experience_text or None,
         "ai_summary_provenance": ai_summary_prov,
         "matched_skills": app.matched_skills or [],
         "missing_skills": app.missing_skills or [],

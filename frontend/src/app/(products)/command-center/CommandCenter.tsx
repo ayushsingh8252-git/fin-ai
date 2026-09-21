@@ -42,7 +42,7 @@ import type {
 import { DEMO_PLAN as DemoPlan } from "./types";
 import { getAuthHeaders } from "@/lib/auth";
 
-const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001").replace(/\/api\/v1$/, "");
+const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/api\/v1$/, "");
 
 /**
  * Calls a real backend tool. On a transient failure (timeout, network error,

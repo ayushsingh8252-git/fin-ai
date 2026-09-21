@@ -58,7 +58,7 @@ def test_parse_incoming_webhook_extracts_status_update():
         ]}}]}]
     }
     events = whatsapp_service.parse_incoming_webhook(payload)
-    assert events == [{"status_update": True, "wamid": "wamid.ABC", "status": "delivered", "timestamp": "222"}]
+    assert events == [{"status_update": True, "wamid": "wamid.ABC", "status": "delivered", "timestamp": "222", "error_message": None}]
 
 
 def test_parse_incoming_webhook_ignores_malformed_shape():

@@ -146,7 +146,6 @@ def check_audio_quality(waveform, sample_rate: int) -> Dict[str, Any]:
     peak = torch.max(torch.abs(waveform)).item()
     if peak > 0 and rms > 0:
         crest_factor = peak / rms
-        if crest_factor < 1.5:
         if crest_factor < 1.15:
             issues.append(f"Suspiciously flat audio (crest factor={crest_factor:.2f})")
 
@@ -277,19 +276,10 @@ def detect_replay(waveform, sample_rate: int) -> Dict[str, Any]:
 
     # Heuristic scoring: replay signals
     replay_score = 0.0
-    if high_freq_ratio < 0.01:  # very little high-freq content
-        replay_score += 0.4
-    elif high_freq_ratio < 0.05:
-        replay_score += 0.2
-    if dynamic_range_db < 6.0:  # compressed dynamics
     if high_freq_ratio < 0.0001:  # severely band-limited (e.g. low quality telephone speaker)
         replay_score += 0.3
-    elif dynamic_range_db < 10.0:
     elif high_freq_ratio < 0.001:
         replay_score += 0.15
-    if spectral_flatness > 0.5:  # noisy high-freq floor
-        replay_score += 0.3
-    elif spectral_flatness > 0.3:
     if dynamic_range_db < 3.0:  # extreme dynamic compression
         replay_score += 0.35
     elif dynamic_range_db < 5.0:

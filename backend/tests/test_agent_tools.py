@@ -23,7 +23,6 @@ client = TestClient(app)
 def test_unified_catalog_includes_every_product_connector():
     catalog = registry.unified_catalog()
     connector_names = {t["connector"] for t in catalog}
-    for expected in ("rag", "fraud", "telephonic", "screening", "hiring", "google_workspace_status", "whatsapp"):
     for expected in ("rag", "fraud", "telephonic", "screening", "hiring", "google_workspace_status", "whatsapp", "voice_identification"):
         assert expected in connector_names, f"{expected} missing from unified catalog"
 
@@ -115,7 +114,6 @@ def test_whatsapp_send_without_config_is_503_not_crash():
     #   401 — configured with credentials, but Meta returned 401 Unauthorized
     #   200 — configured with real credentials AND this happens to be an
     #         allowed test recipient
-    assert response.status_code in (200, 400, 503)
     assert response.status_code in (200, 400, 401, 503)
     if response.status_code == 503:
         assert response.json()["detail"]["code"] == "not_configured"
