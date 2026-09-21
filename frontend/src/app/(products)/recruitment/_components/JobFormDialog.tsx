@@ -81,7 +81,7 @@ export function JobFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={(next) => !saving && onOpenChange(next)}>
-      <DialogContent className="sm:max-w-xl rounded-lg border-[#E4E7EC] bg-white p-5 sm:p-6 shadow-lg">
+      <DialogContent className="sm:max-w-xl rounded-xl border-zinc-200 bg-white p-5 sm:p-6 shadow-xl max-h-[90vh] overflow-y-auto">
         <form onSubmit={submit} className="space-y-4">
           <DialogHeader>
             <div className="flex items-center gap-2 mb-1">

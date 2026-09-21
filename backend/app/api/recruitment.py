@@ -805,6 +805,128 @@ def trigger_fraud_scan(
     }
 
 
+# ── Background Verification (BGV) & Reference Check ──────────────────────
+
+class BackgroundVerifyIn(BaseModel):
+    company_name: Optional[str] = Field(None, max_length=200)
+    candidate_role: Optional[str] = Field(None, max_length=200)
+
+
+@router.post("/applications/{application_id}/background-verify")
+def background_verify(
+    application_id: str,
+    body: BackgroundVerifyIn = BackgroundVerifyIn(),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Run open-web background verification for a candidate's declared company
+    experience via Tavily search (company legitimacy check + LinkedIn HR contacts)
+    and synthesize a personalized HR-to-HR reference check email template ready
+    for copying."""
+    app = rs.get_application_for_user(db, user, application_id, rs.ACTION_ANALYZE)
+    cand = db.get(Candidate, app.candidate_id)
+    if not cand:
+        raise HTTPException(status_code=404, detail="Candidate not found.")
+    job = db.get(Role, app.job_id)
+    job_title = job.title if job else "Open Position"
+
+    # Determine company to verify
+    company_name = (body.company_name or "").strip()
+    if not company_name:
+        import re
+        role_text = cand.current_role or ""
+        match = re.search(r"(?:at|@|,)\s+([A-Za-z0-9\s&.,\-]+)", role_text)
+        if match:
+            company_name = match.group(1).strip()
+        elif cand.experience_text and len(cand.experience_text) > 2 and not cand.experience_text.lower().endswith("years"):
+            company_name = cand.experience_text.split(" - ")[0].strip()
+        else:
+            # Look for common company mentions in resume_text
+            company_name = "Previous Employer"
+
+    claimed_role = (body.candidate_role or cand.current_role or "Specialist").strip()
+    candidate_name = cand.name or "Candidate"
+    location = cand.location or "India"
+
+    # Run verification connector
+    from ..agent_tools.verification_tools import connector as bgv_connector
+    bgv_res = bgv_connector._verify_company_background({
+        "company_name": company_name,
+        "location": location,
+    })
+
+    legitimacy = bgv_res.get("legitimacy") or {}
+    hr_contacts = bgv_res.get("hr_contacts") or []
+    hr_phone = bgv_res.get("hr_contact_number") or {}
+    warnings = bgv_res.get("warnings")
+
+    top_contact = hr_contacts[0] if hr_contacts else None
+    recipient_name = top_contact["name"] if top_contact else "Human Resources Team"
+    recipient_title = top_contact["title"] if top_contact else f"Human Resources & Talent Acquisition at {company_name}"
+    recipient_url = top_contact["linkedin_url"] if top_contact else None
+
+    sender_name = user.name or user.email or "Talent Acquisition Lead"
+    exp_str = f"({cand.experience_years} years experience stated)" if cand.experience_years else ""
+
+    email_subject = f"Employment & Background Verification Request: {candidate_name} ({claimed_role})"
+    email_body = (
+        f"Dear {recipient_name},\n\n"
+        f"I hope this message finds you well.\n\n"
+        f"I am reaching out from the Talent Acquisition & People Operations team. We are currently conducting "
+        f"a standard pre-employment background verification for {candidate_name}, who has applied for the "
+        f"{job_title} position with us.\n\n"
+        f"In their application documentation, {candidate_name} reported having previously worked at {company_name} "
+        f"in the capacity of {claimed_role} {exp_str}.\n\n"
+        f"To assist us in completing this verification, could you kindly confirm the following details from your records:\n"
+        f"  1. Official Start Date and End Date of Employment\n"
+        f"  2. Primary Designation and Department held at time of exit\n"
+        f"  3. Nature of Employment (Full-time / Part-time / Contractual)\n"
+        f"  4. Reason for Separation (Voluntary Resignation / Other, if disclosable)\n"
+        f"  5. Eligibility for Re-hire at {company_name}\n"
+        f"  6. Confirmation of professional conduct and standing\n\n"
+        f"The candidate has provided authorization for employment background verification.\n\n"
+        f"We sincerely appreciate your time and assistance. If {company_name} utilizes a third-party verification portal "
+        f"or requires an official verification fee, please let us know so we can arrange it promptly.\n\n"
+        f"Warm regards,\n\n"
+        f"{sender_name}\n"
+        f"Talent Acquisition & People Operations Team\n"
+    )
+
+    # Record activity in audit trail
+    verdict = legitimacy.get("verdict", "checked")
+    score = legitimacy.get("score", 0)
+    rs.record_activity(
+        db,
+        candidate_id=cand.id,
+        application_id=app.id,
+        job_id=app.job_id,
+        event_type="candidate.bgv_verified",
+        actor_type=rs.ACTOR_AI,
+        summary=f"Background verification run for '{company_name}' — legitimacy: {verdict} ({score}/100)",
+        payload={"company": company_name, "verdict": verdict, "score": score, "hr_contacts_found": len(hr_contacts)},
+        dedupe_key=f"bgv:{app.id}:{company_name}:{uuid.uuid4().hex[:6]}",
+    )
+    db.commit()
+
+    return {
+        "candidate_id": cand.id,
+        "application_id": app.id,
+        "company_name": company_name,
+        "claimed_role": claimed_role,
+        "legitimacy": legitimacy,
+        "hr_contacts": hr_contacts,
+        "hr_contact_number": hr_phone,
+        "warnings": warnings,
+        "personalized_email": {
+            "subject": email_subject,
+            "body": email_body,
+            "recipient_name": recipient_name,
+            "recipient_title": recipient_title,
+            "recipient_url": recipient_url,
+        },
+    }
+
+
 # ── Screening invite ────────────────────────────────────────────────────
 
 class ScreeningInviteIn(BaseModel):

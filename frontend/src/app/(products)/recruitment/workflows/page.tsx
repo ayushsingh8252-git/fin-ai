@@ -5,7 +5,8 @@ import {
   AlertTriangle, CheckCircle2, ChevronRight,
   Clock, Loader2, Play, RefreshCw, SlidersHorizontal,
   FileText, ShieldCheck, Check, GripVertical, Settings2,
-  Sparkles, ArrowRight, Zap, Bot, UserCheck, ToggleLeft, ToggleRight
+  Sparkles, ArrowRight, Zap, Bot, UserCheck, ToggleLeft, ToggleRight,
+  Activity, ArrowUpRight
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ErrorBanner } from "@/components/ui/error-banner";
@@ -45,7 +46,7 @@ const DEFAULT_PIPELINE_STEPS: PipelineStep[] = [
   {
     id: "screening",
     number: "02",
-    name: "Basic Qualifications Check",
+    name: "Qualifications Check",
     subtitle: "Verifies minimum years and required skills",
     description: "Filters out applicants who do not meet the baseline criteria before spending valuable team interview time.",
     enabled: true,
@@ -58,7 +59,7 @@ const DEFAULT_PIPELINE_STEPS: PipelineStep[] = [
   {
     id: "scoring",
     number: "03",
-    name: "AI Role Suitability Score",
+    name: "AI Suitability Score",
     subtitle: "Scores candidate fit from 0 to 100%",
     description: "Compares the candidate's background against your job description to generate a transparent fit rating.",
     enabled: true,
@@ -72,7 +73,7 @@ const DEFAULT_PIPELINE_STEPS: PipelineStep[] = [
     id: "routing",
     number: "04",
     name: "Smart Decision Dispatch",
-    subtitle: "Sends candidates to the right stage automatically",
+    subtitle: "Dispatches candidates automatically",
     description: "High-scoring applicants are fast-tracked, while borderline candidates are queued for your human review.",
     enabled: true,
     config: {
@@ -101,7 +102,7 @@ export default function WorkflowsPage() {
   const [steps, setSteps] = useState<PipelineStep[]>(DEFAULT_PIPELINE_STEPS);
   const [selectedStepId, setSelectedStepId] = useState<string>("routing");
 
-  // Friendly simulation test state
+  // Simulation test state
   const [simulating, setSimulating] = useState(false);
   const [simActiveStepId, setSimActiveStepId] = useState<string | null>(null);
   const [simLogs, setSimLogs] = useState<SimulationLog[]>([]);
@@ -139,17 +140,16 @@ export default function WorkflowsPage() {
     };
   }, [refresh]);
 
-  // Non-tech simulation runner
   const runSimulation = () => {
     if (simulating) return;
     setSimulating(true);
     setSimLogs([]);
 
     const demoFlow = [
-      { id: "intake", step: "Resume Intake", msg: "Resume received for Priya Sharma · Extracted 5.5 years exp at Swiggy Labs, verified Python & PyTorch.", delay: 600 },
+      { id: "intake", step: "Resume Intake", msg: "Resume received for Priya Sharma · Extracted 5.5 years exp, verified Python & PyTorch.", delay: 600 },
       { id: "screening", step: "Qualifications Check", msg: "Minimum experience met: 5.5 years (Required: 3.0 years) · Core skills verified.", delay: 1300 },
       { id: "scoring", step: "Role Fit Scoring", msg: "Calculated 93% suitability fit · High semantic alignment for Lead AI Systems Engineer.", delay: 2100 },
-      { id: "routing", step: "Smart Dispatch", msg: "Score 93% exceeds 80% threshold · Auto-advanced to Shortlist & sent WhatsApp screening invite.", delay: 2900 },
+      { id: "routing", step: "Smart Dispatch", msg: "Score 93% exceeds 80% threshold · Auto-advanced to Shortlist & sent screening invite.", delay: 2900 },
     ];
 
     demoFlow.forEach(({ id, step, msg, delay }, i) => {
@@ -193,37 +193,44 @@ export default function WorkflowsPage() {
   const selectedStep = steps.find((s) => s.id === selectedStepId) || steps[3];
 
   return (
-    <div className="space-y-6 pb-12">
-      {/* Friendly Non-Tech Header */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b border-zinc-200/80 pb-5">
+    <div className="space-y-6 pb-14">
+      {/* ─── Clean Enterprise Header ─── */}
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-zinc-200/80 pb-5">
         <div>
-          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-zinc-900">
+          <div className="flex items-center gap-2 mb-1">
+            <span className="text-[11px] font-mono font-semibold uppercase tracking-wider text-blue-600 bg-blue-50/90 border border-blue-200/60 px-2 py-0.5 rounded">
+              Rule Engine
+            </span>
+            <span className="text-zinc-300">/</span>
+            <span className="text-xs text-zinc-500 font-medium">Pipeline Workflows</span>
+          </div>
+          <h1 className="text-2xl font-bold tracking-tight text-zinc-900">
             Hiring Automations
           </h1>
-          <p className="mt-1 text-xs sm:text-sm text-zinc-500">
-            Automate repetitive recruiting tasks: screen resumes, verify qualifications, and fast-track top candidates.
+          <p className="mt-0.5 text-xs text-zinc-500 font-medium">
+            Automated qualification screening, AI semantic scoring, and candidate stage routing rules.
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2.5">
           <Button
             variant="outline"
             size="sm"
             onClick={() => setRefresh((n) => n + 1)}
             disabled={loading}
-            className="h-8 rounded-lg border-zinc-200 text-xs font-semibold text-zinc-700 hover:bg-zinc-100 shadow-2xs cursor-pointer"
+            className="h-8.5 rounded-xl border-zinc-200 bg-white text-xs font-semibold text-zinc-700 hover:bg-zinc-50 shadow-2xs cursor-pointer transition-all"
           >
-            <RefreshCw className={cn("h-3.5 w-3.5 mr-1.5 text-zinc-400", loading && "animate-spin")} />
-            Sync Automations
+            <RefreshCw className={cn("h-3.5 w-3.5 mr-1.5 text-zinc-400", loading && "animate-spin text-blue-600")} />
+            Sync Rules
           </Button>
 
           <Button
             size="sm"
             onClick={runSimulation}
             disabled={simulating}
-            className="h-8 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-white text-xs font-semibold px-3 shadow-2xs cursor-pointer"
+            className="h-8.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-3.5 shadow-sm shadow-blue-600/20 cursor-pointer transition-all"
           >
-            {simulating ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <Play className="h-3.5 w-3.5 mr-1.5" />}
+            {simulating ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <Play className="h-3.5 w-3.5 mr-1.5 fill-white" />}
             Test Hiring Flow
           </Button>
         </div>
@@ -231,25 +238,25 @@ export default function WorkflowsPage() {
 
       {error && <ErrorBanner message={error} />}
 
-      {/* ── 4-STEP VISUAL HIRING FLOW (SIMPLE FOR NON-TECH) ── */}
-      <section className="rounded-xl border border-zinc-200/80 bg-white p-4 sm:p-5 shadow-2xs space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-100 pb-3">
+      {/* ── 4-STEP VISUAL HIRING FLOW ── */}
+      <section className="rounded-2xl border border-zinc-200/80 bg-white p-5 sm:p-6 shadow-2xs space-y-5">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-100 pb-3.5">
           <div>
             <h2 className="text-xs font-bold uppercase tracking-wider text-zinc-900">
-              Your Active Hiring Rules
+              Active Pipeline Automation Stages
             </h2>
-            <p className="text-[11px] text-zinc-500">
-              Click any step to view or customize its settings.
+            <p className="text-[11px] text-zinc-500 font-medium mt-0.5">
+              Select any stage below to configure its trigger criteria and scoring thresholds.
             </p>
           </div>
-          <span className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-full">
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-            Automations Active
+          <span className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-1 rounded-full shadow-2xs">
+            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+            Automations Live
           </span>
         </div>
 
         {/* The 4 Connected Step Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
           {steps.map((s, idx) => {
             const isSelected = selectedStepId === s.id;
             const isSimActive = simActiveStepId === s.id;
@@ -259,30 +266,30 @@ export default function WorkflowsPage() {
                 key={s.id}
                 onClick={() => setSelectedStepId(s.id)}
                 className={cn(
-                  "relative rounded-xl border p-4 transition-all cursor-pointer bg-white shadow-2xs space-y-2 select-none",
+                  "relative rounded-2xl border p-4.5 transition-all cursor-pointer bg-white space-y-2.5 select-none",
                   isSimActive
-                    ? "border-emerald-600 ring-2 ring-emerald-500/20 shadow-sm"
+                    ? "border-emerald-600 ring-2 ring-emerald-500/20 shadow-md scale-[1.02]"
                     : isSelected
-                    ? "border-zinc-900 ring-1 ring-zinc-900/10"
-                    : "border-zinc-200/80 hover:border-zinc-300"
+                    ? "border-blue-600 ring-2 ring-blue-600/15 shadow-sm"
+                    : "border-zinc-200/80 hover:border-zinc-300 shadow-2xs"
                 )}
               >
-                <div className="flex items-center justify-between border-b border-zinc-100 pb-2">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 font-mono">
-                    Step {s.number}
+                <div className="flex items-center justify-between border-b border-zinc-100 pb-2.5">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-blue-600 font-mono bg-blue-50 px-2 py-0.5 rounded-md border border-blue-200/60">
+                    STAGE {s.number}
                   </span>
                   <span className={cn(
-                    "h-2 w-2 rounded-full",
+                    "h-2 w-2 rounded-full shrink-0",
                     isSimActive ? "bg-emerald-500 animate-ping" : "bg-emerald-500"
                   )} />
                 </div>
 
-                <h3 className="text-xs font-bold text-zinc-900">{s.name}</h3>
-                <p className="text-[11px] text-zinc-500 leading-relaxed">{s.subtitle}</p>
+                <h3 className="text-xs font-extrabold text-zinc-900">{s.name}</h3>
+                <p className="text-[11px] text-zinc-500 leading-relaxed font-medium">{s.subtitle}</p>
 
                 {idx < steps.length - 1 && (
-                  <div className="hidden lg:flex absolute -right-2.5 top-1/2 -translate-y-1/2 z-10 h-5 w-5 items-center justify-center rounded-full bg-zinc-100 border border-zinc-200 text-zinc-500 shadow-2xs">
-                    <ChevronRight className="h-3 w-3" />
+                  <div className="hidden lg:flex absolute -right-3 top-1/2 -translate-y-1/2 z-10 h-6 w-6 items-center justify-center rounded-full bg-white border border-zinc-200 text-zinc-500 shadow-2xs">
+                    <ChevronRight className="h-3.5 w-3.5" />
                   </div>
                 )}
               </div>
@@ -291,29 +298,29 @@ export default function WorkflowsPage() {
         </div>
 
         {/* Step Inspector & Simple Settings */}
-        <div className="rounded-xl border border-zinc-200/80 bg-zinc-50/70 p-4 space-y-3">
-          <div className="flex items-center justify-between border-b border-zinc-200/70 pb-2">
-            <div className="flex items-center gap-2">
-              <div className="flex h-6 w-6 items-center justify-center rounded-md bg-white border border-zinc-200 text-zinc-600 shrink-0">
-                <Settings2 className="h-3.5 w-3.5" strokeWidth={1.75} />
+        <div className="rounded-2xl border border-zinc-200/80 bg-zinc-50/60 p-5 space-y-3.5">
+          <div className="flex items-center justify-between border-b border-zinc-200/60 pb-3">
+            <div className="flex items-center gap-2.5">
+              <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-white border border-zinc-200 text-blue-600 shadow-2xs">
+                <Settings2 className="h-4 w-4" strokeWidth={2} />
               </div>
-              <h4 className="text-xs font-bold text-zinc-900">
-                Settings for: {selectedStep.name}
+              <h4 className="text-xs font-extrabold text-zinc-900">
+                Configuration for: {selectedStep.name}
               </h4>
             </div>
-            <span className="text-[11px] text-emerald-700 font-semibold bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
-              Active Rule
+            <span className="text-[10px] font-mono font-bold text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200">
+              Active Criteria
             </span>
           </div>
 
-          <p className="text-xs text-zinc-600 leading-relaxed font-normal">
+          <p className="text-xs text-zinc-600 leading-relaxed max-w-2xl font-medium">
             {selectedStep.description}
           </p>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
             {Object.entries(selectedStep.config).map(([label, val]) => (
-              <div key={label} className="rounded-lg bg-white border border-zinc-200/80 p-3 text-xs space-y-1 shadow-2xs">
-                <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider block">
+              <div key={label} className="rounded-xl bg-white border border-zinc-200/80 p-3.5 text-xs space-y-1 shadow-2xs">
+                <span className="text-[10px] font-mono font-bold text-zinc-400 uppercase tracking-wider block">
                   {label}
                 </span>
                 <span className="text-xs font-bold text-zinc-900 block font-mono">
@@ -324,24 +331,25 @@ export default function WorkflowsPage() {
           </div>
         </div>
 
-        {/* Live Simulation Output (Shows when test button clicked) */}
+        {/* Live Simulation Output (matching Main Website AutomationCardInteractive) */}
         {simLogs.length > 0 && (
-          <div className="rounded-xl border border-zinc-200/80 bg-zinc-900 text-white p-4 space-y-2.5 shadow-2xs">
-            <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
-              <span className="text-xs font-bold uppercase tracking-wider text-zinc-300 flex items-center gap-1.5">
-                <Sparkles className="h-3.5 w-3.5 text-emerald-400" />
-                Live Hiring Simulation Result
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-900 text-white p-5 space-y-3 shadow-xl relative overflow-hidden">
+            <div className="pointer-events-none absolute -top-10 -right-10 w-44 h-44 bg-blue-500/10 rounded-full blur-2xl" />
+            <div className="flex items-center justify-between border-b border-zinc-800 pb-2.5">
+              <span className="text-xs font-bold uppercase tracking-wider text-zinc-300 flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                Live Agent Execution Trace
               </span>
-              <span className="text-[10px] font-bold text-emerald-400">
-                {simulating ? "Processing steps…" : "✓ Complete"}
+              <span className="text-[10px] font-mono font-bold text-emerald-400">
+                {simulating ? "Executing steps…" : "✓ Pipeline Completed"}
               </span>
             </div>
-            <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1 text-xs">
+            <div className="space-y-2 max-h-40 overflow-y-auto pr-1 text-xs">
               {simLogs.map((log, i) => (
                 <div key={i} className="flex items-start gap-2.5 leading-relaxed">
                   <span className="text-emerald-400 font-bold font-mono shrink-0">✓</span>
-                  <span className="text-zinc-400 font-medium shrink-0">[{log.stepName}]:</span>
-                  <span className="text-zinc-100">{log.message}</span>
+                  <span className="text-zinc-400 font-mono text-[11px] shrink-0">[{log.stepName}]:</span>
+                  <span className="text-zinc-100 font-medium">{log.message}</span>
                 </div>
               ))}
             </div>
@@ -349,32 +357,34 @@ export default function WorkflowsPage() {
         )}
       </section>
 
-      {/* ── READY-TO-USE AUTOMATION RECIPES ── */}
-      <section className="rounded-xl border border-zinc-200/80 bg-white p-4 sm:p-5 shadow-2xs space-y-3.5">
-        <div className="border-b border-zinc-100 pb-2.5">
+      {/* ── READY-TO-USE AUTOMATION RECIPES (.cpu-burn-card Design System) ── */}
+      <section className="rounded-2xl border border-zinc-200/80 bg-white p-5 sm:p-6 shadow-2xs space-y-5">
+        <div className="border-b border-zinc-100 pb-3">
           <h2 className="text-xs font-bold uppercase tracking-wider text-zinc-900">
             One-Click Automation Recipes
           </h2>
-          <p className="text-[11px] text-zinc-500">
-            Pre-built recruiting workflows you can run instantly across any job position.
+          <p className="text-[11px] text-zinc-500 font-medium mt-0.5">
+            Pre-configured recruitment workflows you can execute across active job requisitions.
           </p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {templates.map((tmpl) => (
             <div
               key={tmpl.id}
-              className="rounded-xl border border-zinc-200/80 bg-zinc-50/50 p-4 flex flex-col justify-between space-y-3 shadow-2xs hover:border-zinc-300 transition-colors"
+              className="cpu-burn-card flex flex-col justify-between space-y-4 cursor-default"
             >
-              <div className="space-y-1.5">
+              <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">
-                    {tmpl.steps?.length || 3} Automated Actions
+                  <div className="card-icon-badge">
+                    <Zap className="w-5 h-5 text-blue-600" />
+                  </div>
+                  <span className="text-[10px] font-mono font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                    {tmpl.steps?.length || 3} Actions
                   </span>
-                  <span className="h-2 w-2 rounded-full bg-emerald-500" />
                 </div>
-                <h3 className="text-xs font-bold text-zinc-900">{tmpl.name}</h3>
-                <p className="text-[11px] text-zinc-600 leading-relaxed font-normal">
+                <h3 className="text-sm font-extrabold text-zinc-900">{tmpl.name}</h3>
+                <p className="text-xs text-zinc-500 leading-relaxed font-medium">
                   {tmpl.description}
                 </p>
               </div>
@@ -382,9 +392,9 @@ export default function WorkflowsPage() {
               <Button
                 size="sm"
                 onClick={() => setSelectedTemplate(tmpl)}
-                className="w-full h-8 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-white text-xs font-semibold cursor-pointer shadow-2xs"
+                className="w-full h-8.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold cursor-pointer shadow-sm shadow-blue-600/20 transition-all hover:-translate-y-0.5 active:translate-y-0"
               >
-                Run Automation <ArrowRight className="h-3 w-3 ml-1 text-zinc-400" />
+                Run Automation <ArrowRight className="h-3.5 w-3.5 ml-1.5" />
               </Button>
             </div>
           ))}
@@ -393,15 +403,15 @@ export default function WorkflowsPage() {
 
       {/* Trigger Execution Modal Form */}
       {selectedTemplate && (
-        <div className="rounded-xl border border-zinc-200/80 bg-white p-5 space-y-4 shadow-lg">
+        <div className="rounded-2xl border border-zinc-200 bg-white p-6 space-y-4 shadow-xl">
           <div className="flex items-center justify-between border-b border-zinc-100 pb-3">
             <div>
-              <h3 className="text-sm font-bold text-zinc-900">Run: {selectedTemplate.name}</h3>
-              <p className="text-xs text-zinc-500">Select which open role to run this hiring automation on</p>
+              <h3 className="text-sm font-extrabold text-zinc-900">Run Automation: {selectedTemplate.name}</h3>
+              <p className="text-xs text-zinc-500 font-medium mt-0.5">Select which open role to execute this hiring workflow on</p>
             </div>
             <button
               onClick={() => setSelectedTemplate(null)}
-              className="text-xs text-zinc-400 hover:text-zinc-800 cursor-pointer"
+              className="text-xs text-zinc-400 hover:text-zinc-800 cursor-pointer font-semibold"
             >
               Cancel
             </button>
@@ -410,13 +420,13 @@ export default function WorkflowsPage() {
           {triggerError && <ErrorBanner message={triggerError} />}
 
           <form onSubmit={handleRunSubmit} className="space-y-4">
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid gap-4 sm:grid-cols-2">
               <div>
-                <label className="block text-xs font-bold text-zinc-700 mb-1">Target Job Position</label>
+                <label className="block text-xs font-bold text-zinc-700 mb-1.5">Target Job Position</label>
                 <select
                   value={selectedJobId}
                   onChange={(e) => setSelectedJobId(e.target.value)}
-                  className="w-full h-9 rounded-lg border border-zinc-200 bg-white px-2.5 text-xs text-zinc-900"
+                  className="w-full h-9 rounded-xl border border-zinc-200 bg-white px-3 text-xs text-zinc-900 focus:outline-none focus:border-blue-500"
                 >
                   <option value="">All Active Positions</option>
                   {jobs.map((j) => (
@@ -428,25 +438,25 @@ export default function WorkflowsPage() {
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-zinc-700 mb-1">Minimum Score Required (%)</label>
+                <label className="block text-xs font-bold text-zinc-700 mb-1.5">Minimum Score Threshold (%)</label>
                 <input
                   type="number"
                   min="50"
                   max="95"
                   value={paramMinScore}
                   onChange={(e) => setParamMinScore(Number(e.target.value))}
-                  className="w-full h-9 rounded-lg border border-zinc-200 bg-white px-2.5 text-xs text-zinc-900"
+                  className="w-full h-9 rounded-xl border border-zinc-200 bg-white px-3 text-xs text-zinc-900 focus:outline-none focus:border-blue-500 font-mono font-bold"
                 />
               </div>
             </div>
 
-            <div className="flex justify-end gap-2 pt-2 border-t border-zinc-100">
+            <div className="flex justify-end gap-2.5 pt-3 border-t border-zinc-100">
               <Button
                 type="button"
                 variant="outline"
                 size="sm"
                 onClick={() => setSelectedTemplate(null)}
-                className="h-8 rounded-lg text-xs"
+                className="h-8.5 rounded-xl text-xs font-semibold"
               >
                 Cancel
               </Button>
@@ -454,9 +464,9 @@ export default function WorkflowsPage() {
                 type="submit"
                 size="sm"
                 disabled={triggering}
-                className="h-8 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-white text-xs font-semibold shadow-2xs cursor-pointer"
+                className="h-8.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-md shadow-blue-600/20 cursor-pointer"
               >
-                {triggering ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <Play className="h-3 w-3 mr-1" />}
+                {triggering ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <Play className="h-3.5 w-3.5 mr-1.5 fill-white" />}
                 Confirm & Run
               </Button>
             </div>
@@ -465,42 +475,47 @@ export default function WorkflowsPage() {
       )}
 
       {/* ── AUTOMATION HISTORY LOG ── */}
-      <section className="rounded-xl border border-zinc-200/80 bg-white p-4 sm:p-5 shadow-2xs space-y-3.5">
-        <div className="border-b border-zinc-100 pb-2.5 flex items-center justify-between">
-          <h2 className="text-xs font-bold uppercase tracking-wider text-zinc-900">
-            Recent Automation History ({runs.length})
-          </h2>
-          <span className="text-xs text-zinc-500">Live execution log</span>
+      <section className="rounded-2xl border border-zinc-200/80 bg-white p-5 sm:p-6 shadow-2xs space-y-4">
+        <div className="border-b border-zinc-100 pb-3 flex items-center justify-between">
+          <div>
+            <h2 className="text-xs font-bold uppercase tracking-wider text-zinc-900">
+              Execution History ({runs.length})
+            </h2>
+            <p className="text-[11px] text-zinc-500 font-medium">Audit trail of automated recruitment workflows</p>
+          </div>
+          <span className="text-xs text-zinc-500 font-mono">Real-time log</span>
         </div>
 
-        <div className="space-y-2">
+        <div className="space-y-2.5">
           {runs.map((r) => (
             <div
               key={r.id}
-              className="rounded-lg border border-zinc-100 bg-zinc-50/50 p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
+              className="rounded-xl border border-zinc-100 bg-zinc-50/50 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs hover:border-zinc-200 transition-colors"
             >
-              <div className="space-y-0.5">
-                <div className="flex items-center gap-2">
-                  <h4 className="font-bold text-zinc-900">{r.title}</h4>
+              <div className="space-y-1">
+                <div className="flex items-center gap-2.5">
+                  <h4 className="font-extrabold text-zinc-900 text-xs sm:text-sm">{r.title}</h4>
                   <span className={cn(
-                    "rounded-full px-2 py-0.2 text-[10px] font-bold capitalize",
-                    r.status === "completed" ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : "bg-zinc-200 text-zinc-700"
+                    "rounded-full px-2.5 py-0.5 text-[10px] font-mono font-bold capitalize border",
+                    r.status === "completed"
+                      ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                      : "bg-zinc-100 text-zinc-700 border-zinc-200"
                   )}>
                     {r.status}
                   </span>
                 </div>
-                {r.summary && <p className="text-zinc-600 text-[11px] font-normal">{r.summary}</p>}
+                {r.summary && <p className="text-zinc-600 text-xs font-medium">{r.summary}</p>}
               </div>
 
-              <div className="flex items-center gap-2 text-[11px] text-zinc-500 shrink-0">
-                <Clock className="h-3 w-3 text-zinc-400" />
+              <div className="flex items-center gap-2 text-[11px] text-zinc-400 font-mono shrink-0">
+                <Clock className="h-3.5 w-3.5 text-zinc-400" />
                 <span>{r.created_at ? new Date(r.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "Recent"}</span>
               </div>
             </div>
           ))}
 
           {runs.length === 0 && (
-            <p className="text-xs text-zinc-400 py-6 text-center">No past automations run yet.</p>
+            <p className="text-xs text-zinc-400 py-8 text-center font-medium">No past automations run yet.</p>
           )}
         </div>
       </section>

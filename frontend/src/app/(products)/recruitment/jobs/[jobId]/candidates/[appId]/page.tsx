@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import {
@@ -9,7 +9,7 @@ import {
   CheckCircle2, XCircle, Briefcase, Download,
   Calendar, Send, DollarSign, Check, Copy, Plus,
   ShieldCheck, MessageSquare, PhoneCall,
-  Sparkles, CheckCheck, Zap
+  Sparkles, CheckCheck, Zap, Building2, Search, UserCheck, AlertTriangle, Globe
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ErrorBanner } from "@/components/ui/error-banner";
@@ -19,6 +19,7 @@ import {
   errorMessage, getApplication360, setStage, openResume,
   triggerFraudScan, sendScreeningInvite, scheduleInterview,
   createOffer, updateOffer, sendWhatsAppMessage, triggerTelephonicCall,
+  triggerBackgroundVerification, type BackgroundVerificationResponse,
   type Application360, type Stage,
 } from "@/lib/recruitmentApi";
 import { StageBadge } from "@/app/(products)/recruitment/_components/indicators";
@@ -936,6 +937,374 @@ function ActivityTab({ data }: { data: Application360 }) {
   );
 }
 
+// ── Tab: Background Verification (BGV) & HR Reference Check ────────────────
+function BackgroundVerificationTab({
+  data,
+  onActivityRefresh,
+}: {
+  data: Application360;
+  onActivityRefresh?: () => void;
+}) {
+  const { candidate, application, job } = data;
+  const { toast } = useToast();
+
+  const initialCompany = useMemo(() => {
+    const roleText = candidate.current_role || "";
+    const match = roleText.match(/(?:at|@|,)\s+([A-Za-z0-9\s&.,\-]+)/i);
+    if (match && match[1]) return match[1].trim();
+    if (
+      candidate.experience_text &&
+      !candidate.experience_text.toLowerCase().endsWith("years") &&
+      candidate.experience_text.length > 2
+    ) {
+      return candidate.experience_text.split(" - ")[0].trim();
+    }
+    return "Razorpay";
+  }, [candidate]);
+
+  const [companyName, setCompanyName] = useState(initialCompany);
+  const [candidateRole, setCandidateRole] = useState(candidate.current_role || "Software Engineer");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<BackgroundVerificationResponse | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const handleRunVerification = async () => {
+    if (!companyName.trim()) {
+      setError("Please specify a company name to verify.");
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await triggerBackgroundVerification(application.id, {
+        company_name: companyName.trim(),
+        candidate_role: candidateRole.trim(),
+      });
+      setResult(res);
+      toast("success", `Background verification completed for ${companyName}.`);
+      onActivityRefresh?.();
+    } catch (err) {
+      setError(errorMessage(err));
+      toast("error", `Verification failed: ${errorMessage(err)}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleCopyEmail = () => {
+    if (!result?.personalized_email?.body) return;
+    navigator.clipboard.writeText(result.personalized_email.body);
+    setCopied(true);
+    toast("success", "Personalized HR verification email copied to clipboard!");
+    setTimeout(() => setCopied(false), 2500);
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* ── BGV Configuration & Trigger Card ── */}
+      <div className="rounded-xl border border-zinc-200/80 bg-white p-4 shadow-2xs space-y-3.5">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-b border-zinc-100 pb-3">
+          <div>
+            <div className="flex items-center gap-1.5">
+              <ShieldCheck className="h-4 w-4 text-blue-600" />
+              <h3 className="text-sm font-bold text-zinc-900">Background Verification & Employer Check</h3>
+              <span className="text-[10px] font-mono font-bold px-1.5 py-0.2 rounded bg-blue-50 text-blue-700 border border-blue-200">
+                LIVE AGENT
+              </span>
+            </div>
+            <p className="text-xs text-zinc-500 mt-0.5">
+              Inspects declared employment, verifies company legitimacy via open-web signals, retrieves HR contacts, and synthesizes a reference check email.
+            </p>
+          </div>
+
+          <Button
+            size="sm"
+            onClick={handleRunVerification}
+            disabled={loading}
+            className="h-8 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-3.5 shadow-sm shadow-blue-600/20 cursor-pointer self-start sm:self-auto shrink-0 transition-all hover:-translate-y-0.5"
+          >
+            {loading ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
+            ) : (
+              <Sparkles className="h-3.5 w-3.5 text-blue-200 mr-1.5" />
+            )}
+            <span>{result ? "Re-run Verification" : "Run BGV Agent"}</span>
+          </Button>
+        </div>
+
+        {/* Inputs row */}
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div>
+            <label className="block text-[11px] font-bold text-zinc-600 mb-1 flex items-center gap-1">
+              <Building2 className="h-3 w-3 text-zinc-400" /> Declared Previous Employer
+            </label>
+            <input
+              type="text"
+              value={companyName}
+              onChange={(e) => setCompanyName(e.target.value)}
+              placeholder="e.g. Razorpay, Swiggy, Infosys"
+              className="w-full h-8.5 rounded-lg border border-zinc-200 bg-zinc-50/60 px-3 text-xs text-zinc-900 focus:outline-none focus:bg-white focus:border-blue-500 transition-colors"
+            />
+          </div>
+
+          <div>
+            <label className="block text-[11px] font-bold text-zinc-600 mb-1 flex items-center gap-1">
+              <Briefcase className="h-3 w-3 text-zinc-400" /> Declared Candidate Role
+            </label>
+            <input
+              type="text"
+              value={candidateRole}
+              onChange={(e) => setCandidateRole(e.target.value)}
+              placeholder="e.g. Senior Backend Engineer"
+              className="w-full h-8.5 rounded-lg border border-zinc-200 bg-zinc-50/60 px-3 text-xs text-zinc-900 focus:outline-none focus:bg-white focus:border-blue-500 transition-colors"
+            />
+          </div>
+        </div>
+
+        {error && <ErrorBanner message={error} />}
+      </div>
+
+      {/* ── Results Container ── */}
+      {result && (
+        <div className="space-y-4">
+          {/* Top Summary Grid: Legitimacy + Signals */}
+          <div className="grid gap-3 sm:grid-cols-3">
+            {/* Legitimacy Verdict */}
+            <div className="rounded-xl border border-zinc-200/80 bg-white p-3.5 shadow-2xs space-y-1.5">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 block font-mono">
+                Legitimacy Verdict
+              </span>
+              <div className="flex items-center gap-2">
+                <span
+                  className={cn(
+                    "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold capitalize border",
+                    result.legitimacy.verdict === "likely_legitimate"
+                      ? "bg-emerald-50 text-emerald-800 border-emerald-200"
+                      : result.legitimacy.verdict === "likely_not_legitimate"
+                      ? "bg-rose-50 text-rose-800 border-rose-200"
+                      : "bg-amber-50 text-amber-800 border-amber-200"
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "h-1.5 w-1.5 rounded-full",
+                      result.legitimacy.verdict === "likely_legitimate"
+                        ? "bg-emerald-500"
+                        : result.legitimacy.verdict === "likely_not_legitimate"
+                        ? "bg-rose-500"
+                        : "bg-amber-500"
+                    )}
+                  />
+                  {result.legitimacy.verdict.replace(/_/g, " ")}
+                </span>
+                <span className="text-xs font-mono font-bold text-zinc-700">
+                  {result.legitimacy.score}/100
+                </span>
+              </div>
+              <p className="text-[11px] text-zinc-500 leading-tight">
+                {result.legitimacy.note || "Verified through public open-web footprint."}
+              </p>
+            </div>
+
+            {/* Public Signals Evidence */}
+            <div className="rounded-xl border border-zinc-200/80 bg-white p-3.5 shadow-2xs space-y-1.5">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 block font-mono">
+                Public Signal Counts
+              </span>
+              <div className="flex items-baseline gap-2">
+                <span className="text-xl font-bold font-mono text-zinc-900">
+                  {result.legitimacy.positive_signals ?? 0}
+                </span>
+                <span className="text-xs text-emerald-700 font-semibold">Positive Sources</span>
+                {Boolean(result.legitimacy.negative_signals) && (
+                  <span className="text-xs text-rose-600 font-semibold font-mono">
+                    · {result.legitimacy.negative_signals} Negative
+                  </span>
+                )}
+              </div>
+              <p className="text-[11px] text-zinc-500 leading-tight">
+                Official website, Crunchbase, and LinkedIn verification checked.
+              </p>
+            </div>
+
+            {/* HR Contacts Found */}
+            <div className="rounded-xl border border-zinc-200/80 bg-white p-3.5 shadow-2xs space-y-1.5">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 block font-mono">
+                HR Contacts Found
+              </span>
+              <div className="flex items-baseline gap-2">
+                <span className="text-xl font-bold font-mono text-zinc-900">
+                  {result.hr_contacts.length}
+                </span>
+                <span className="text-xs text-blue-700 font-semibold">LinkedIn Profiles</span>
+              </div>
+              <p className="text-[11px] text-zinc-500 leading-tight">
+                Identified Talent Acquisition and People team members.
+              </p>
+            </div>
+          </div>
+
+          {/* HR-to-HR Personalized Verification Email Template (HIGHLIGHTED) */}
+          <div className="rounded-xl border border-blue-200/90 bg-gradient-to-b from-blue-50/40 to-white p-4 sm:p-5 shadow-sm space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-b border-blue-100 pb-3">
+              <div>
+                <div className="flex items-center gap-1.5">
+                  <Mail className="h-4 w-4 text-blue-600" />
+                  <h4 className="text-sm font-bold text-zinc-900">
+                    Personalized HR-to-HR Reference Check Email
+                  </h4>
+                  <span className="text-[10px] font-mono font-bold px-1.5 py-0.2 rounded bg-emerald-100 text-emerald-800">
+                    READY TO SEND
+                  </span>
+                </div>
+                <p className="text-xs text-zinc-500 mt-0.5">
+                  Synthesized for {result.personalized_email.recipient_name} ({result.personalized_email.recipient_title}). Copy and send to complete verification.
+                </p>
+              </div>
+
+              <Button
+                size="sm"
+                onClick={handleCopyEmail}
+                className={cn(
+                  "h-8 rounded-xl text-xs font-bold px-3.5 shadow-sm transition-all cursor-pointer self-start sm:self-auto",
+                  copied
+                    ? "bg-emerald-600 hover:bg-emerald-700 text-white"
+                    : "bg-zinc-900 hover:bg-zinc-800 text-white shadow-zinc-900/10"
+                )}
+              >
+                {copied ? (
+                  <>
+                    <CheckCheck className="h-3.5 w-3.5 mr-1 text-emerald-200" />
+                    Copied!
+                  </>
+                ) : (
+                  <>
+                    <Copy className="h-3.5 w-3.5 mr-1" />
+                    Copy Email Template
+                  </>
+                )}
+              </Button>
+            </div>
+
+            {/* Subject */}
+            <div className="rounded-lg bg-white border border-blue-100 px-3 py-2 text-xs">
+              <span className="font-mono text-zinc-400 text-[10px] uppercase font-bold block mb-0.5">
+                Subject
+              </span>
+              <span className="font-semibold text-zinc-900 select-all">
+                {result.personalized_email.subject}
+              </span>
+            </div>
+
+            {/* Body */}
+            <div className="rounded-lg bg-white border border-blue-100 p-3.5 text-xs text-zinc-800 font-sans leading-relaxed whitespace-pre-wrap select-all">
+              {result.personalized_email.body}
+            </div>
+
+            {/* Quick Helper */}
+            <div className="flex items-center justify-between text-[11px] text-zinc-500 pt-1">
+              <span>Recipients: HR / Talent Acquisition department at {result.company_name}</span>
+              {result.personalized_email.recipient_url && (
+                <a
+                  href={result.personalized_email.recipient_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 font-semibold text-blue-600 hover:text-blue-700"
+                >
+                  <span>Connect on LinkedIn</span>
+                  <ExternalLink className="h-3 w-3" />
+                </a>
+              )}
+            </div>
+          </div>
+
+          {/* Discovered HR Contacts Table */}
+          {result.hr_contacts.length > 0 && (
+            <div className="rounded-xl border border-zinc-200/80 bg-white p-4 shadow-2xs space-y-3">
+              <span className="text-xs font-semibold text-zinc-900 flex items-center gap-1.5 border-b border-zinc-100 pb-2">
+                <UserCheck className="h-3.5 w-3.5 text-zinc-700" />
+                Discovered HR & Talent Acquisition Network ({result.hr_contacts.length})
+              </span>
+
+              <div className="grid gap-2 sm:grid-cols-2">
+                {result.hr_contacts.map((contact, idx) => (
+                  <div
+                    key={idx}
+                    className="flex items-start justify-between p-2.5 rounded-lg border border-zinc-100 bg-zinc-50/60 hover:bg-blue-50/30 transition-colors text-xs"
+                  >
+                    <div className="min-w-0 pr-2">
+                      <div className="font-bold text-zinc-900 truncate">{contact.name}</div>
+                      <div className="text-[11px] text-zinc-500 truncate">{contact.title}</div>
+                      <div className="text-[10px] text-emerald-700 font-mono mt-0.5">
+                        Confidence: {Math.round(contact.confidence * 100)}%
+                      </div>
+                    </div>
+                    {contact.linkedin_url && (
+                      <a
+                        href={contact.linkedin_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="shrink-0 p-1.5 rounded-md hover:bg-zinc-200 text-zinc-500 hover:text-blue-600 transition-colors"
+                        title="Open LinkedIn profile"
+                      >
+                        <ExternalLink className="h-3.5 w-3.5" />
+                      </a>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Web Evidence Sources */}
+          {result.legitimacy.evidence && result.legitimacy.evidence.length > 0 && (
+            <div className="rounded-xl border border-zinc-200/80 bg-white p-4 shadow-2xs space-y-2.5">
+              <span className="text-xs font-semibold text-zinc-900 flex items-center gap-1.5 border-b border-zinc-100 pb-2">
+                <Globe className="h-3.5 w-3.5 text-zinc-700" />
+                Open-Web Signal Evidence ({result.legitimacy.evidence.length})
+              </span>
+
+              <div className="space-y-2">
+                {result.legitimacy.evidence.map((ev, idx) => (
+                  <div key={idx} className="p-2.5 rounded-lg border border-zinc-100 bg-zinc-50/40 text-xs space-y-0.5">
+                    <div className="flex items-center justify-between">
+                      <a
+                        href={ev.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="font-bold text-blue-600 hover:underline flex items-center gap-1 truncate max-w-md"
+                      >
+                        <span className="truncate">{ev.title || ev.url}</span>
+                        <ExternalLink className="h-2.5 w-2.5 shrink-0" />
+                      </a>
+                      <span
+                        className={cn(
+                          "text-[9px] font-mono font-bold uppercase px-1.5 py-0.2 rounded",
+                          ev.signal === "positive"
+                            ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                            : "bg-rose-50 text-rose-700 border border-rose-200"
+                        )}
+                      >
+                        {ev.signal}
+                      </span>
+                    </div>
+                    {ev.snippet && (
+                      <p className="text-[11px] text-zinc-500 line-clamp-2 leading-relaxed">
+                        {ev.snippet}
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Master Candidate Detail Page (Compact, High-Density, Data-First) ────────
 export default function CandidateDetailPage() {
   const params = useParams<{ jobId: string; appId: string }>();
@@ -1129,6 +1498,7 @@ export default function CandidateDetailPage() {
       <div className="flex items-center gap-1 border-b border-zinc-200/80 overflow-x-auto scrollbar-none pb-px">
         {[
           { id: "evaluation", label: "Evaluation", count: matchVal ? `${matchVal}%` : undefined },
+          { id: "bgv", label: "BGV & Reference", count: "Agent" },
           { id: "whatsapp", label: "WhatsApp", count: data.whatsapp_messages?.length || 0 },
           { id: "voice", label: "AI Voice Screen", count: data.telephonic_calls?.length || 0 },
           { id: "interviews", label: "Interviews", count: data.interviews?.length || 0 },
@@ -1153,7 +1523,11 @@ export default function CandidateDetailPage() {
                 <span
                   className={cn(
                     "rounded px-1.5 py-0.2 text-[10px] font-mono",
-                    isActive ? "bg-zinc-200 text-zinc-800 font-bold" : "bg-zinc-100 text-zinc-500"
+                    tab.id === "bgv"
+                      ? "bg-blue-100 text-blue-700 font-bold"
+                      : isActive
+                      ? "bg-zinc-200 text-zinc-800 font-bold"
+                      : "bg-zinc-100 text-zinc-500"
                   )}
                 >
                   {tab.count}
@@ -1168,6 +1542,9 @@ export default function CandidateDetailPage() {
       <div className="pt-0.5">
         {activeTab === "evaluation" && (
           <EvaluationTab data={data} onNavigateTab={setActiveTab} />
+        )}
+        {activeTab === "bgv" && (
+          <BackgroundVerificationTab data={data} onActivityRefresh={reload} />
         )}
         {activeTab === "whatsapp" && (
           <WhatsAppTab data={data} onReload={reload} />

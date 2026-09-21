@@ -4,10 +4,11 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
-  Briefcase, Search, Plus, MapPin, Users,
-  ArrowRight, Loader2, CheckCircle2,
-  X, Clock, Activity, Download,
-  Layers, Inbox, ArrowUpRight, Trash2, Edit2, Sparkles
+  Search, Plus, MapPin,
+  ArrowRight, Loader2,
+  X, Download,
+  Trash2, Edit2, Sparkles,
+  ChevronRight, Zap
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ErrorBanner } from "@/components/ui/error-banner";
@@ -15,40 +16,74 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
-import { errorMessage, listJobs, seedDemoPipeline, updateJob, deleteJob, DEMO_JOBS, type Job } from "@/lib/recruitmentApi";
+import { errorMessage, listJobs, updateJob, deleteJob, DEMO_JOBS, type Job } from "@/lib/recruitmentApi";
 import { JobFormDialog } from "./_components/JobFormDialog";
 import { useRecruitment } from "./_components/RecruitmentShell";
+import {
+  BriefcaseMetricSvg,
+  CandidatePoolMetricSvg,
+  EvaluationMetricSvg,
+  OutcomesMetricSvg,
+  EmptyStateGeometricSvg
+} from "./_components/indicators";
 import { useToast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
 
 type Loaded = { jobs: Job[] } | { error: string } | null;
 
-// ── Metric Card ─────────────────────────────────────────────────────────────
+// ── Clean Enterprise Metric Card ───────────────────────────────────────────
 function MetricCard({
   label,
   value,
   subtext,
+  icon: IconSvg,
+  badge,
+  badgeTone = "blue",
 }: {
   label: string;
   value: string | number;
   subtext: string;
+  icon: React.ComponentType<{ className?: string }>;
+  badge?: string;
+  badgeTone?: "blue" | "emerald" | "amber" | "zinc";
 }) {
   return (
-    <div className="rounded-xl border border-zinc-200/80 bg-white p-4 shadow-2xs">
-      <span className="text-[11px] font-bold uppercase tracking-wider text-zinc-500">
-        {label}
-      </span>
-      <div className="mt-2 flex items-baseline justify-between">
-        <span className="text-2xl font-bold tracking-tight text-zinc-900 font-mono">
+    <div className="group rounded-2xl border border-zinc-200/80 bg-white p-5 shadow-2xs hover:border-zinc-300 hover:shadow-xs transition-all">
+      <div className="flex items-center justify-between">
+        <span className="text-[11px] font-mono font-semibold uppercase tracking-wider text-zinc-500">
+          {label}
+        </span>
+        <div className="w-8 h-8 rounded-xl bg-zinc-50 border border-zinc-200/70 flex items-center justify-center text-zinc-700 group-hover:text-blue-600 group-hover:border-blue-200 group-hover:bg-blue-50/50 transition-colors">
+          <IconSvg className="w-4 h-4" />
+        </div>
+      </div>
+      <div className="mt-3 flex items-baseline gap-2.5">
+        <span className="text-3xl font-extrabold tracking-tight font-mono text-zinc-900">
           {value}
         </span>
+        {badge && (
+          <span className={cn(
+            "text-[10px] font-mono font-bold px-2 py-0.5 rounded-full border",
+            badgeTone === "emerald"
+              ? "bg-emerald-50 text-emerald-700 border-emerald-200/80"
+              : badgeTone === "amber"
+              ? "bg-amber-50 text-amber-700 border-amber-200/80"
+              : badgeTone === "zinc"
+              ? "bg-zinc-100 text-zinc-700 border-zinc-200"
+              : "bg-blue-50 text-blue-700 border-blue-200/80"
+          )}>
+            {badge}
+          </span>
+        )}
       </div>
-      <p className="mt-1 text-xs text-zinc-500">{subtext}</p>
+      <p className="mt-3 text-xs text-zinc-500 font-medium pt-2.5 border-t border-zinc-100 flex items-center justify-between">
+        <span>{subtext}</span>
+      </p>
     </div>
   );
 }
 
-// ── Requisition Table Row ───────────────────────────────────────────────────
+// ── Clean Requisition Table Row ─────────────────────────────────────────────
 function JobTableRow({
   job,
   code,
@@ -63,36 +98,43 @@ function JobTableRow({
   onDelete: (job: Job) => void;
 }) {
   const isOpen = job.status === "open";
-  const p = job.pipeline;
+  const p = job.pipeline || {};
   const total = job.total_candidates || 0;
-  const inReview = (p.APPLIED ?? 0) + (p.SHORTLISTED ?? 0);
+  const inApplied = p.APPLIED ?? 0;
+  const inShortlisted = p.SHORTLISTED ?? 0;
   const inInterview = p.INTERVIEW ?? 0;
   const inClosing = (p.OFFER ?? 0) + (p.HIRED ?? 0);
 
+  const appliedPct = total > 0 ? (inApplied / total) * 100 : 0;
+  const shortPct = total > 0 ? (inShortlisted / total) * 100 : 0;
+  const interviewPct = total > 0 ? (inInterview / total) * 100 : 0;
+  const closingPct = total > 0 ? (inClosing / total) * 100 : 0;
+
   return (
-    <tr className="group hover:bg-zinc-50/70 transition-colors border-b border-zinc-100 last:border-0">
-      <td className="px-5 py-4">
+    <tr className="group hover:bg-zinc-50/80 transition-colors border-b border-zinc-100 last:border-0">
+      <td className="px-6 py-4">
         <div className="space-y-1">
           <div className="flex items-center gap-2">
-            <span className="font-mono text-[10px] font-bold text-zinc-500 bg-zinc-100 px-1.5 py-0.5 rounded">
+            <span className="font-mono text-[10px] font-bold text-zinc-600 bg-zinc-100 border border-zinc-200 px-1.5 py-0.5 rounded">
               {code}
             </span>
             <Link
               href={`/recruitment/jobs/${job.id}`}
-              className="font-bold text-xs text-zinc-900 hover:text-blue-600 transition-colors truncate max-w-sm block"
+              className="font-bold text-sm text-zinc-900 hover:text-blue-600 transition-colors truncate max-w-sm block"
             >
               {job.title}
             </Link>
           </div>
-          <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+          <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-500 font-medium">
             {job.department && (
-              <span className="rounded bg-zinc-100 px-2 py-0.5 font-medium text-zinc-600 text-[11px]">
+              <span className="text-zinc-600">
                 {job.department}
               </span>
             )}
             {job.location && (
-              <span className="flex items-center gap-0.5 text-zinc-400 text-[11px]">
-                <MapPin className="h-3 w-3" />
+              <span className="flex items-center gap-1 text-zinc-400 text-[11px]">
+                <span>·</span>
+                <MapPin className="h-3 w-3 text-zinc-400" />
                 {job.location}
               </span>
             )}
@@ -106,26 +148,27 @@ function JobTableRow({
             {job.min_experience_years}+ yrs
           </span>
         ) : (
-          <span className="text-zinc-400 text-xs">Flexible</span>
+          <span className="text-zinc-400 text-xs font-mono">Flexible</span>
         )}
       </td>
 
-      <td className="px-4 py-4 whitespace-nowrap">
-        <div className="space-y-1">
-          <div className="flex items-center gap-2">
-            <span className="font-mono font-bold text-xs text-zinc-900">{total} candidates</span>
+      <td className="px-5 py-4 whitespace-nowrap min-w-[200px]">
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between text-xs">
+            <span className="font-mono font-bold text-zinc-900">
+              {total} <span className="font-sans font-normal text-zinc-400 text-[11px]">candidates</span>
+            </span>
+            <span className="text-[11px] font-mono text-zinc-500">
+              {inInterview > 0 ? `${inInterview} in interview` : inClosing > 0 ? `${inClosing} hired` : `${total} active`}
+            </span>
           </div>
-          <div className="text-[11px] text-zinc-500 flex items-center gap-1.5 font-medium">
-            {total === 0 ? (
-              <span className="text-zinc-400">No applicants yet</span>
-            ) : (
-              <span>
-                {inReview > 0 && `${inReview} review · `}
-                {inInterview > 0 && `${inInterview} interview · `}
-                {inClosing > 0 && `${inClosing} offer/hired`}
-                {inReview === 0 && inInterview === 0 && inClosing === 0 && `${total} total`}
-              </span>
-            )}
+
+          {/* Minimalist Segmented Progress Bar */}
+          <div className="h-1.5 w-full rounded-full bg-zinc-100 overflow-hidden flex">
+            {appliedPct > 0 && <div style={{ width: `${appliedPct}%` }} className="h-full bg-zinc-300" title={`Applied: ${inApplied}`} />}
+            {shortPct > 0 && <div style={{ width: `${shortPct}%` }} className="h-full bg-blue-400" title={`Shortlisted: ${inShortlisted}`} />}
+            {interviewPct > 0 && <div style={{ width: `${interviewPct}%` }} className="h-full bg-blue-600" title={`Interview: ${inInterview}`} />}
+            {closingPct > 0 && <div style={{ width: `${closingPct}%` }} className="h-full bg-emerald-500" title={`Offer/Hired: ${inClosing}`} />}
           </div>
         </div>
       </td>
@@ -135,9 +178,9 @@ function JobTableRow({
           onClick={() => onStatusToggle(job, isOpen ? "closed" : "open")}
           title={`Click to mark as ${isOpen ? "Closed" : "Active"}`}
           className={cn(
-            "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold border transition-all",
+            "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-semibold border transition-all cursor-pointer",
             isOpen
-              ? "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100"
+              ? "bg-emerald-50 text-emerald-700 border-emerald-200/80 hover:bg-emerald-100"
               : "bg-zinc-100 text-zinc-600 border-zinc-200 hover:bg-zinc-200"
           )}
         >
@@ -146,28 +189,28 @@ function JobTableRow({
         </button>
       </td>
 
-      <td className="px-5 py-4 text-right whitespace-nowrap">
+      <td className="px-6 py-4 text-right whitespace-nowrap">
         <div className="flex items-center justify-end gap-1.5">
           <button
             onClick={() => onEdit(job)}
             title="Edit position"
-            className="h-8 px-2.5 rounded-lg border border-zinc-200 text-xs font-semibold text-zinc-700 hover:bg-zinc-100 transition-colors"
+            className="h-8 px-2.5 rounded-lg border border-zinc-200 bg-white text-xs font-semibold text-zinc-700 hover:bg-zinc-50 transition-colors cursor-pointer"
           >
             Edit
           </button>
           <button
             onClick={() => onDelete(job)}
             title="Delete position"
-            className="h-8 px-2 rounded-lg border border-zinc-200 text-zinc-500 hover:bg-rose-50 hover:text-rose-600 hover:border-rose-200 transition-colors"
+            className="h-8 w-8 flex items-center justify-center rounded-lg border border-zinc-200 bg-white text-zinc-400 hover:bg-rose-50 hover:text-rose-600 hover:border-rose-200 transition-colors cursor-pointer"
           >
             <Trash2 className="h-3.5 w-3.5" />
           </button>
           <Link
             href={`/recruitment/jobs/${job.id}`}
-            className="inline-flex items-center gap-1 h-8 px-3 rounded-lg bg-zinc-900 text-white text-xs font-semibold hover:bg-zinc-800 transition-all shadow-2xs"
+            className="inline-flex items-center gap-1 h-8 px-3 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-white text-xs font-semibold transition-all shadow-2xs"
           >
             <span>Pipeline</span>
-            <ArrowRight className="h-3.5 w-3.5" />
+            <ArrowRight className="h-3 w-3" />
           </Link>
         </div>
       </td>
@@ -331,35 +374,66 @@ export default function JobsPage() {
   ];
 
   return (
-    <div className="space-y-6 pb-12">
-      {/* Executive Clean Header */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b border-zinc-200/80 pb-5">
+    <div className="space-y-6 pb-14">
+      {/* ─── Clean Enterprise Header ─── */}
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-zinc-200/80 pb-5">
         <div>
-          <h1 className="text-xl font-bold tracking-tight text-zinc-900">
-            Positions
+          <div className="flex items-center gap-2 mb-1">
+            <span className="text-[11px] font-mono font-semibold uppercase tracking-wider text-blue-600 bg-blue-50/90 border border-blue-200/60 px-2 py-0.5 rounded">
+              Talent Platform
+            </span>
+            <span className="text-zinc-300">/</span>
+            <span className="text-xs text-zinc-500 font-medium">Requisition Hub</span>
+          </div>
+          <h1 className="text-2xl font-bold tracking-tight text-zinc-900">
+            Positions & Requisitions
           </h1>
-          <p className="text-xs text-zinc-500 mt-0.5">
-            {metrics.activeJobs} active requisitions · {metrics.totalCandidates} candidates in pipeline
+          <p className="text-xs text-zinc-500 mt-0.5 font-medium">
+            {metrics.activeJobs} active roles open · {metrics.totalCandidates} applicants in pipeline
           </p>
         </div>
 
         <div className="flex items-center gap-2">
+          <Link
+            href="/hiring-automation"
+            className="h-8.5 px-3 rounded-xl border border-amber-200 bg-amber-50/80 hover:bg-amber-100 text-amber-800 text-xs font-semibold inline-flex items-center gap-1.5 transition-colors shadow-2xs"
+            title="Open AI Take-Home Assignment Generator & Bulk Dispatch"
+          >
+            <Zap className="h-3.5 w-3.5 text-amber-500 fill-amber-500" />
+            <span className="hidden sm:inline">Bulk Assignment</span>
+          </Link>
+
           <Button
             variant="outline"
             size="sm"
             onClick={handleExportCsv}
             disabled={!loaded || !("jobs" in loaded) || loaded.jobs.length === 0}
-            className="h-8 rounded-lg border-zinc-200 text-xs font-semibold text-zinc-700 hover:bg-zinc-100"
+            className="h-8.5 rounded-xl border-zinc-200 bg-white text-xs font-semibold text-zinc-700 hover:bg-zinc-50 shadow-2xs"
           >
-            <Download className="h-3.5 w-3.5 mr-1 text-zinc-500" />
+            <Download className="h-3.5 w-3.5 mr-1.5 text-zinc-400" />
             Export CSV
           </Button>
+
+          {(!loaded || ("jobs" in loaded && loaded.jobs.length === 0)) && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setLoaded({ jobs: DEMO_JOBS });
+                toast("success", "Loaded demo requisitions.");
+              }}
+              className="h-8.5 rounded-xl border-zinc-200 bg-white text-xs font-semibold text-zinc-700 hover:bg-zinc-50 shadow-2xs"
+            >
+              <Sparkles className="h-3.5 w-3.5 mr-1.5 text-amber-500" />
+              Load Demo
+            </Button>
+          )}
 
           {can("create_job") && (
             <Button
               size="sm"
               onClick={openCreateForm}
-              className="h-8 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-white font-semibold text-xs inline-flex items-center gap-1.5 px-3 shadow-2xs"
+              className="h-8.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs inline-flex items-center gap-1.5 px-3.5 shadow-sm shadow-blue-600/20"
             >
               <Plus className="h-3.5 w-3.5" />
               <span>New Position</span>
@@ -368,31 +442,43 @@ export default function JobsPage() {
         </div>
       </div>
 
-      {/* 4 Clean Metric Tiles */}
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      {/* ─── 4 Clean Metric Cards ─── */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <MetricCard
           label="Active Roles"
           value={metrics.activeJobs}
-          subtext="Positions open for sourcing"
+          subtext="Open for candidates"
+          icon={BriefcaseMetricSvg}
+          badge="Live"
+          badgeTone="emerald"
         />
         <MetricCard
-          label="Candidates"
+          label="Candidate Pool"
           value={metrics.totalCandidates}
-          subtext="Total applicants in pipeline"
+          subtext="Total applicants tracked"
+          icon={CandidatePoolMetricSvg}
+          badge="Volume"
+          badgeTone="blue"
         />
         <MetricCard
           label="In Evaluation"
           value={metrics.inScreening}
-          subtext="Screening and panel interviews"
+          subtext="Screening & interviews"
+          icon={EvaluationMetricSvg}
+          badge="Active"
+          badgeTone="amber"
         />
         <MetricCard
           label="Offers & Hired"
           value={metrics.offers}
-          subtext="Closing and onboarded"
+          subtext="Successful placements"
+          icon={OutcomesMetricSvg}
+          badge="Outcomes"
+          badgeTone="emerald"
         />
       </div>
 
-      {/* Filter Toolbar with Integrated Stage Funnel */}
+      {/* ─── Filter Funnel & Search Toolbar ─── */}
       <div className="space-y-3">
         {/* Pipeline Stage Quick Tabs */}
         {metrics.totalCandidates > 0 && (
@@ -400,10 +486,10 @@ export default function JobsPage() {
             <button
               onClick={() => setSelectedStage(null)}
               className={cn(
-                "px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all",
+                "px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all border cursor-pointer",
                 selectedStage === null
-                  ? "bg-zinc-900 text-white shadow-xs"
-                  : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900"
+                  ? "bg-zinc-900 text-white border-zinc-900 shadow-2xs"
+                  : "bg-white text-zinc-600 border-zinc-200 hover:bg-zinc-50 hover:text-zinc-900"
               )}
             >
               All Stages ({metrics.totalCandidates})
@@ -413,16 +499,16 @@ export default function JobsPage() {
                 key={st.key}
                 onClick={() => setSelectedStage(selectedStage === st.key ? null : st.key)}
                 className={cn(
-                  "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all",
+                  "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all border cursor-pointer",
                   selectedStage === st.key
-                    ? "bg-zinc-900 text-white shadow-xs"
-                    : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900"
+                    ? "bg-zinc-900 text-white border-zinc-900 shadow-2xs"
+                    : "bg-white text-zinc-600 border-zinc-200 hover:bg-zinc-50 hover:text-zinc-900"
                 )}
               >
                 <span>{st.label}</span>
                 <span className={cn(
-                  "rounded-full px-1.5 py-0.2 text-[10px] font-bold tabular-nums",
-                  selectedStage === st.key ? "bg-zinc-800 text-zinc-200" : "bg-zinc-100 text-zinc-600"
+                  "rounded-full px-1.5 py-0.2 text-[10px] font-mono font-bold tabular-nums",
+                  selectedStage === st.key ? "bg-zinc-800 text-zinc-200" : "bg-zinc-100 text-zinc-700"
                 )}>
                   {st.count}
                 </span>
@@ -432,7 +518,7 @@ export default function JobsPage() {
         )}
 
         {/* Search & Filter Bar */}
-        <div className="flex flex-col gap-2.5 rounded-xl border border-zinc-200/80 bg-white p-2 sm:flex-row sm:items-center sm:justify-between shadow-2xs">
+        <div className="flex flex-col gap-2.5 rounded-xl border border-zinc-200/80 bg-white p-2.5 sm:flex-row sm:items-center sm:justify-between shadow-2xs">
           <div className="relative flex-1">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
             <input
@@ -440,12 +526,12 @@ export default function JobsPage() {
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search positions by title, department, or required skill..."
-              className="w-full rounded-lg border border-zinc-200/80 bg-zinc-50/60 py-1.5 pl-8 pr-7 text-xs text-zinc-900 placeholder:text-zinc-400 focus:outline-none focus:bg-white"
+              className="w-full rounded-lg border border-zinc-200/80 bg-zinc-50/60 py-1.5 pl-8 pr-7 text-xs text-zinc-900 placeholder:text-zinc-400 focus:outline-none focus:bg-white focus:border-blue-500 transition-colors"
             />
             {searchQuery && (
               <button
                 onClick={() => setSearchQuery("")}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-700"
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-700 cursor-pointer"
               >
                 <X className="h-3.5 w-3.5" />
               </button>
@@ -458,13 +544,13 @@ export default function JobsPage() {
                 key={status}
                 onClick={() => setStatusFilter(status)}
                 className={cn(
-                  "rounded-md px-2.5 py-1 text-xs font-semibold capitalize transition-all",
+                  "rounded-lg px-2.5 py-1 text-xs font-semibold capitalize transition-all border cursor-pointer",
                   statusFilter === status
-                    ? "bg-zinc-900 text-white"
-                    : "text-zinc-600 hover:bg-zinc-100"
+                    ? "bg-zinc-900 text-white border-zinc-900 shadow-2xs"
+                    : "bg-white text-zinc-600 border-zinc-200 hover:bg-zinc-50"
                 )}
               >
-                {status === "all" ? "All Status" : status === "open" ? "Active" : "Closed"}
+                {status === "all" ? "All" : status === "open" ? "Active" : "Closed"}
               </button>
             ))}
 
@@ -472,7 +558,7 @@ export default function JobsPage() {
               <select
                 value={selectedDept}
                 onChange={(e) => setSelectedDept(e.target.value)}
-                className="rounded-md border border-zinc-200/80 bg-zinc-50 px-2 py-1 text-xs font-semibold text-zinc-700 focus:outline-none"
+                className="rounded-lg border border-zinc-200/80 bg-white px-2.5 py-1 text-xs font-semibold text-zinc-700 focus:outline-none"
               >
                 <option value="all">All Departments</option>
                 {departments.map((d) => (
@@ -494,7 +580,7 @@ export default function JobsPage() {
 
         {/* Error Message */}
         {loaded && "error" in loaded && (
-          <div className="space-y-3">
+          <div className="space-y-3 rounded-xl border border-zinc-200 bg-white p-5">
             <ErrorBanner message={loaded.error} />
             <div className="flex items-center gap-2">
               <Button
@@ -512,7 +598,7 @@ export default function JobsPage() {
                 size="sm"
                 onClick={() => {
                   setLoaded({ jobs: DEMO_JOBS });
-                  toast("success", "Loaded demo requisitions. You can filter, search, and view pipeline states.");
+                  toast("success", "Loaded demo requisitions dataset.");
                 }}
                 className="rounded-lg bg-zinc-900 text-white text-xs font-semibold hover:bg-zinc-800"
               >
@@ -525,17 +611,29 @@ export default function JobsPage() {
 
         {/* Empty State */}
         {loaded && "jobs" in loaded && loaded.jobs.length === 0 && (
-          <div className="rounded-xl border border-dashed border-zinc-200 bg-white p-12 text-center">
-            <Briefcase className="h-7 w-7 text-zinc-400 mx-auto" />
-            <p className="mt-2.5 text-xs font-bold text-zinc-900">No Positions Found</p>
-            <p className="mt-1 text-xs text-zinc-500">Create a job requisition to start sourcing and evaluating candidates.</p>
-            <div className="mt-4 flex justify-center">
+          <div className="rounded-2xl border border-dashed border-zinc-200 bg-white p-12 text-center">
+            <EmptyStateGeometricSvg className="mb-2" />
+            <p className="mt-2 text-sm font-bold text-zinc-900">No Positions Found</p>
+            <p className="mt-1 text-xs text-zinc-500 max-w-sm mx-auto">Create a job requisition to start screening candidates with AI policy rules.</p>
+            <div className="mt-4 flex items-center justify-center gap-2">
               <Button
                 size="sm"
                 onClick={openCreateForm}
-                className="h-8 rounded-lg bg-zinc-900 text-xs font-semibold text-white"
+                className="h-8 rounded-lg bg-blue-600 hover:bg-blue-700 text-xs font-semibold text-white shadow-2xs"
               >
+                <Plus className="mr-1.5 h-3.5 w-3.5" />
                 Create Position
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setLoaded({ jobs: DEMO_JOBS });
+                  toast("success", "Loaded demo positions.");
+                }}
+                className="h-8 rounded-lg border-zinc-200 text-xs font-semibold text-zinc-700"
+              >
+                Load Demo
               </Button>
             </div>
           </div>
@@ -545,7 +643,7 @@ export default function JobsPage() {
         {loaded && "jobs" in loaded && loaded.jobs.length > 0 && (
           <div className="rounded-xl border border-zinc-200/80 bg-white overflow-hidden shadow-2xs">
             {filteredJobs.length === 0 ? (
-              <div className="p-8 text-center text-xs text-zinc-500">
+              <div className="p-10 text-center text-xs text-zinc-500">
                 No positions matching the selected filters.
               </div>
             ) : (
@@ -553,11 +651,11 @@ export default function JobsPage() {
                 <table className="w-full text-left text-xs">
                   <thead className="border-b border-zinc-100 bg-zinc-50/70 text-[10px] font-bold uppercase tracking-wider text-zinc-500">
                     <tr>
-                      <th className="px-5 py-3">Position</th>
-                      <th className="px-4 py-3">Experience</th>
-                      <th className="px-4 py-3">Candidate Pipeline</th>
-                      <th className="px-4 py-3">Status</th>
-                      <th className="px-5 py-3 text-right">Actions</th>
+                      <th className="px-6 py-3.5">Position</th>
+                      <th className="px-4 py-3.5">Experience</th>
+                      <th className="px-5 py-3.5">Candidate Pipeline</th>
+                      <th className="px-4 py-3.5">Status</th>
+                      <th className="px-6 py-3.5 text-right">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-100">

@@ -59,10 +59,13 @@ export function ProductNav() {
     setOpen(false);
   }, [pathname]);
 
-  // /rag keeps its own bespoke nav (BrandMark-based workspace header) and is
-  // explicitly excluded from this pass — render nothing there so it isn't
-  // double-navved.
-  if (pathname?.startsWith("/rag") || pathname?.startsWith("/command-center")) return null;
+  // /rag, /command-center, and /recruitment keep their own bespoke workspace nav
+  // and are explicitly excluded here to prevent double-nav and sticky header collisions.
+  if (
+    pathname?.startsWith("/rag") ||
+    pathname?.startsWith("/command-center") ||
+    pathname?.startsWith("/recruitment")
+  ) return null;
 
   return (
     <div className="sticky top-0 z-40 bg-white/85 backdrop-blur-md border-b border-zinc-200/80">

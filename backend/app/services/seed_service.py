@@ -232,6 +232,8 @@ def seed_recruitment_demo(db: Session, user: User) -> dict:
                 screening_res = models.ScreeningResult(
                     id=str(uuid.uuid4()),
                     session_id=screening_sess.id,
+                    candidate_name=cand.name or "Candidate",
+                    role_title=job1.title,
                     source="screening_agent",
                     verdict="Strong Fit",
                     jd_match_score=94,

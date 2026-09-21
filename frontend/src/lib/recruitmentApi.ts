@@ -583,6 +583,70 @@ export const triggerWorkflowRun = (templateId: string, jobId?: string, parameter
     body: JSON.stringify({ template_id: templateId, job_id: jobId || null, parameters: parameters || {} }),
   });
 
+export interface BackgroundVerificationResponse {
+  candidate_id: string;
+  application_id: string;
+  company_name: string;
+  claimed_role: string;
+  legitimacy: {
+    verdict: "likely_legitimate" | "likely_not_legitimate" | "uncertain" | "unknown" | string;
+    score: number;
+    positive_signals?: number;
+    negative_signals?: number;
+    evidence?: Array<{ title: string; url: string; snippet: string; signal: string }>;
+    note?: string;
+  };
+  hr_contacts: Array<{
+    name: string;
+    title: string;
+    linkedin_url: string;
+    confidence: number;
+    source_snippet?: string;
+  }>;
+  hr_contact_number?: {
+    number: string | null;
+    source_url: string | null;
+    note?: string;
+  };
+  warnings?: string[] | null;
+  personalized_email: {
+    subject: string;
+    body: string;
+    recipient_name: string;
+    recipient_title: string;
+    recipient_url?: string | null;
+  };
+}
+
+export const triggerBackgroundVerification = (
+  applicationId: string,
+  payload?: { company_name?: string; candidate_role?: string }
+) =>
+  request<BackgroundVerificationResponse>(`/applications/${applicationId}/background-verify`, {
+    method: "POST",
+    body: JSON.stringify(payload || {}),
+  });
+
+export interface GeneratedAssignment {
+  title: string;
+  duration: string;
+  requirements: string[];
+  submission: string;
+}
+
+export const generateTakeHomeAssignment = async (
+  requirement: string,
+  roleTitle = "the open role"
+): Promise<GeneratedAssignment> => {
+  const res = await fetch("/api/v1/hiring/assignment", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ requirement, role_title: roleTitle }),
+  });
+  if (!res.ok) throw new Error(`Assignment generation failed (${res.status})`);
+  return res.json();
+};
+
 
 
 export const getBatch = (batchId: string) => request<BatchStatus>(`/batches/${batchId}`);

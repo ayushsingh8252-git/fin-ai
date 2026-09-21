@@ -298,3 +298,62 @@ export function EmptyStateGeometricSvg({ className }: { className?: string }) {
     </svg>
   );
 }
+
+/** Premium Geometric Briefcase Metric SVG */
+export function BriefcaseMetricSvg({ className = "w-4 h-4" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className={className}>
+      <rect x="3" y="7" width="18" height="13" rx="3" stroke="currentColor" strokeWidth="1.75" />
+      <path d="M8 7V5C8 3.89543 8.89543 3 10 3H14C15.1046 3 16 3.89543 16 5V7" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+      <path d="M3 12H21" stroke="currentColor" strokeWidth="1.25" strokeDasharray="2 2" opacity="0.4" />
+      <rect x="10.5" y="10.5" width="3" height="3" rx="1" fill="currentColor" />
+    </svg>
+  );
+}
+
+/** Premium Geometric Candidate Pool Network SVG */
+export function CandidatePoolMetricSvg({ className = "w-4 h-4" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className={className}>
+      <circle cx="9" cy="7" r="3" stroke="currentColor" strokeWidth="1.75" />
+      <path d="M3 18C3 15.2386 5.68629 13 9 13C12.3137 13 15 15.2386 15 18" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+      <circle cx="17" cy="8" r="2.2" stroke="currentColor" strokeWidth="1.25" opacity="0.6" />
+      <path d="M16 13.5C18.2 13.8 20 15.2 20 17" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" opacity="0.6" />
+    </svg>
+  );
+}
+
+/** Premium Geometric Radar Scope / Evaluation SVG */
+export function EvaluationMetricSvg({ className = "w-4 h-4" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className={className}>
+      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.75" />
+      <circle cx="12" cy="12" r="5" stroke="currentColor" strokeWidth="1.2" opacity="0.4" />
+      <circle cx="12" cy="12" r="2" fill="currentColor" />
+      <path d="M12 3V7M12 17V21M3 12H7M17 12H21" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" opacity="0.6" />
+    </svg>
+  );
+}
+
+/** Premium Geometric Verified Outcomes SVG */
+export function OutcomesMetricSvg({ className = "w-4 h-4" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className={className}>
+      <path d="M12 2L15.09 5.26L19.5 5.9L18.18 10.24L20.22 14.24L16.09 16L14.77 20.34L10.5 19L7.41 22.26L6.09 17.92L1.78 17.28L3.82 13.28L2.5 8.94L6.91 8.3L8.23 3.96L12 2Z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+      <path d="M8.5 12L11 14.5L15.5 9.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+/** Bespoke Fin AI Talent Engine Logomark SVG */
+export function TalentBrandMarkSvg({ className = "w-5 h-5" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className={className}>
+      <rect x="2.5" y="2.5" width="19" height="19" rx="5.5" stroke="currentColor" strokeWidth="1.5" opacity="0.3" />
+      <path d="M7 8L12 15L17 8" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx="7" cy="8" r="2" fill="currentColor" />
+      <circle cx="17" cy="8" r="2" fill="currentColor" />
+      <circle cx="12" cy="15" r="2.5" fill="currentColor" />
+    </svg>
+  );
+}
