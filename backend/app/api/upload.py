@@ -7,7 +7,13 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models import Document, Chunk, Rule
-from ..worker import process_document_task, process_url_task
+from concurrent.futures import ThreadPoolExecutor
+from ..worker import (
+    process_document_task,
+    process_url_task,
+    execute_process_document,
+    execute_process_url,
+)
 from ..services.canonicalization import delete_vectors_by_ids
 from ..services.cache import flush_query_cache
 from ..services.upload_safety import safe_filename, MAX_UPLOAD_BYTES
@@ -20,32 +26,42 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 ALLOWED_EXTENSIONS = {".pdf", ".mp3", ".wav", ".m4a", ".ogg", ".flac", ".aac", ".webm", ".wma", ".md", ".txt"}
 
+_fallback_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="ingestion-fallback")
+
 
 def _dispatch_ingestion(db: Session, doc: Document, task, *task_args) -> Optional[str]:
-    """Real Celery dispatch (task.delay(...)) — replaces the old
-    ThreadPoolExecutor.submit(...) in-process execution. Returns the
-    dispatched task_id, or None if the broker itself couldn't be reached at
-    dispatch time (Redis down/unreachable). That failure is surfaced
-    honestly: the document is marked "failed" with a real reason rather than
-    silently reporting "uploaded"/"processing" for work that was never
-    actually queued — same fail-honestly convention as the task's own retry
-    logic in worker.py."""
+    """Dispatches ingestion to Celery if available. When Redis/Celery is not
+    running (local dev/offline testing), gracefully falls back to an in-process
+    ThreadPoolExecutor so document ingestion completes without error."""
     try:
         async_result = task.delay(*task_args)
-        logger.info("[ingestion] task_id=%s document_id=%s dispatched to Celery (%s)", async_result.id, doc.id, task.name)
+        logger.info("[ingestion] task_id=%s document_id=%s dispatched to Celery (%s)", async_result.id, doc.id, getattr(task, "name", str(task)))
         meta = dict(doc.metadata_ or {})
         meta["task_id"] = async_result.id
         doc.metadata_ = meta
         db.commit()
         return async_result.id
     except Exception as e:
-        logger.error("[ingestion] document_id=%s failed to dispatch to Celery broker: %s", doc.id, e)
-        meta = dict(doc.metadata_ or {})
-        meta["status"] = "failed"
-        meta["error"] = f"Could not queue for processing — task queue unavailable: {e}"
-        doc.metadata_ = meta
-        db.commit()
-        return None
+        logger.warning(
+            "[ingestion] Celery dispatch failed (%s). Falling back to background executor for document_id=%s",
+            e, doc.id
+        )
+
+    fallback_id = f"local-{uuid.uuid4()}"
+    meta = dict(doc.metadata_ or {})
+    meta["task_id"] = fallback_id
+    meta["status"] = "processing"
+    meta.pop("error", None)
+    doc.metadata_ = meta
+    db.commit()
+
+    task_name = getattr(task, "name", "") or getattr(task, "__name__", "")
+    if "url" in str(task_name).lower():
+        _fallback_executor.submit(execute_process_url, *task_args, task_id=fallback_id)
+    else:
+        _fallback_executor.submit(execute_process_document, *task_args, task_id=fallback_id)
+
+    return fallback_id
 
 
 class UrlUploadRequest(BaseModel):

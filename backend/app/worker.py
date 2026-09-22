@@ -220,32 +220,20 @@ def _process_text_blocks(document_id: str, blocks_data: list[dict], db) -> dict:
     return {"status": "success", "chunks_count": len(chunks), "rules_extracted": valid_rules_count}
 
 
-@celery_app.task(name="process_url", bind=True, max_retries=INGESTION_MAX_RETRIES)
-def process_url_task(self, document_id: str, url: str):
+def execute_process_url(document_id: str, url: str, task_id: str = None, attempt: int = 0):
     from .services.web_service import crawl_url_to_blocks
     from .database import SessionLocal
     from .models import Document
 
-    task_id = self.request.id
-    attempt = self.request.retries
+    task_id = task_id or "local"
     logger.info("[ingestion] task_id=%s document_id=%s process_url started (attempt %d)", task_id, document_id, attempt + 1)
 
     db = SessionLocal()
     try:
         doc = db.query(Document).filter(Document.id == document_id).first()
         if not doc:
-            # The record this task_id was dispatched for no longer exists —
-            # retrying can't recreate it (matches Step 5's own example of a
-            # permanent, non-retryable condition).
             raise NonRetryableIngestionError(f"Document {document_id!r} not found — nothing to process.")
 
-        # Idempotency guard: a redelivered/duplicate dispatch of a task whose
-        # document already finished successfully is skipped rather than
-        # re-run — the ingestion pipeline isn't idempotent (fresh chunk/rule
-        # ids every run; see api/upload.py's /reprocess endpoint, which has
-        # to explicitly delete old rows before a legitimate re-run). A real
-        # reprocess request resets status to "uploaded" before dispatching
-        # (see upload.py), so it is never blocked by this guard.
         if (doc.metadata_ or {}).get("status") == "completed":
             logger.info("[ingestion] task_id=%s document_id=%s already completed — skipping duplicate run", task_id, document_id)
             return {"status": "success", "skipped": "already_completed"}
@@ -270,39 +258,31 @@ def process_url_task(self, document_id: str, url: str):
         return {"status": "error", "message": str(e)}
     except Exception as e:
         db.rollback()
-        # Checked explicitly rather than catching MaxRetriesExceededError:
-        # Celery's Task.retry(exc=e, ...) re-raises the *original* exception
-        # once retries are exhausted (not MaxRetriesExceededError) whenever
-        # an `exc` is passed — confirmed against celery/app/task.py's own
-        # retry() source, both in eager tests and by reading the real
-        # non-eager code path (same branch, no is_eager check on it). Pre-
-        # checking the retry budget here avoids depending on that exception-
-        # selection quirk and makes both outcomes explicit.
-        if self.request.retries >= self.max_retries:
-            logger.error(
-                "[ingestion] task_id=%s document_id=%s FAILED after %d attempts: %s",
-                task_id, document_id, self.max_retries, e,
-            )
-            _mark_status(db, document_id, status="failed", error=str(e))
-            return {"status": "error", "message": str(e)}
-        logger.warning(
-            "[ingestion] task_id=%s document_id=%s attempt %d failed, retrying: %s",
-            task_id, document_id, attempt + 1, e,
-        )
-        _mark_status(db, document_id, status="retrying", error=str(e), retry_count=attempt + 1)
-        raise self.retry(exc=e, countdown=_ingestion_retry_countdown(attempt + 1))
+        logger.error("[ingestion] task_id=%s document_id=%s failed: %s", task_id, document_id, e)
+        _mark_status(db, document_id, status="failed", error=str(e))
+        return {"status": "error", "message": str(e)}
     finally:
         db.close()
 
 
-@celery_app.task(name="process_document", bind=True, max_retries=INGESTION_MAX_RETRIES)
-def process_document_task(self, document_id: str, file_path: str):
+@celery_app.task(name="process_url", bind=True, max_retries=INGESTION_MAX_RETRIES)
+def process_url_task(self, document_id: str, url: str):
+    task_id = getattr(getattr(self, "request", None), "id", None) or "celery"
+    attempt = getattr(getattr(self, "request", None), "retries", 0)
+    try:
+        return execute_process_url(document_id, url, task_id=task_id, attempt=attempt)
+    except Exception as e:
+        if attempt >= self.max_retries:
+            raise
+        raise self.retry(exc=e, countdown=_ingestion_retry_countdown(attempt + 1))
+
+
+def execute_process_document(document_id: str, file_path: str, task_id: str = None, attempt: int = 0):
     from .services.parsing import parse_pdf
     from .database import SessionLocal
     from .models import Chunk, Document
 
-    task_id = self.request.id
-    attempt = self.request.retries
+    task_id = task_id or "local"
     logger.info("[ingestion] task_id=%s document_id=%s process_document started (attempt %d)", task_id, document_id, attempt + 1)
 
     db = SessionLocal()
@@ -311,7 +291,7 @@ def process_document_task(self, document_id: str, file_path: str):
         if not doc:
             raise NonRetryableIngestionError(f"Document {document_id!r} not found — nothing to process.")
 
-        # Idempotency guard — see process_url_task's identical comment above.
+        # Idempotency guard
         if (doc.metadata_ or {}).get("status") == "completed":
             logger.info("[ingestion] task_id=%s document_id=%s already completed — skipping duplicate run", task_id, document_id)
             return {"status": "success", "skipped": "already_completed"}
@@ -373,7 +353,7 @@ def process_document_task(self, document_id: str, file_path: str):
             if doc:
                 meta = dict(doc.metadata_ or {})
                 meta["status"] = "completed"
-                meta.pop("error", None)  # see _process_text_blocks's identical fix above
+                meta.pop("error", None)
                 meta["is_audio"] = True
                 meta["audio_segments_count"] = len(merged_segments)
                 doc.metadata_ = meta
@@ -387,30 +367,29 @@ def process_document_task(self, document_id: str, file_path: str):
         logger.info("[ingestion] task_id=%s document_id=%s process_document COMPLETED", task_id, document_id)
         return result
     except (NonRetryableIngestionError, FileNotFoundError) as e:
-        # FileNotFoundError is treated the same as the explicit check above —
-        # belt-and-suspenders for a file that vanishes between the exists()
-        # check and a parser actually opening it (e.g. a concurrent cleanup).
         logger.error("[ingestion] task_id=%s document_id=%s permanent failure, not retrying: %s", task_id, document_id, e)
         db.rollback()
         _mark_status(db, document_id, status="failed", error=str(e))
         return {"status": "error", "message": str(e)}
     except Exception as e:
         db.rollback()
-        if self.request.retries >= self.max_retries:
-            logger.error(
-                "[ingestion] task_id=%s document_id=%s FAILED after %d attempts: %s",
-                task_id, document_id, self.max_retries, e,
-            )
-            _mark_status(db, document_id, status="failed", error=str(e))
-            return {"status": "error", "message": str(e)}
-        logger.warning(
-            "[ingestion] task_id=%s document_id=%s attempt %d failed, retrying: %s",
-            task_id, document_id, attempt + 1, e,
-        )
-        _mark_status(db, document_id, status="retrying", error=str(e), retry_count=attempt + 1)
-        raise self.retry(exc=e, countdown=_ingestion_retry_countdown(attempt + 1))
+        logger.error("[ingestion] task_id=%s document_id=%s failed: %s", task_id, document_id, e)
+        _mark_status(db, document_id, status="failed", error=str(e))
+        return {"status": "error", "message": str(e)}
     finally:
         db.close()
+
+
+@celery_app.task(name="process_document", bind=True, max_retries=INGESTION_MAX_RETRIES)
+def process_document_task(self, document_id: str, file_path: str):
+    task_id = getattr(getattr(self, "request", None), "id", None) or "celery"
+    attempt = getattr(getattr(self, "request", None), "retries", 0)
+    try:
+        return execute_process_document(document_id, file_path, task_id=task_id, attempt=attempt)
+    except Exception as e:
+        if attempt >= self.max_retries:
+            raise
+        raise self.retry(exc=e, countdown=_ingestion_retry_countdown(attempt + 1))
 
 
 # ── HR recruitment panel ─────────────────────────────────────────────────
@@ -423,13 +402,33 @@ def process_document_task(self, document_id: str, file_path: str):
 RESUME_MAX_RETRIES = 3
 
 
+def execute_process_resume(upload_id: str, task_id: str = None):
+    from .database import SessionLocal
+    from .services import recruitment_service
+
+    task_id = task_id or "local"
+    logger.info("[recruitment] task_id=%s upload_id=%s execute_process_resume started", task_id, upload_id)
+
+    db = SessionLocal()
+    try:
+        result = recruitment_service.process_resume_upload(db, upload_id)
+        logger.info("[recruitment] task_id=%s upload_id=%s -> %s", task_id, upload_id, result.get("outcome") if isinstance(result, dict) else result)
+        return result
+    except Exception as e:
+        logger.error("[recruitment] task_id=%s upload_id=%s execution failed: %s", task_id, upload_id, e)
+        recruitment_service.mark_upload(db, upload_id, "failed", str(e))
+        return {"outcome": "failed", "error": str(e)}
+    finally:
+        db.close()
+
+
 @celery_app.task(name="process_resume", bind=True, max_retries=RESUME_MAX_RETRIES)
 def process_resume_task(self, upload_id: str):
     from .database import SessionLocal
     from .services import recruitment_service
 
-    task_id = self.request.id
-    attempt = self.request.retries
+    task_id = getattr(getattr(self, "request", None), "id", None) or "celery"
+    attempt = getattr(getattr(self, "request", None), "retries", 0)
     logger.info("[recruitment] task_id=%s upload_id=%s process_resume started (attempt %d)", task_id, upload_id, attempt + 1)
 
     db = SessionLocal()
