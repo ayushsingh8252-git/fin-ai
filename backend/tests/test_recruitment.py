@@ -92,11 +92,11 @@ def fake_ai(monkeypatch):
     calls = SimpleNamespace(parse=0, match=0, match_result=dict(MATCH), match_raises=None)
     PROFILES.clear()
 
-    def parse(filename, path):
+    def parse(filename, path, trace_id=None):
         calls.parse += 1
         return dict(PROFILES.get(filename) or profile())
 
-    def match(candidate, requirement, role_title="the open role"):
+    def match(candidate, requirement, role_title="the open role", trace_id=None):
         calls.match += 1
         if calls.match_raises:
             raise calls.match_raises

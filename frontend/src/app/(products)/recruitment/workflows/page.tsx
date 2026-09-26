@@ -195,19 +195,12 @@ export default function WorkflowsPage() {
   return (
     <div className="space-y-6 pb-14">
       {/* ─── Clean Enterprise Header ─── */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-zinc-200/80 pb-5">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <div className="flex items-center gap-2 mb-1">
-            <span className="text-[11px] font-mono font-semibold uppercase tracking-wider text-blue-600 bg-blue-50/90 border border-blue-200/60 px-2 py-0.5 rounded">
-              Rule Engine
-            </span>
-            <span className="text-zinc-300">/</span>
-            <span className="text-xs text-zinc-500 font-medium">Pipeline Workflows</span>
-          </div>
-          <h1 className="text-2xl font-bold tracking-tight text-zinc-900">
+          <h1 className="text-2xl font-semibold tracking-tight text-zinc-900">
             Hiring Automations
           </h1>
-          <p className="mt-0.5 text-xs text-zinc-500 font-medium">
+          <p className="mt-1 text-sm text-zinc-500">
             Automated qualification screening, AI semantic scoring, and candidate stage routing rules.
           </p>
         </div>

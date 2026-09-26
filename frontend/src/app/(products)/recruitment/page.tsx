@@ -1,239 +1,166 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
-  Search, Plus, MapPin,
-  ArrowRight, Loader2,
-  X, Download,
-  Trash2, Edit2, Sparkles,
-  ChevronRight, Zap
+  ArrowRight, Briefcase, Download, Loader2, MapPin, MoreHorizontal,
+  Pencil, Plus, Power, Search, Trash2, X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorBanner } from "@/components/ui/error-banner";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
-import { errorMessage, listJobs, updateJob, deleteJob, DEMO_JOBS, type Job } from "@/lib/recruitmentApi";
+import { errorMessage, listJobs, updateJob, deleteJob, type Job } from "@/lib/recruitmentApi";
 import { JobFormDialog } from "./_components/JobFormDialog";
 import { useRecruitment } from "./_components/RecruitmentShell";
-import {
-  BriefcaseMetricSvg,
-  CandidatePoolMetricSvg,
-  EvaluationMetricSvg,
-  OutcomesMetricSvg,
-  EmptyStateGeometricSvg
-} from "./_components/indicators";
 import { useToast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
 
 type Loaded = { jobs: Job[] } | { error: string } | null;
+type StatusFilter = "all" | "open" | "closed";
 
-// ── Clean Enterprise Metric Card ───────────────────────────────────────────
-function MetricCard({
+// Pipeline segments shown in each row's bar, in lifecycle order. One hue
+// family, darkening as candidates progress; green is reserved for outcomes.
+const SEGMENTS = [
+  { key: "APPLIED", label: "Applied", className: "bg-zinc-300" },
+  { key: "SHORTLISTED", label: "Shortlisted", className: "bg-blue-300" },
+  { key: "INTERVIEW", label: "Interview", className: "bg-blue-600" },
+  { key: "OFFER_HIRED", label: "Offer / Hired", className: "bg-emerald-500" },
+] as const;
+
+function segmentCounts(job: Job): Record<(typeof SEGMENTS)[number]["key"], number> {
+  const p = job.pipeline || {};
+  return {
+    APPLIED: p.APPLIED ?? 0,
+    SHORTLISTED: p.SHORTLISTED ?? 0,
+    INTERVIEW: p.INTERVIEW ?? 0,
+    OFFER_HIRED: (p.OFFER ?? 0) + (p.HIRED ?? 0),
+  };
+}
+
+// ── Stat strip ──────────────────────────────────────────────────────────
+
+function Stat({
   label,
   value,
-  subtext,
-  icon: IconSvg,
-  badge,
-  badgeTone = "blue",
+  hint,
+  onClick,
+  active,
 }: {
   label: string;
-  value: string | number;
-  subtext: string;
-  icon: React.ComponentType<{ className?: string }>;
-  badge?: string;
-  badgeTone?: "blue" | "emerald" | "amber" | "zinc";
+  value: number;
+  hint: string;
+  onClick?: () => void;
+  active?: boolean;
 }) {
+  const Comp = onClick ? "button" : "div";
   return (
-    <div className="group rounded-2xl border border-zinc-200/80 bg-white p-5 shadow-2xs hover:border-zinc-300 hover:shadow-xs transition-all">
-      <div className="flex items-center justify-between">
-        <span className="text-[11px] font-mono font-semibold uppercase tracking-wider text-zinc-500">
-          {label}
-        </span>
-        <div className="w-8 h-8 rounded-xl bg-zinc-50 border border-zinc-200/70 flex items-center justify-center text-zinc-700 group-hover:text-blue-600 group-hover:border-blue-200 group-hover:bg-blue-50/50 transition-colors">
-          <IconSvg className="w-4 h-4" />
+    <Comp
+      {...(onClick ? { type: "button" as const, onClick } : {})}
+      className={cn(
+        "px-5 py-4 text-left transition-colors",
+        active ? "bg-blue-50" : "bg-white",
+        onClick && !active && "cursor-pointer hover:bg-zinc-50",
+        onClick && active && "cursor-pointer"
+      )}
+    >
+      <p className="text-xs font-medium text-zinc-500">{label}</p>
+      <p className="mt-1 text-2xl font-semibold tabular-nums tracking-tight text-zinc-900">{value.toLocaleString()}</p>
+      <p className="mt-0.5 text-xs text-zinc-400">{hint}</p>
+    </Comp>
+  );
+}
+
+// ── Row actions menu ────────────────────────────────────────────────────
+
+function RowActions({
+  job,
+  onEdit,
+  onToggleStatus,
+  onDelete,
+}: {
+  job: Job;
+  onEdit: () => void;
+  onToggleStatus: () => void;
+  onDelete: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  const item = "flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-[13px] text-left cursor-pointer";
+  const run = (fn: () => void) => () => {
+    setOpen(false);
+    fn();
+  };
+
+  return (
+    <div ref={ref} className="relative" onClick={(e) => e.stopPropagation()}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-label={`Actions for ${job.title}`}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        className="flex h-8 w-8 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 cursor-pointer"
+      >
+        <MoreHorizontal className="h-4 w-4" />
+      </button>
+      {open && (
+        <div role="menu" className="absolute right-0 top-full z-30 mt-1 w-48 rounded-lg border border-zinc-200 bg-white p-1 shadow-lg">
+          <button role="menuitem" type="button" onClick={run(onEdit)} className={cn(item, "text-zinc-700 hover:bg-zinc-50")}>
+            <Pencil className="h-4 w-4 text-zinc-400" /> Edit position
+          </button>
+          <button role="menuitem" type="button" onClick={run(onToggleStatus)} className={cn(item, "text-zinc-700 hover:bg-zinc-50")}>
+            <Power className="h-4 w-4 text-zinc-400" /> {job.status === "open" ? "Close position" : "Reopen position"}
+          </button>
+          <div className="my-1 border-t border-zinc-100" />
+          <button role="menuitem" type="button" onClick={run(onDelete)} className={cn(item, "text-rose-600 hover:bg-rose-50")}>
+            <Trash2 className="h-4 w-4" /> Delete
+          </button>
         </div>
-      </div>
-      <div className="mt-3 flex items-baseline gap-2.5">
-        <span className="text-3xl font-extrabold tracking-tight font-mono text-zinc-900">
-          {value}
-        </span>
-        {badge && (
-          <span className={cn(
-            "text-[10px] font-mono font-bold px-2 py-0.5 rounded-full border",
-            badgeTone === "emerald"
-              ? "bg-emerald-50 text-emerald-700 border-emerald-200/80"
-              : badgeTone === "amber"
-              ? "bg-amber-50 text-amber-700 border-amber-200/80"
-              : badgeTone === "zinc"
-              ? "bg-zinc-100 text-zinc-700 border-zinc-200"
-              : "bg-blue-50 text-blue-700 border-blue-200/80"
-          )}>
-            {badge}
-          </span>
-        )}
-      </div>
-      <p className="mt-3 text-xs text-zinc-500 font-medium pt-2.5 border-t border-zinc-100 flex items-center justify-between">
-        <span>{subtext}</span>
-      </p>
+      )}
     </div>
   );
 }
 
-// ── Clean Requisition Table Row ─────────────────────────────────────────────
-function JobTableRow({
-  job,
-  code,
-  onEdit,
-  onStatusToggle,
-  onDelete,
-}: {
-  job: Job;
-  code: string;
-  onEdit: (job: Job) => void;
-  onStatusToggle: (job: Job, newStatus: "open" | "closed") => void;
-  onDelete: (job: Job) => void;
-}) {
-  const isOpen = job.status === "open";
-  const p = job.pipeline || {};
-  const total = job.total_candidates || 0;
-  const inApplied = p.APPLIED ?? 0;
-  const inShortlisted = p.SHORTLISTED ?? 0;
-  const inInterview = p.INTERVIEW ?? 0;
-  const inClosing = (p.OFFER ?? 0) + (p.HIRED ?? 0);
+// ── Page ────────────────────────────────────────────────────────────────
 
-  const appliedPct = total > 0 ? (inApplied / total) * 100 : 0;
-  const shortPct = total > 0 ? (inShortlisted / total) * 100 : 0;
-  const interviewPct = total > 0 ? (inInterview / total) * 100 : 0;
-  const closingPct = total > 0 ? (inClosing / total) * 100 : 0;
-
-  return (
-    <tr className="group hover:bg-zinc-50/80 transition-colors border-b border-zinc-100 last:border-0">
-      <td className="px-6 py-4">
-        <div className="space-y-1">
-          <div className="flex items-center gap-2">
-            <span className="font-mono text-[10px] font-bold text-zinc-600 bg-zinc-100 border border-zinc-200 px-1.5 py-0.5 rounded">
-              {code}
-            </span>
-            <Link
-              href={`/recruitment/jobs/${job.id}`}
-              className="font-bold text-sm text-zinc-900 hover:text-blue-600 transition-colors truncate max-w-sm block"
-            >
-              {job.title}
-            </Link>
-          </div>
-          <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-500 font-medium">
-            {job.department && (
-              <span className="text-zinc-600">
-                {job.department}
-              </span>
-            )}
-            {job.location && (
-              <span className="flex items-center gap-1 text-zinc-400 text-[11px]">
-                <span>·</span>
-                <MapPin className="h-3 w-3 text-zinc-400" />
-                {job.location}
-              </span>
-            )}
-          </div>
-        </div>
-      </td>
-
-      <td className="px-4 py-4 text-xs text-zinc-600 font-medium whitespace-nowrap">
-        {job.min_experience_years !== null ? (
-          <span className="font-mono text-xs font-semibold text-zinc-800">
-            {job.min_experience_years}+ yrs
-          </span>
-        ) : (
-          <span className="text-zinc-400 text-xs font-mono">Flexible</span>
-        )}
-      </td>
-
-      <td className="px-5 py-4 whitespace-nowrap min-w-[200px]">
-        <div className="space-y-1.5">
-          <div className="flex items-center justify-between text-xs">
-            <span className="font-mono font-bold text-zinc-900">
-              {total} <span className="font-sans font-normal text-zinc-400 text-[11px]">candidates</span>
-            </span>
-            <span className="text-[11px] font-mono text-zinc-500">
-              {inInterview > 0 ? `${inInterview} in interview` : inClosing > 0 ? `${inClosing} hired` : `${total} active`}
-            </span>
-          </div>
-
-          {/* Minimalist Segmented Progress Bar */}
-          <div className="h-1.5 w-full rounded-full bg-zinc-100 overflow-hidden flex">
-            {appliedPct > 0 && <div style={{ width: `${appliedPct}%` }} className="h-full bg-zinc-300" title={`Applied: ${inApplied}`} />}
-            {shortPct > 0 && <div style={{ width: `${shortPct}%` }} className="h-full bg-blue-400" title={`Shortlisted: ${inShortlisted}`} />}
-            {interviewPct > 0 && <div style={{ width: `${interviewPct}%` }} className="h-full bg-blue-600" title={`Interview: ${inInterview}`} />}
-            {closingPct > 0 && <div style={{ width: `${closingPct}%` }} className="h-full bg-emerald-500" title={`Offer/Hired: ${inClosing}`} />}
-          </div>
-        </div>
-      </td>
-
-      <td className="px-4 py-4 whitespace-nowrap">
-        <button
-          onClick={() => onStatusToggle(job, isOpen ? "closed" : "open")}
-          title={`Click to mark as ${isOpen ? "Closed" : "Active"}`}
-          className={cn(
-            "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-semibold border transition-all cursor-pointer",
-            isOpen
-              ? "bg-emerald-50 text-emerald-700 border-emerald-200/80 hover:bg-emerald-100"
-              : "bg-zinc-100 text-zinc-600 border-zinc-200 hover:bg-zinc-200"
-          )}
-        >
-          <span className={cn("h-1.5 w-1.5 rounded-full", isOpen ? "bg-emerald-500" : "bg-zinc-400")} />
-          <span>{isOpen ? "Active" : "Closed"}</span>
-        </button>
-      </td>
-
-      <td className="px-6 py-4 text-right whitespace-nowrap">
-        <div className="flex items-center justify-end gap-1.5">
-          <button
-            onClick={() => onEdit(job)}
-            title="Edit position"
-            className="h-8 px-2.5 rounded-lg border border-zinc-200 bg-white text-xs font-semibold text-zinc-700 hover:bg-zinc-50 transition-colors cursor-pointer"
-          >
-            Edit
-          </button>
-          <button
-            onClick={() => onDelete(job)}
-            title="Delete position"
-            className="h-8 w-8 flex items-center justify-center rounded-lg border border-zinc-200 bg-white text-zinc-400 hover:bg-rose-50 hover:text-rose-600 hover:border-rose-200 transition-colors cursor-pointer"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </button>
-          <Link
-            href={`/recruitment/jobs/${job.id}`}
-            className="inline-flex items-center gap-1 h-8 px-3 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-white text-xs font-semibold transition-all shadow-2xs"
-          >
-            <span>Pipeline</span>
-            <ArrowRight className="h-3 w-3" />
-          </Link>
-        </div>
-      </td>
-    </tr>
-  );
-}
-
-// ── Main Positions Dashboard ───────────────────────────────────────────────
-export default function JobsPage() {
+export default function PositionsPage() {
   const { can, triggerRefresh, refreshCount } = useRecruitment();
   const router = useRouter();
+  const { toast } = useToast();
   const [loaded, setLoaded] = useState<Loaded>(null);
   const [attempt, setAttempt] = useState(0);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingJob, setEditingJob] = useState<Job | undefined>(undefined);
   const [formKey, setFormKey] = useState(0);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"all" | "open" | "closed">("all");
-  const [selectedDept, setSelectedDept] = useState<string>("all");
-  const [selectedStage, setSelectedStage] = useState<string | null>(null);
-  const [pendingDeleteJob, setPendingDeleteJob] = useState<Job | null>(null);
+  const [query, setQuery] = useState("");
+  const [status, setStatus] = useState<StatusFilter>("all");
+  const [dept, setDept] = useState("all");
+  const [stage, setStage] = useState("all");
+  const [pendingDelete, setPendingDelete] = useState<Job | null>(null);
   const [deleting, setDeleting] = useState(false);
-  const { toast } = useToast();
+
+  const canEdit = can("edit_job");
+  const canCreate = can("create_job");
 
   useEffect(() => {
     let cancelled = false;
@@ -245,35 +172,74 @@ export default function JobsPage() {
     };
   }, [attempt, refreshCount]);
 
-  const openCreateForm = () => {
+  const jobs = useMemo(() => (loaded && "jobs" in loaded ? loaded.jobs : []), [loaded]);
+
+  const stats = useMemo(() => {
+    let candidates = 0, evaluating = 0, outcomes = 0;
+    for (const j of jobs) {
+      candidates += j.total_candidates;
+      evaluating += (j.pipeline.SCREENING ?? 0) + (j.pipeline.SHORTLISTED ?? 0) + (j.pipeline.INTERVIEW ?? 0);
+      outcomes += (j.pipeline.OFFER ?? 0) + (j.pipeline.HIRED ?? 0);
+    }
+    return { open: jobs.filter((j) => j.status === "open").length, candidates, evaluating, outcomes };
+  }, [jobs]);
+
+  const departments = useMemo(
+    () => Array.from(new Set(jobs.map((j) => j.department).filter((d): d is string => Boolean(d)))).sort(),
+    [jobs]
+  );
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return jobs.filter((j) => {
+      if (q) {
+        const hay = [j.title, j.department, j.location, ...(j.must_have_skills || [])].join(" ").toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      if (status !== "all" && j.status !== status) return false;
+      if (dept !== "all" && j.department !== dept) return false;
+      if (stage !== "all" && (j.pipeline[stage as keyof typeof j.pipeline] ?? 0) === 0) return false;
+      return true;
+    });
+  }, [jobs, query, status, dept, stage]);
+
+  const filtersActive = Boolean(query) || status !== "all" || dept !== "all" || stage !== "all";
+  const clearFilters = () => {
+    setQuery("");
+    setStatus("all");
+    setDept("all");
+    setStage("all");
+  };
+
+  const openCreate = () => {
     setEditingJob(undefined);
     setFormKey((k) => k + 1);
     setDialogOpen(true);
   };
-
-  const openEditForm = (job: Job) => {
+  const openEdit = (job: Job) => {
     setEditingJob(job);
     setFormKey((k) => k + 1);
     setDialogOpen(true);
   };
 
-  const handleStatusToggle = async (job: Job, newStatus: "open" | "closed") => {
+  const toggleStatus = async (job: Job) => {
+    const next = job.status === "open" ? "closed" : "open";
     try {
-      await updateJob(job.id, { status: newStatus });
-      toast("success", `Position marked as ${newStatus === "open" ? "Active" : "Closed"}.`);
+      await updateJob(job.id, { status: next });
+      toast("success", `${job.title} ${next === "open" ? "reopened" : "closed"}.`);
       triggerRefresh();
     } catch (err) {
       toast("error", errorMessage(err));
     }
   };
 
-  const handleConfirmDelete = async () => {
-    if (!pendingDeleteJob) return;
+  const confirmDelete = async () => {
+    if (!pendingDelete) return;
     setDeleting(true);
     try {
-      await deleteJob(pendingDeleteJob.id);
-      toast("success", `Position "${pendingDeleteJob.title}" removed.`);
-      setPendingDeleteJob(null);
+      await deleteJob(pendingDelete.id);
+      toast("success", `${pendingDelete.title} deleted.`);
+      setPendingDelete(null);
       triggerRefresh();
     } catch (err) {
       toast("error", errorMessage(err));
@@ -282,402 +248,328 @@ export default function JobsPage() {
     }
   };
 
-  const handleExportCsv = () => {
-    if (!loaded || !("jobs" in loaded)) return;
-    const headers = [
-      "Code", "Title", "Department", "Location", "Min Experience", "Candidates", "Status"
-    ];
-    const rows = loaded.jobs.map((j, idx) => [
-      `REQ-${String(idx + 1040)}`,
-      `"${j.title.replace(/"/g, '""')}"`,
-      `"${j.department || ""}"`,
-      `"${j.location || ""}"`,
-      j.min_experience_years ?? "Flexible",
-      j.total_candidates,
-      j.status,
-    ]);
-
-    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `Positions_Report_${new Date().toISOString().slice(0, 10)}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    toast("success", "Exported CSV.");
+  const exportCsv = () => {
+    const esc = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const header = ["Title", "Department", "Location", "Min experience (years)", "Candidates",
+      "Applied", "Shortlisted", "Interview", "Offer", "Hired", "Status", "Created"];
+    const rows = filtered.map((j) => [
+      j.title, j.department, j.location, j.min_experience_years, j.total_candidates,
+      j.pipeline.APPLIED ?? 0, j.pipeline.SHORTLISTED ?? 0, j.pipeline.INTERVIEW ?? 0,
+      j.pipeline.OFFER ?? 0, j.pipeline.HIRED ?? 0, j.status, j.created_at?.slice(0, 10),
+    ].map(esc).join(","));
+    const blob = new Blob([[header.map(esc).join(","), ...rows].join("\n")], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `positions-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast("success", `Exported ${filtered.length} position${filtered.length === 1 ? "" : "s"}.`);
   };
 
-  const departments = useMemo(() => {
-    if (!loaded || !("jobs" in loaded)) return [];
-    const set = new Set<string>();
-    loaded.jobs.forEach((j) => {
-      if (j.department) set.add(j.department);
-    });
-    return Array.from(set);
-  }, [loaded]);
-
-  const { metrics, pipelineTotals } = useMemo(() => {
-    if (!loaded || !("jobs" in loaded)) {
-      return {
-        metrics: { activeJobs: 0, totalCandidates: 0, inScreening: 0, offers: 0 },
-        pipelineTotals: { APPLIED: 0, SHORTLISTED: 0, INTERVIEW: 0, OFFER: 0, HIRED: 0 }
-      };
-    }
-    const jobs = loaded.jobs;
-    const activeJobs = jobs.filter((j) => j.status === "open").length;
-    let totalCandidates = 0;
-    let inScreening = 0;
-    let offers = 0;
-    const pipelineTotals: Record<string, number> = { APPLIED: 0, SHORTLISTED: 0, INTERVIEW: 0, OFFER: 0, HIRED: 0 };
-
-    jobs.forEach((j) => {
-      totalCandidates += j.total_candidates;
-      inScreening += (j.pipeline.SCREENING ?? 0) + (j.pipeline.SHORTLISTED ?? 0) + (j.pipeline.INTERVIEW ?? 0);
-      offers += (j.pipeline.OFFER ?? 0) + (j.pipeline.HIRED ?? 0);
-      Object.entries(j.pipeline).forEach(([k, v]) => {
-        if (pipelineTotals[k] !== undefined) {
-          pipelineTotals[k] += (v || 0);
-        }
-      });
-    });
-
-    return {
-      metrics: { activeJobs, totalCandidates, inScreening, offers },
-      pipelineTotals
-    };
-  }, [loaded]);
-
-  const filteredJobs = useMemo(() => {
-    if (!loaded || !("jobs" in loaded)) return [];
-    return loaded.jobs.filter((j) => {
-      if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase();
-        const matchTitle = j.title.toLowerCase().includes(q);
-        const matchDept = j.department?.toLowerCase().includes(q);
-        const matchSkill = j.must_have_skills?.some((s) => s.toLowerCase().includes(q));
-        if (!matchTitle && !matchDept && !matchSkill) return false;
-      }
-      if (statusFilter !== "all" && j.status !== statusFilter) return false;
-      if (selectedDept !== "all" && j.department !== selectedDept) return false;
-      if (selectedStage && (j.pipeline[selectedStage as keyof typeof j.pipeline] || 0) === 0) return false;
-      return true;
-    });
-  }, [loaded, searchQuery, statusFilter, selectedDept, selectedStage]);
-
-  const STAGE_FILTERS = [
-    { key: "APPLIED", label: "Applied", count: pipelineTotals.APPLIED },
-    { key: "SHORTLISTED", label: "Shortlisted", count: pipelineTotals.SHORTLISTED },
-    { key: "INTERVIEW", label: "Interview", count: pipelineTotals.INTERVIEW },
-    { key: "OFFER", label: "Offer", count: pipelineTotals.OFFER },
-    { key: "HIRED", label: "Hired", count: pipelineTotals.HIRED },
-  ];
+  const control = "h-9 rounded-md border border-zinc-200 bg-white px-3 text-[13px] text-zinc-800 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15";
 
   return (
-    <div className="space-y-6 pb-14">
-      {/* ─── Clean Enterprise Header ─── */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-zinc-200/80 pb-5">
+    <div className="space-y-6 pb-12">
+      {/* ── Header ── */}
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <div className="flex items-center gap-2 mb-1">
-            <span className="text-[11px] font-mono font-semibold uppercase tracking-wider text-blue-600 bg-blue-50/90 border border-blue-200/60 px-2 py-0.5 rounded">
-              Talent Platform
-            </span>
-            <span className="text-zinc-300">/</span>
-            <span className="text-xs text-zinc-500 font-medium">Requisition Hub</span>
-          </div>
-          <h1 className="text-2xl font-bold tracking-tight text-zinc-900">
-            Positions & Requisitions
-          </h1>
-          <p className="text-xs text-zinc-500 mt-0.5 font-medium">
-            {metrics.activeJobs} active roles open · {metrics.totalCandidates} applicants in pipeline
+          <h1 className="text-2xl font-semibold tracking-tight text-zinc-900">Positions</h1>
+          <p className="mt-1 text-sm text-zinc-500">
+            {loaded && "jobs" in loaded
+              ? `${stats.open} open of ${jobs.length} position${jobs.length === 1 ? "" : "s"} · ${stats.candidates.toLocaleString()} candidates`
+              : "Open roles and their candidate pipelines"}
           </p>
         </div>
-
         <div className="flex items-center gap-2">
-          <Link
-            href="/hiring-automation"
-            className="h-8.5 px-3 rounded-xl border border-amber-200 bg-amber-50/80 hover:bg-amber-100 text-amber-800 text-xs font-semibold inline-flex items-center gap-1.5 transition-colors shadow-2xs"
-            title="Open AI Take-Home Assignment Generator & Bulk Dispatch"
-          >
-            <Zap className="h-3.5 w-3.5 text-amber-500 fill-amber-500" />
-            <span className="hidden sm:inline">Bulk Assignment</span>
-          </Link>
-
           <Button
             variant="outline"
-            size="sm"
-            onClick={handleExportCsv}
-            disabled={!loaded || !("jobs" in loaded) || loaded.jobs.length === 0}
-            className="h-8.5 rounded-xl border-zinc-200 bg-white text-xs font-semibold text-zinc-700 hover:bg-zinc-50 shadow-2xs"
+            onClick={exportCsv}
+            disabled={filtered.length === 0}
+            className="h-9 rounded-md border-zinc-200 bg-white px-3 text-[13px] font-medium text-zinc-700"
           >
-            <Download className="h-3.5 w-3.5 mr-1.5 text-zinc-400" />
-            Export CSV
+            <Download className="mr-1.5 h-4 w-4 text-zinc-400" /> Export
           </Button>
-
-          {(!loaded || ("jobs" in loaded && loaded.jobs.length === 0)) && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                setLoaded({ jobs: DEMO_JOBS });
-                toast("success", "Loaded demo requisitions.");
-              }}
-              className="h-8.5 rounded-xl border-zinc-200 bg-white text-xs font-semibold text-zinc-700 hover:bg-zinc-50 shadow-2xs"
-            >
-              <Sparkles className="h-3.5 w-3.5 mr-1.5 text-amber-500" />
-              Load Demo
-            </Button>
-          )}
-
-          {can("create_job") && (
-            <Button
-              size="sm"
-              onClick={openCreateForm}
-              className="h-8.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs inline-flex items-center gap-1.5 px-3.5 shadow-sm shadow-blue-600/20"
-            >
-              <Plus className="h-3.5 w-3.5" />
-              <span>New Position</span>
+          {canCreate && (
+            <Button onClick={openCreate} className="h-9 rounded-md bg-blue-600 px-3.5 text-[13px] font-medium text-white hover:bg-blue-700">
+              <Plus className="mr-1.5 h-4 w-4" /> New position
             </Button>
           )}
         </div>
       </div>
 
-      {/* ─── 4 Clean Metric Cards ─── */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <MetricCard
-          label="Active Roles"
-          value={metrics.activeJobs}
-          subtext="Open for candidates"
-          icon={BriefcaseMetricSvg}
-          badge="Live"
-          badgeTone="emerald"
+      {/* ── Stats ── */}
+      <div className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-zinc-200 bg-zinc-200 lg:grid-cols-4">
+        <Stat
+          label="Open positions"
+          value={stats.open}
+          hint="Accepting candidates"
+          onClick={() => setStatus(status === "open" ? "all" : "open")}
+          active={status === "open"}
         />
-        <MetricCard
-          label="Candidate Pool"
-          value={metrics.totalCandidates}
-          subtext="Total applicants tracked"
-          icon={CandidatePoolMetricSvg}
-          badge="Volume"
-          badgeTone="blue"
-        />
-        <MetricCard
-          label="In Evaluation"
-          value={metrics.inScreening}
-          subtext="Screening & interviews"
-          icon={EvaluationMetricSvg}
-          badge="Active"
-          badgeTone="amber"
-        />
-        <MetricCard
-          label="Offers & Hired"
-          value={metrics.offers}
-          subtext="Successful placements"
-          icon={OutcomesMetricSvg}
-          badge="Outcomes"
-          badgeTone="emerald"
-        />
+        <Stat label="Candidates" value={stats.candidates} hint="Across all positions" />
+        <Stat label="In evaluation" value={stats.evaluating} hint="Screening, shortlist, interview" />
+        <Stat label="Offers & hires" value={stats.outcomes} hint="Offer extended or hired" />
       </div>
 
-      {/* ─── Filter Funnel & Search Toolbar ─── */}
-      <div className="space-y-3">
-        {/* Pipeline Stage Quick Tabs */}
-        {metrics.totalCandidates > 0 && (
-          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar">
-            <button
-              onClick={() => setSelectedStage(null)}
-              className={cn(
-                "px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all border cursor-pointer",
-                selectedStage === null
-                  ? "bg-zinc-900 text-white border-zinc-900 shadow-2xs"
-                  : "bg-white text-zinc-600 border-zinc-200 hover:bg-zinc-50 hover:text-zinc-900"
-              )}
-            >
-              All Stages ({metrics.totalCandidates})
-            </button>
-            {STAGE_FILTERS.map((st) => (
-              <button
-                key={st.key}
-                onClick={() => setSelectedStage(selectedStage === st.key ? null : st.key)}
-                className={cn(
-                  "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all border cursor-pointer",
-                  selectedStage === st.key
-                    ? "bg-zinc-900 text-white border-zinc-900 shadow-2xs"
-                    : "bg-white text-zinc-600 border-zinc-200 hover:bg-zinc-50 hover:text-zinc-900"
-                )}
-              >
-                <span>{st.label}</span>
-                <span className={cn(
-                  "rounded-full px-1.5 py-0.2 text-[10px] font-mono font-bold tabular-nums",
-                  selectedStage === st.key ? "bg-zinc-800 text-zinc-200" : "bg-zinc-100 text-zinc-700"
-                )}>
-                  {st.count}
-                </span>
-              </button>
-            ))}
-          </div>
-        )}
-
-        {/* Search & Filter Bar */}
-        <div className="flex flex-col gap-2.5 rounded-xl border border-zinc-200/80 bg-white p-2.5 sm:flex-row sm:items-center sm:justify-between shadow-2xs">
+      {/* ── Positions table ── */}
+      <div className="overflow-hidden rounded-lg border border-zinc-200 bg-white">
+        {/* Toolbar */}
+        <div className="flex flex-col gap-2 border-b border-zinc-200 p-3 lg:flex-row lg:items-center">
           <div className="relative flex-1">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
             <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search positions by title, department, or required skill..."
-              className="w-full rounded-lg border border-zinc-200/80 bg-zinc-50/60 py-1.5 pl-8 pr-7 text-xs text-zinc-900 placeholder:text-zinc-400 focus:outline-none focus:bg-white focus:border-blue-500 transition-colors"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search by title, department, location or skill"
+              aria-label="Search positions"
+              className={cn(control, "w-full pl-9 pr-8")}
             />
-            {searchQuery && (
+            {query && (
               <button
-                onClick={() => setSearchQuery("")}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-700 cursor-pointer"
+                type="button"
+                onClick={() => setQuery("")}
+                aria-label="Clear search"
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-700 cursor-pointer"
               >
-                <X className="h-3.5 w-3.5" />
+                <X className="h-4 w-4" />
               </button>
             )}
           </div>
 
-          <div className="flex flex-wrap items-center gap-1.5">
-            {(["all", "open", "closed"] as const).map((status) => (
-              <button
-                key={status}
-                onClick={() => setStatusFilter(status)}
-                className={cn(
-                  "rounded-lg px-2.5 py-1 text-xs font-semibold capitalize transition-all border cursor-pointer",
-                  statusFilter === status
-                    ? "bg-zinc-900 text-white border-zinc-900 shadow-2xs"
-                    : "bg-white text-zinc-600 border-zinc-200 hover:bg-zinc-50"
-                )}
-              >
-                {status === "all" ? "All" : status === "open" ? "Active" : "Closed"}
-              </button>
-            ))}
+          <div className="flex flex-wrap items-center gap-2">
+            <div role="radiogroup" aria-label="Status" className="inline-flex h-9 rounded-md border border-zinc-200 bg-zinc-50 p-0.5">
+              {(["all", "open", "closed"] as const).map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  role="radio"
+                  aria-checked={status === s}
+                  onClick={() => setStatus(s)}
+                  className={cn(
+                    "rounded px-3 text-[13px] font-medium transition-colors cursor-pointer",
+                    status === s ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-900"
+                  )}
+                >
+                  {s === "all" ? "All" : s === "open" ? "Open" : "Closed"}
+                </button>
+              ))}
+            </div>
+
+            <select value={stage} onChange={(e) => setStage(e.target.value)} aria-label="Pipeline stage" className={control}>
+              <option value="all">Any stage</option>
+              <option value="APPLIED">Has applied</option>
+              <option value="SCREENING">Has screening</option>
+              <option value="SHORTLISTED">Has shortlisted</option>
+              <option value="INTERVIEW">Has interviews</option>
+              <option value="OFFER">Has offers</option>
+              <option value="HIRED">Has hires</option>
+            </select>
 
             {departments.length > 0 && (
-              <select
-                value={selectedDept}
-                onChange={(e) => setSelectedDept(e.target.value)}
-                className="rounded-lg border border-zinc-200/80 bg-white px-2.5 py-1 text-xs font-semibold text-zinc-700 focus:outline-none"
-              >
-                <option value="all">All Departments</option>
+              <select value={dept} onChange={(e) => setDept(e.target.value)} aria-label="Department" className={control}>
+                <option value="all">All departments</option>
                 {departments.map((d) => (
                   <option key={d} value={d}>{d}</option>
                 ))}
               </select>
             )}
+
+            {filtersActive && (
+              <button type="button" onClick={clearFilters} className="h-9 px-2 text-[13px] font-medium text-blue-600 hover:text-blue-700 cursor-pointer">
+                Clear
+              </button>
+            )}
           </div>
         </div>
 
-        {/* Loading Skeleton */}
+        {/* Loading */}
         {loaded === null && (
-          <div className="rounded-xl border border-zinc-200/80 bg-white p-5 space-y-2.5">
+          <div className="divide-y divide-zinc-100">
             {[0, 1, 2, 3].map((i) => (
-              <Skeleton key={i} className="h-12 w-full rounded-lg bg-zinc-100" />
+              <div key={i} className="flex items-center gap-4 px-5 py-4">
+                <Skeleton className="h-4 w-1/3 rounded bg-zinc-100" />
+                <Skeleton className="h-2 w-1/4 rounded bg-zinc-100" />
+                <Skeleton className="ml-auto h-4 w-16 rounded bg-zinc-100" />
+              </div>
             ))}
           </div>
         )}
 
-        {/* Error Message */}
+        {/* Error */}
         {loaded && "error" in loaded && (
-          <div className="space-y-3 rounded-xl border border-zinc-200 bg-white p-5">
+          <div className="space-y-3 p-5">
             <ErrorBanner message={loaded.error} />
-            <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  setLoaded(null);
-                  setAttempt((n) => n + 1);
-                }}
-                className="rounded-lg border-zinc-200 text-xs font-semibold"
-              >
-                Try again
-              </Button>
-              <Button
-                size="sm"
-                onClick={() => {
-                  setLoaded({ jobs: DEMO_JOBS });
-                  toast("success", "Loaded demo requisitions dataset.");
-                }}
-                className="rounded-lg bg-zinc-900 text-white text-xs font-semibold hover:bg-zinc-800"
-              >
-                <Sparkles className="mr-1.5 h-3.5 w-3.5 text-amber-400" />
-                Load Demo Positions
-              </Button>
-            </div>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setLoaded(null);
+                setAttempt((n) => n + 1);
+              }}
+              className="h-9 rounded-md border-zinc-200 text-[13px] font-medium"
+            >
+              Try again
+            </Button>
           </div>
         )}
 
-        {/* Empty State */}
-        {loaded && "jobs" in loaded && loaded.jobs.length === 0 && (
-          <div className="rounded-2xl border border-dashed border-zinc-200 bg-white p-12 text-center">
-            <EmptyStateGeometricSvg className="mb-2" />
-            <p className="mt-2 text-sm font-bold text-zinc-900">No Positions Found</p>
-            <p className="mt-1 text-xs text-zinc-500 max-w-sm mx-auto">Create a job requisition to start screening candidates with AI policy rules.</p>
-            <div className="mt-4 flex items-center justify-center gap-2">
-              <Button
-                size="sm"
-                onClick={openCreateForm}
-                className="h-8 rounded-lg bg-blue-600 hover:bg-blue-700 text-xs font-semibold text-white shadow-2xs"
-              >
-                <Plus className="mr-1.5 h-3.5 w-3.5" />
-                Create Position
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  setLoaded({ jobs: DEMO_JOBS });
-                  toast("success", "Loaded demo positions.");
-                }}
-                className="h-8 rounded-lg border-zinc-200 text-xs font-semibold text-zinc-700"
-              >
-                Load Demo
-              </Button>
-            </div>
+        {/* No positions at all */}
+        {loaded && "jobs" in loaded && jobs.length === 0 && (
+          <div className="p-6">
+            <EmptyState
+              icon={Briefcase}
+              title="No positions yet"
+              description="Create a position, then upload resumes to it — each one is parsed, scored against the job description, and added to the pipeline."
+              action={
+                canCreate ? (
+                  <Button onClick={openCreate} className="h-9 rounded-md bg-blue-600 px-3.5 text-[13px] font-medium text-white hover:bg-blue-700">
+                    <Plus className="mr-1.5 h-4 w-4" /> New position
+                  </Button>
+                ) : undefined
+              }
+              className="border-dashed bg-white"
+            />
           </div>
         )}
 
-        {/* Positions Table */}
-        {loaded && "jobs" in loaded && loaded.jobs.length > 0 && (
-          <div className="rounded-xl border border-zinc-200/80 bg-white overflow-hidden shadow-2xs">
-            {filteredJobs.length === 0 ? (
-              <div className="p-10 text-center text-xs text-zinc-500">
-                No positions matching the selected filters.
+        {/* Table */}
+        {jobs.length > 0 && (
+          <>
+            {filtered.length === 0 ? (
+              <div className="px-5 py-12 text-center">
+                <p className="text-sm font-medium text-zinc-900">No positions match these filters</p>
+                <button type="button" onClick={clearFilters} className="mt-2 text-[13px] font-medium text-blue-600 hover:text-blue-700 cursor-pointer">
+                  Clear filters
+                </button>
               </div>
             ) : (
               <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs">
-                  <thead className="border-b border-zinc-100 bg-zinc-50/70 text-[10px] font-bold uppercase tracking-wider text-zinc-500">
-                    <tr>
-                      <th className="px-6 py-3.5">Position</th>
-                      <th className="px-4 py-3.5">Experience</th>
-                      <th className="px-5 py-3.5">Candidate Pipeline</th>
-                      <th className="px-4 py-3.5">Status</th>
-                      <th className="px-6 py-3.5 text-right">Actions</th>
+                <table className="w-full min-w-[760px] text-left">
+                  <thead className="border-b border-zinc-200 bg-zinc-50/70">
+                    <tr className="text-xs font-medium text-zinc-500">
+                      <th className="px-5 py-2.5 font-medium">Position</th>
+                      <th className="px-4 py-2.5 font-medium">Pipeline</th>
+                      <th className="px-4 py-2.5 font-medium">Experience</th>
+                      <th className="px-4 py-2.5 font-medium">Status</th>
+                      <th className="px-4 py-2.5"><span className="sr-only">Actions</span></th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-100">
-                    {filteredJobs.map((job, idx) => (
-                      <JobTableRow
-                        key={job.id}
-                        job={job}
-                        code={`REQ-${1040 + idx}`}
-                        onEdit={openEditForm}
-                        onStatusToggle={handleStatusToggle}
-                        onDelete={setPendingDeleteJob}
-                      />
-                    ))}
+                    {filtered.map((job) => {
+                      const counts = segmentCounts(job);
+                      const total = job.total_candidates || 0;
+                      const href = `/recruitment/jobs/${job.id}`;
+                      return (
+                        <tr
+                          key={job.id}
+                          onClick={() => router.push(href)}
+                          className="group cursor-pointer transition-colors hover:bg-zinc-50"
+                        >
+                          <td className="px-5 py-3.5">
+                            <Link
+                              href={href}
+                              onClick={(e) => e.stopPropagation()}
+                              className="text-sm font-medium text-zinc-900 group-hover:text-blue-700"
+                            >
+                              {job.title}
+                            </Link>
+                            <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-xs text-zinc-500">
+                              {job.department && <span>{job.department}</span>}
+                              {job.department && job.location && <span className="text-zinc-300">·</span>}
+                              {job.location && (
+                                <span className="inline-flex items-center gap-1">
+                                  <MapPin className="h-3 w-3 text-zinc-400" /> {job.location}
+                                </span>
+                              )}
+                              {!job.department && !job.location && <span className="text-zinc-400">No department or location</span>}
+                            </p>
+                          </td>
+
+                          <td className="w-[260px] px-4 py-3.5">
+                            <div className="flex items-baseline justify-between text-xs">
+                              <span className="font-medium tabular-nums text-zinc-900">
+                                {total} <span className="font-normal text-zinc-500">candidate{total === 1 ? "" : "s"}</span>
+                              </span>
+                              {counts.INTERVIEW > 0 && <span className="text-zinc-500 tabular-nums">{counts.INTERVIEW} interviewing</span>}
+                            </div>
+                            <div
+                              className="mt-1.5 flex h-1.5 w-full gap-px overflow-hidden rounded-full bg-zinc-100"
+                              title={SEGMENTS.map((s) => `${s.label}: ${counts[s.key]}`).join(" · ")}
+                            >
+                              {total > 0 &&
+                                SEGMENTS.map((s) =>
+                                  counts[s.key] > 0 ? (
+                                    <div key={s.key} className={cn("h-full", s.className)} style={{ width: `${(counts[s.key] / total) * 100}%` }} />
+                                  ) : null
+                                )}
+                            </div>
+                          </td>
+
+                          <td className="px-4 py-3.5 text-[13px] tabular-nums text-zinc-700 whitespace-nowrap">
+                            {job.min_experience_years !== null ? `${job.min_experience_years}+ years` : <span className="text-zinc-400">Not set</span>}
+                          </td>
+
+                          <td className="px-4 py-3.5">
+                            <span
+                              className={cn(
+                                "inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium",
+                                job.status === "open"
+                                  ? "bg-emerald-50 text-emerald-700"
+                                  : job.status === "draft"
+                                  ? "bg-amber-50 text-amber-700"
+                                  : "bg-zinc-100 text-zinc-600"
+                              )}
+                            >
+                              <span
+                                className={cn(
+                                  "h-1.5 w-1.5 rounded-full",
+                                  job.status === "open" ? "bg-emerald-500" : job.status === "draft" ? "bg-amber-500" : "bg-zinc-400"
+                                )}
+                              />
+                              {job.status === "open" ? "Open" : job.status === "draft" ? "Draft" : "Closed"}
+                            </span>
+                          </td>
+
+                          <td className="px-4 py-3.5">
+                            <div className="flex items-center justify-end gap-1">
+                              <span className="hidden items-center gap-1 text-[13px] font-medium text-blue-600 opacity-0 transition-opacity group-hover:opacity-100 md:inline-flex">
+                                Open <ArrowRight className="h-3.5 w-3.5" />
+                              </span>
+                              {canEdit && (
+                                <RowActions
+                                  job={job}
+                                  onEdit={() => openEdit(job)}
+                                  onToggleStatus={() => toggleStatus(job)}
+                                  onDelete={() => setPendingDelete(job)}
+                                />
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
             )}
-          </div>
+
+            {/* Footer: result count + legend */}
+            <div className="flex flex-col gap-2 border-t border-zinc-200 bg-zinc-50/50 px-5 py-2.5 text-xs text-zinc-500 sm:flex-row sm:items-center sm:justify-between">
+              <span>
+                Showing {filtered.length} of {jobs.length} position{jobs.length === 1 ? "" : "s"}
+              </span>
+              <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                {SEGMENTS.map((s) => (
+                  <span key={s.key} className="inline-flex items-center gap-1.5">
+                    <span className={cn("h-2 w-2 rounded-full", s.className)} /> {s.label}
+                  </span>
+                ))}
+              </span>
+            </div>
+          </>
         )}
       </div>
 
-      {/* Modal for Creating / Editing Job */}
       <JobFormDialog
         key={formKey}
         open={dialogOpen}
@@ -689,34 +581,32 @@ export default function JobsPage() {
         }}
       />
 
-      {/* Remove Position Confirmation Dialog */}
-      {pendingDeleteJob && (
-        <Dialog open={Boolean(pendingDeleteJob)} onOpenChange={(open) => !open && !deleting && setPendingDeleteJob(null)}>
-          <DialogContent className="sm:max-w-md rounded-xl border-zinc-200 bg-white p-5 shadow-lg">
+      {pendingDelete && (
+        <Dialog open onOpenChange={(open) => !open && !deleting && setPendingDelete(null)}>
+          <DialogContent className="rounded-lg border-zinc-200 bg-white p-5 shadow-lg sm:max-w-md">
             <DialogHeader>
-              <DialogTitle className="text-base font-bold text-zinc-900">Remove Position</DialogTitle>
-              <DialogDescription className="text-xs text-zinc-600 mt-1">
-                Are you sure you want to remove <strong className="text-zinc-900">{pendingDeleteJob.title}</strong>? This will permanently remove this requisition and candidate reviews for this role.
+              <DialogTitle className="text-base font-semibold text-zinc-900">Delete position?</DialogTitle>
+              <DialogDescription className="mt-1 text-[13px] text-zinc-600">
+                <strong className="font-medium text-zinc-900">{pendingDelete.title}</strong> and its candidate reviews will be permanently
+                removed. To stop accepting candidates but keep the history, close the position instead.
               </DialogDescription>
             </DialogHeader>
-            <DialogFooter className="pt-3 border-t border-zinc-100 flex items-center justify-end gap-2">
+            <DialogFooter className="flex items-center justify-end gap-2 border-t border-zinc-100 pt-3">
               <Button
                 variant="outline"
-                size="sm"
                 disabled={deleting}
-                onClick={() => setPendingDeleteJob(null)}
-                className="h-8 rounded-lg border-zinc-200 text-xs font-semibold text-zinc-600 hover:bg-zinc-100"
+                onClick={() => setPendingDelete(null)}
+                className="h-9 rounded-md border-zinc-200 text-[13px] font-medium text-zinc-700"
               >
                 Cancel
               </Button>
               <Button
-                size="sm"
                 disabled={deleting}
-                onClick={handleConfirmDelete}
-                className="h-8 rounded-lg bg-rose-600 hover:bg-rose-700 text-xs font-semibold text-white"
+                onClick={confirmDelete}
+                className="h-9 rounded-md bg-rose-600 text-[13px] font-medium text-white hover:bg-rose-700"
               >
-                {deleting && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
-                Remove Position
+                {deleting && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}
+                Delete position
               </Button>
             </DialogFooter>
           </DialogContent>

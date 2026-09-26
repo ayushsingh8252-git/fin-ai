@@ -166,6 +166,10 @@ def seed_recruitment_demo(db: Session, user: User) -> dict:
                 skills=cdata["skills"],
                 resume_filename=f"{cdata['name'].lower().replace(' ', '_')}_cv.pdf",
                 resume_text=f"{cdata['name']} Resume: {cdata['current_role']}. Skills: {', '.join(cdata['skills'])}. Experience: {cdata['experience_years']} years.",
+                # Tagged so this fictional person is never counted as a real
+                # candidate or real usage — analytics (recruitment_analytics.py)
+                # excludes every row that joins back to a demo_seed candidate.
+                source="demo_seed",
                 created_at=datetime.now(timezone.utc),
             )
             db.add(cand)

@@ -2,14 +2,15 @@
 
 import { motion } from "framer-motion";
 import { usePathname } from "next/navigation";
-import { Loader2, ShieldCheck, Users, Settings2 } from "lucide-react";
+import { Loader2, Settings2, Zap } from "lucide-react";
 import { AUTH_GATE_ENABLED, useAuth } from "@/contexts/AuthContext";
 import GoogleSignInButton from "./GoogleSignInButton";
 
 /** Wraps every product route — nothing behind it renders until the visitor
- * has signed in with Google. Presented as a popup dialog (dim backdrop, card
- * pops in) rather than a plain page, and is the single place sign-in lives —
- * the site header carries no sign-in control of its own.
+ * has signed in with Google. A plain, standard sign-in card (no demo/marketing
+ * copy or vanity stats — this gates a real production app, not a live demo),
+ * and the single place sign-in lives — the site header carries no sign-in
+ * control of its own.
  *
  * Command Center used to carve itself out of this gate entirely (it had its
  * own separate password modal instead). That carve-out is removed: Command
@@ -26,27 +27,27 @@ import GoogleSignInButton from "./GoogleSignInButton";
  * api/screening.py's module docstring on the backend side). */
 export default function ProductGate({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const { status, uniqueUserCount, errorMessage, notConfigured } = useAuth();
+  const { status, errorMessage, notConfigured } = useAuth();
 
   if (!AUTH_GATE_ENABLED || status === "signed-in" || pathname?.startsWith("/screening-agent/session/")) {
     return <>{children}</>;
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-zinc-950 via-zinc-900 to-blue-950 flex items-center justify-center px-6 py-20">
+    <div className="min-h-screen bg-zinc-50 flex items-center justify-center px-6 py-20">
       <motion.div
-        key="signin-popup"
-        initial={{ opacity: 0, y: 24, scale: 0.95 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        transition={{ type: "spring", stiffness: 300, damping: 26 }}
-        className="w-full max-w-sm text-center bg-white rounded-3xl shadow-2xl border border-white/10 px-8 py-10"
+        key="signin-card"
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.2 }}
+        className="w-full max-w-sm text-center bg-white rounded-2xl shadow-sm border border-zinc-200 px-8 py-10"
       >
-        <div className="mx-auto mb-5 w-14 h-14 rounded-2xl bg-blue-50 border border-blue-200 flex items-center justify-center text-blue-600">
-          <ShieldCheck className="w-7 h-7" />
+        <div className="mx-auto mb-5 w-11 h-11 rounded-xl bg-zinc-900 flex items-center justify-center text-white">
+          <Zap className="w-5 h-5" />
         </div>
-        <h1 className="text-xl font-extrabold text-zinc-900 mb-2">Sign in to try this product</h1>
-        <p className="text-sm text-zinc-500 mb-6 leading-relaxed">
-          A quick Google sign-in unlocks the live demo — no forms, no password.
+        <h1 className="text-lg font-semibold text-zinc-900 mb-1.5">Sign in to continue</h1>
+        <p className="text-sm text-zinc-500 mb-7 leading-relaxed">
+          Use your Google account to access AgenticFlow AI.
         </p>
 
         {notConfigured ? (
@@ -60,20 +61,12 @@ export default function ProductGate({ children }: { children: React.ReactNode })
           </div>
         ) : (
           <div className="flex justify-center">
-            <GoogleSignInButton size="large" shape="pill" />
+            <GoogleSignInButton size="large" shape="rectangular" />
           </div>
         )}
 
         {!notConfigured && errorMessage && (
           <p className="mt-4 text-xs text-red-500">{errorMessage}</p>
-        )}
-
-        {uniqueUserCount !== null && (
-          <p className="mt-6 flex items-center justify-center gap-1.5 text-xs text-zinc-400">
-            <Users className="w-3.5 h-3.5 text-blue-500" />
-            <span className="font-bold text-zinc-600">{uniqueUserCount.toLocaleString()}</span>{" "}
-            unique {uniqueUserCount === 1 ? "person has" : "people have"} tested this platform
-          </p>
         )}
       </motion.div>
     </div>

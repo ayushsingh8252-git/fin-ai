@@ -299,18 +299,6 @@ export function EmptyStateGeometricSvg({ className }: { className?: string }) {
   );
 }
 
-/** Premium Geometric Briefcase Metric SVG */
-export function BriefcaseMetricSvg({ className = "w-4 h-4" }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className={className}>
-      <rect x="3" y="7" width="18" height="13" rx="3" stroke="currentColor" strokeWidth="1.75" />
-      <path d="M8 7V5C8 3.89543 8.89543 3 10 3H14C15.1046 3 16 3.89543 16 5V7" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
-      <path d="M3 12H21" stroke="currentColor" strokeWidth="1.25" strokeDasharray="2 2" opacity="0.4" />
-      <rect x="10.5" y="10.5" width="3" height="3" rx="1" fill="currentColor" />
-    </svg>
-  );
-}
-
 /** Premium Geometric Candidate Pool Network SVG */
 export function CandidatePoolMetricSvg({ className = "w-4 h-4" }: { className?: string }) {
   return (

@@ -128,9 +128,29 @@ export interface CandidateProfile {
   experience_text: string | null;
   experience_years: number | null;
   skills: string[];
-  education: unknown[];
+  education: EducationEntry[];
+  /** Resume-parsed recruiter summary; null when not extracted. */
+  summary: string | null;
+  /** Real employers parsed from the resume, most recent first. */
+  work_history: WorkHistoryEntry[];
+  /** Fictional record from the demo seeder, not a real applicant. */
+  is_demo: boolean;
   has_resume: boolean;
   resume_filename: string | null;
+}
+
+export interface WorkHistoryEntry {
+  company: string;
+  title: string | null;
+  start: string | null;
+  end: string | null;
+  is_current: boolean;
+}
+
+export interface EducationEntry {
+  institution?: string | null;
+  degree?: string | null;
+  years?: string | null;
 }
 
 export interface AnalysisDetail {
@@ -587,7 +607,14 @@ export interface BackgroundVerificationResponse {
   candidate_id: string;
   application_id: string;
   company_name: string;
-  claimed_role: string;
+  claimed_role: string | null;
+  employment: {
+    from_resume: boolean;
+    title: string | null;
+    start: string | null;
+    end: string | null;
+    is_current: boolean;
+  };
   legitimacy: {
     verdict: "likely_legitimate" | "likely_not_legitimate" | "uncertain" | "unknown" | string;
     score: number;
@@ -615,6 +642,8 @@ export interface BackgroundVerificationResponse {
     recipient_name: string;
     recipient_title: string;
     recipient_url?: string | null;
+    sender_name: string;
+    sender_email: string | null;
   };
 }
 
@@ -622,10 +651,21 @@ export const triggerBackgroundVerification = (
   applicationId: string,
   payload?: { company_name?: string; candidate_role?: string }
 ) =>
-  request<BackgroundVerificationResponse>(`/applications/${applicationId}/background-verify`, {
-    method: "POST",
-    body: JSON.stringify(payload || {}),
-  });
+  request<BackgroundVerificationResponse>(
+    `/applications/${applicationId}/background-verify`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload || {}),
+    },
+    90_000
+  );
+
+export const extractEmploymentHistory = (applicationId: string) =>
+  request<{ summary: string | null; work_history: WorkHistoryEntry[]; education: EducationEntry[] }>(
+    `/applications/${applicationId}/employment-history`,
+    { method: "POST" },
+    90_000
+  );
 
 export interface GeneratedAssignment {
   title: string;
@@ -718,107 +758,137 @@ export async function seedDemoPipeline(): Promise<{ message: string; jobs_count:
 
 // ── Demo Fallback Objects ─────────────────────────────────────────────────
 
-export const DEMO_USER: Me = {
-  id: "demo-hr-admin",
-  email: "hr.admin@agenticflow.ai",
-  name: "Sarah Jenkins",
-  role: "hr_admin",
-  permissions: [
-    "recruitment:read",
-    "recruitment:write",
-    "jobs:create",
-    "jobs:edit",
-    "candidates:view",
-    "candidates:move",
-    "candidates:upload",
-    "screening:invite",
-    "telephonic:call",
-    "whatsapp:send",
-  ],
-};
+// ── Recruitment Analytics ──────────────────────────────────────────────
+// Backend: api/recruitment_analytics.py. Nothing here is fabricated: every
+// field either carries a real number or an explicit has_data/
+// baseline_configured flag the UI must check before rendering a value —
+// see AnalyticsPage's formatters, which render "No data available" /
+// "Baseline not configured" instead of a bare 0 or null.
 
-export const DEMO_JOBS: Job[] = [
-  {
-    id: "demo-job-1",
-    title: "Senior AI Engineer (LLMOps & Agents)",
-    department: "AI Engineering",
-    location: "San Francisco, CA (Hybrid)",
-    description: "Lead design of LLM orchestration, hybrid retrieval, and agent evaluation loops.",
-    jd_text: "Seeking Senior AI Engineer with Python, FastAPI, LangGraph, and Vector DB experience.",
-    min_experience_years: 5,
-    must_have_skills: ["Python", "FastAPI", "RAG", "Vector DB"],
-    preferred_skills: ["Docker", "Kubernetes", "LangChain", "PyTorch"],
-    status: "open",
-    created_by: "Sarah Jenkins",
-    created_at: new Date(Date.now() - 86400000 * 3).toISOString(),
-    pipeline: {
-      PROCESSING: 0,
-      APPLIED: 12,
-      SCREENING: 5,
-      SHORTLISTED: 3,
-      INTERVIEW: 2,
-      SELECTED: 1,
-      OFFER: 1,
-      HIRED: 1,
-      REJECTED: 4,
-      WITHDRAWN: 0,
-    },
-    total_candidates: 29,
-  },
-  {
-    id: "demo-job-2",
-    title: "Staff Full-Stack Frontend Engineer",
-    department: "Product Engineering",
-    location: "Remote",
-    description: "Architect high-performance interactive canvases, real-time audio waveforms, and design systems.",
-    jd_text: "React 19, Next.js, TypeScript, TailwindCSS, WebSockets, Web Audio API.",
-    min_experience_years: 6,
-    must_have_skills: ["React", "Next.js", "TypeScript", "TailwindCSS"],
-    preferred_skills: ["WebSockets", "Web Audio API", "GraphQL"],
-    status: "open",
-    created_by: "Sarah Jenkins",
-    created_at: new Date(Date.now() - 86400000 * 7).toISOString(),
-    pipeline: {
-      PROCESSING: 0,
-      APPLIED: 8,
-      SCREENING: 4,
-      SHORTLISTED: 2,
-      INTERVIEW: 1,
-      SELECTED: 0,
-      OFFER: 0,
-      HIRED: 0,
-      REJECTED: 2,
-      WITHDRAWN: 0,
-    },
-    total_candidates: 17,
-  },
-  {
-    id: "demo-job-3",
-    title: "Security & Fraud Detection Lead",
-    department: "InfoSec",
-    location: "New York, NY",
-    description: "Develop biometric fraud models, audio deepfake detection, and policy compliance engines.",
-    jd_text: "Experience in fraud detection, voice biometrics, spectral analysis, and zero-trust security.",
-    min_experience_years: 4,
-    must_have_skills: ["Python", "Cybersecurity", "Audio Processing", "ML"],
-    preferred_skills: ["TorchAudio", "Zero-Trust", "FastAPI"],
-    status: "open",
-    created_by: "Sarah Jenkins",
-    created_at: new Date(Date.now() - 86400000 * 12).toISOString(),
-    pipeline: {
-      PROCESSING: 0,
-      APPLIED: 6,
-      SCREENING: 3,
-      SHORTLISTED: 1,
-      INTERVIEW: 1,
-      SELECTED: 1,
-      OFFER: 0,
-      HIRED: 0,
-      REJECTED: 1,
-      WITHDRAWN: 0,
-    },
-    total_candidates: 12,
-  },
-];
+export type AnalyticsDays = 7 | 30 | 90;
+
+export interface CountChange {
+  current: number;
+  previous: number;
+  pct_change: number | null;
+  has_prior_period_data: boolean;
+}
+
+export interface ReturningUsers {
+  returning: number;
+  new: number;
+  current_active: number;
+  rate_pct: number | null;
+}
+
+export interface ExecutionsByAgent {
+  agent: string;
+  successful: number;
+  failed: number;
+}
+
+export interface AiExecutions {
+  has_data: boolean;
+  total_executions: number;
+  successful: number;
+  failed: number;
+  success_rate_pct: number | null;
+  failure_rate_pct: number | null;
+  by_agent: ExecutionsByAgent[];
+}
+
+export interface DocumentsProcessed {
+  has_data: boolean;
+  uploaded: number;
+  processed: number;
+  failed: number;
+  in_progress: number;
+}
+
+export interface LatencyByAgent {
+  label: string;
+  sample_count: number;
+  avg_seconds: number;
+  p50_seconds: number;
+}
+
+export type LatencySummary =
+  | { has_data: false }
+  | {
+      has_data: true;
+      sample_count: number;
+      avg_seconds: number;
+      p50_seconds: number;
+      p95_seconds: number;
+      by_agent: LatencyByAgent[];
+    };
+
+export interface InterviewsCompleted {
+  has_data: boolean;
+  completed: number;
+}
+
+export type AiCost =
+  | { has_data: false; reason: "no_executions" | "not_yet_instrumented" | "unpriced" }
+  | { has_data: true; total_cost_usd: number; executions_with_cost: number; cost_per_execution_usd: number };
+
+export type TimeSaved =
+  | { baseline_configured: false }
+  | {
+      baseline_configured: true;
+      sample_count: number;
+      manual_baseline_minutes_avg: number;
+      agenticflow_minutes_avg: number;
+      time_saved_minutes_total: number;
+      pct_reduction: number | null;
+    };
+
+export interface AnalyticsOverview {
+  period_days: number;
+  registered_users: number;
+  monthly_active_users: CountChange;
+  weekly_active_users: CountChange;
+  returning_users: ReturningUsers;
+  ai_executions: AiExecutions;
+  documents_processed: DocumentsProcessed;
+  latency: LatencySummary;
+  interviews_completed: InterviewsCompleted;
+  ai_cost: AiCost;
+  time_saved: TimeSaved;
+}
+
+export interface AnalyticsTrends {
+  period_days: number;
+  active_users: { date: string; active_users: number }[];
+  executions: { date: string; successful: number; failed: number }[];
+}
+
+export interface AnalyticsBreakdown {
+  period_days: number;
+  by_agent: ExecutionsByAgent[];
+  documents: DocumentsProcessed;
+  interviews: InterviewsCompleted;
+}
+
+export interface RecentActivityItem {
+  id: string;
+  time: string | null;
+  user: string;
+  activity: string;
+  workflow: string;
+  status: string | null;
+}
+
+export const getAnalyticsOverview = (days: AnalyticsDays = 30) =>
+  request<AnalyticsOverview>(`/analytics/overview${qs({ days })}`);
+
+export const getAnalyticsTrends = (days: AnalyticsDays = 30) =>
+  request<AnalyticsTrends>(`/analytics/trends${qs({ days })}`);
+
+export const getAnalyticsBreakdown = (days: AnalyticsDays = 30) =>
+  request<AnalyticsBreakdown>(`/analytics/breakdown${qs({ days })}`);
+
+export const getRecentActivity = (limit = 50) =>
+  request<{ items: RecentActivityItem[] }>(`/analytics/activity${qs({ limit })}`);
 
 

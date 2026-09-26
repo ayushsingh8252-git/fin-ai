@@ -142,6 +142,7 @@ def seed_indian_candidates():
                     skills=cdata['skills'],
                     resume_filename=f"{safe_name}_cv.pdf",
                     resume_text=f"{cdata['name']} - {cdata['current_role']}. Skills: {', '.join(cdata['skills'])}. Experience: {cdata['experience_years']} years.",
+                    source="demo_seed",
                     created_at=datetime.now(timezone.utc)
                 )
                 db.add(cand)

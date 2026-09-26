@@ -69,8 +69,8 @@ _TITLE_SCORES: List[tuple] = [
     ("human resources", 60),
 ]
 
-_LEGITIMACY_NEGATIVE_SIGNALS = ("scam", "fraud", "fake company", "not legit", "ponzi", "blacklisted", "shut down", "closed down", "does not exist")
-_LEGITIMACY_POSITIVE_SIGNALS = ("official website", "linkedin.com/company", "crunchbase.com", "wikipedia.org", "glassdoor.com", "registered", "headquartered")
+_LEGITIMACY_NEGATIVE_SIGNALS = ("is a scam", "scam company", "fraudulent company", "fake company", "not legit", "ponzi scheme", "blacklisted by", "fake employer", "fake experience")
+_LEGITIMACY_POSITIVE_SIGNALS = ("official website", "linkedin.com/company", "crunchbase.com", "wikipedia.org", "glassdoor.com", "registered in", "headquartered in", "founded in", "pvt ltd", "private limited", "corporation", "inc.", "payment gateway", "technology company")
 
 
 def _score_title(text: str) -> int:
@@ -146,16 +146,38 @@ class BackgroundVerificationConnector(BaseMCPConnector):
         # (a list) — an empty list there already legitimately means "no
         # LinkedIn profiles found", so a failure needs its own signal to stay
         # distinguishable from that normal zero-results case.
-        warnings: List[str] = []
-        legitimacy = self._safe_lookup("legitimacy", self._check_legitimacy, company_name, location, warnings, {
-            "verdict": "unknown", "score": 0, "positive_signals": 0, "negative_signals": 0, "evidence": [],
-        })
-        hr_contacts = self._safe_lookup("hr_contacts", self._find_hr_linkedin, company_name, location, warnings, [])
-        hr_contact_number = self._safe_lookup("hr_contact_number", self._find_company_contact_number, company_name, location, warnings, {
-            "number": None, "source_url": None, "source_title": None,
-        })
+        import concurrent.futures
 
-        return {
+        # In-memory cache to make repeated runs instant
+        cache_key = f"{company_name.lower()}::{location.lower()}"
+        if not hasattr(self, "_cache"):
+            self._cache = {}
+        cached = self._cache.get(cache_key)
+        if cached:
+            return cached
+
+        warnings: List[str] = []
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+            fut_legit = executor.submit(
+                self._safe_lookup, "legitimacy", self._check_legitimacy, company_name, location, warnings, {
+                    "verdict": "unknown", "score": 0, "positive_signals": 0, "negative_signals": 0, "evidence": [],
+                }
+            )
+            fut_hr = executor.submit(
+                self._safe_lookup, "hr_contacts", self._find_hr_linkedin, company_name, location, warnings, []
+            )
+            fut_phone = executor.submit(
+                self._safe_lookup, "hr_contact_number", self._find_company_contact_number, company_name, location, warnings, {
+                    "number": None, "source_url": None, "source_title": None,
+                }
+            )
+
+            legitimacy = fut_legit.result()
+            hr_contacts = fut_hr.result()
+            hr_contact_number = fut_phone.result()
+
+        result = {
             "company": company_name,
             "location": location,
             "legitimacy": legitimacy,
@@ -163,6 +185,8 @@ class BackgroundVerificationConnector(BaseMCPConnector):
             "hr_contact_number": hr_contact_number,
             "warnings": warnings or None,
         }
+        self._cache[cache_key] = result
+        return result
 
     def _safe_lookup(self, label: str, fn, company_name: str, location: str, warnings: List[str], default: Any) -> Any:
         try:
@@ -179,13 +203,12 @@ class BackgroundVerificationConnector(BaseMCPConnector):
     # ---- 1. legitimacy ----------------------------------------------------
 
     def _check_legitimacy(self, company_name: str, location: Optional[str]) -> Dict[str, Any]:
+        import concurrent.futures
         loc_suffix = f" {location}" if location else ""
         queries = [
-            f'"{company_name}" official website{loc_suffix}',
-            f'"{company_name}" company profile OR "about us"{loc_suffix}',
-            f'"{company_name}" linkedin company',
-            f'"{company_name}" crunchbase OR "company registration"{loc_suffix}',
-            f'"{company_name}" reviews complaints scam',
+            f'"{company_name}" official website OR "about us"{loc_suffix}',
+            f'"{company_name}" linkedin company OR crunchbase{loc_suffix}',
+            f'"{company_name}" ("fake company" OR "fraudulent company" OR "scam company" OR "fake experience")',
         ]
 
         evidence: List[Dict[str, str]] = []
@@ -193,8 +216,11 @@ class BackgroundVerificationConnector(BaseMCPConnector):
         positive_hits = 0
         negative_hits = 0
 
-        for query in queries:
-            for r in tavily_search(query, max_results=5):
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(queries)) as pool:
+            query_results = list(pool.map(lambda q: tavily_search(q, max_results=6), queries))
+
+        for search_hits in query_results:
+            for r in search_hits:
                 url = r.get("url", "")
                 if not url or url in seen_urls:
                     continue
@@ -246,18 +272,20 @@ class BackgroundVerificationConnector(BaseMCPConnector):
     # ---- 2. HR contacts on LinkedIn (find_hr_linkedin) ---------------------
 
     def _find_hr_linkedin(self, company_name: str, location: Optional[str]) -> List[Dict[str, Any]]:
+        import concurrent.futures
         loc_suffix = f' "{location}"' if location else ""
         queries = [
-            f'site:linkedin.com/in "{company_name}" "HR"{loc_suffix}',
-            f'site:linkedin.com/in "{company_name}" "Human Resources"{loc_suffix}',
-            f'site:linkedin.com/in "{company_name}" recruiter{loc_suffix}',
-            f'site:linkedin.com/in "{company_name}" "Talent Acquisition"{loc_suffix}',
-            f'site:linkedin.com/in "{company_name}" "HR Manager"{loc_suffix}',
+            f'site:linkedin.com/in "{company_name}" ("HR" OR "Human Resources" OR "Talent Acquisition"){loc_suffix}',
+            f'site:linkedin.com/in "{company_name}" (recruiter OR "HR Manager" OR "Head of HR" OR "CHRO"){loc_suffix}',
+            f'site:linkedin.com/in "{company_name}" ("People Operations" OR "HRBP" OR "VP HR"){loc_suffix}',
         ]
 
         candidates: Dict[str, Dict[str, Any]] = {}
-        for query in queries:
-            for r in tavily_search(query, max_results=5):
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(queries)) as pool:
+            query_results = list(pool.map(lambda q: tavily_search(q, max_results=8), queries))
+
+        for search_hits in query_results:
+            for r in search_hits:
                 url = r.get("url", "")
                 if "linkedin.com/in/" not in url.lower():
                     continue  # only accept actual LinkedIn profile URLs, per spec
@@ -267,10 +295,6 @@ class BackgroundVerificationConnector(BaseMCPConnector):
                 title_text = r.get("title", "") or ""
                 content_text = r.get("content", "") or ""
                 name, title = _parse_name_and_title(title_text)
-                # Score off the LinkedIn result's own title line only — the
-                # snippet/content often quotes or mentions OTHER people (e.g.
-                # "X was congratulated by CHRO Jane Doe"), so scoring against
-                # content risks crediting one person's seniority to another.
                 score = _score_title(title_text)
 
                 candidates[url] = {
@@ -286,15 +310,18 @@ class BackgroundVerificationConnector(BaseMCPConnector):
     # ---- 3. best-effort company-level HR contact number --------------------
 
     def _find_company_contact_number(self, company_name: str, location: Optional[str]) -> Dict[str, Any]:
+        import concurrent.futures
         loc_suffix = f" {location}" if location else ""
         queries = [
-            f'"{company_name}" HR contact number{loc_suffix}',
-            f'"{company_name}" HR phone number{loc_suffix}',
-            f'"{company_name}" official contact number{loc_suffix}',
+            f'"{company_name}" (HR OR official) (contact OR phone) number{loc_suffix}',
+            f'"{company_name}" head office phone number{loc_suffix}',
         ]
 
-        for query in queries:
-            for r in tavily_search(query, max_results=5):
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(queries)) as pool:
+            query_results = list(pool.map(lambda q: tavily_search(q, max_results=5), queries))
+
+        for search_hits in query_results:
+            for r in search_hits:
                 content = r.get("content", "") or ""
                 phone = _find_phone_number(content)
                 if phone:
@@ -316,6 +343,7 @@ class BackgroundVerificationConnector(BaseMCPConnector):
             "source_title": None,
             "note": "No publicly published HR/company contact number was found via web search.",
         }
+
 
 
 connector = BackgroundVerificationConnector()

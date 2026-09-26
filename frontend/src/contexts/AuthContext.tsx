@@ -20,14 +20,12 @@ import { getApiBaseUrl } from "@/lib/apiConfig";
 const API_URL = getApiBaseUrl();
 export const GOOGLE_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || "";
 
-// Single kill switch for the whole login feature. Was off while login only
-// upserted a DB row with no real session; now that /auth/google issues a
-// real JWT enforced by the backend on every protected route, leaving this
-// off would mean the frontend UI wall doesn't match backend reality — a
-// signed-out visitor would see 401s instead of the sign-in prompt.
-// Temporarily disabled so the recruitment UI can be inspected locally while
-// Google OAuth configuration is being repaired. Re-enable before deployment.
-export const AUTH_GATE_ENABLED = false;
+// Single kill switch for the whole login feature. /auth/google issues a
+// real JWT enforced by the backend on every protected route (see
+// api/deps.py::get_current_user), so this must stay on in any deployed
+// environment — off here while the backend enforces auth would just mean a
+// signed-out visitor sees raw 401s instead of the sign-in prompt.
+export const AUTH_GATE_ENABLED = true;
 
 const GSI_SCRIPT_SRC = "https://accounts.google.com/gsi/client";
 

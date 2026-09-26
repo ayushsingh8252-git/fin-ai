@@ -69,10 +69,15 @@ ACTION_MANAGE_USERS = "manage_users"
 # The full history includes HR decisions (rejections, shortlisting), which an
 # interviewer has no business reading.
 ACTION_VIEW_TIMELINE = "view_timeline"
+# Aggregate usage/AI-performance metrics across the whole recruitment
+# workspace (recruitment_analytics.py) — company-wide numbers, not scoped to
+# one job or candidate, so it stays out of the interviewer role same as
+# ACTION_VIEW_TIMELINE does.
+ACTION_VIEW_ANALYTICS = "view_analytics"
 
 _ALL_HR_ACTIONS = frozenset({
     ACTION_VIEW, ACTION_CREATE_JOB, ACTION_EDIT_JOB, ACTION_UPLOAD, ACTION_ANALYZE, ACTION_DECIDE,
-    ACTION_VIEW_TIMELINE,
+    ACTION_VIEW_TIMELINE, ACTION_VIEW_ANALYTICS,
 })
 
 ROLE_PERMISSIONS: Dict[str, frozenset] = {
@@ -81,7 +86,8 @@ ROLE_PERMISSIONS: Dict[str, frozenset] = {
     # A hiring manager works the jobs they own: decide and analyze on them, but
     # candidate intake (uploading resumes) stays with recruiting.
     HIRING_MANAGER: frozenset({
-        ACTION_VIEW, ACTION_CREATE_JOB, ACTION_EDIT_JOB, ACTION_ANALYZE, ACTION_DECIDE, ACTION_VIEW_TIMELINE,
+        ACTION_VIEW, ACTION_CREATE_JOB, ACTION_EDIT_JOB, ACTION_ANALYZE, ACTION_DECIDE,
+        ACTION_VIEW_TIMELINE, ACTION_VIEW_ANALYTICS,
     }),
     # Read-only, and only for candidates they are actually scheduled to interview.
     INTERVIEWER: frozenset({ACTION_VIEW}),
@@ -749,9 +755,15 @@ def _process_claimed_upload(db: Session, upload: ResumeUpload) -> Dict[str, Any]
     # Local import: hiring_service pulls in the LLM stack, which the API
     # process should not pay for just to import this module.
     from . import hiring_service
+    from .llmops import trace_id_for
 
     upload_id, job_id = upload.id, upload.job_id
     filename, path = upload.original_filename, upload.stored_path
+    # Deterministic from upload_id alone (pure hash, no network/DB) — lets
+    # recruitment_analytics.py re-derive the same id from a ResumeUpload row
+    # later to attribute this execution's real LLMCostRecord rows back to it,
+    # without adding a new column anywhere.
+    trace_id = trace_id_for(upload_id)
 
     job = db.get(Role, job_id)
     if job is None:
@@ -763,7 +775,7 @@ def _process_claimed_upload(db: Session, upload: ResumeUpload) -> Dict[str, Any]
     db.commit()  # end the read transaction; the LLM calls below can take a while
 
     # ── Existing AI: parse the resume. No DB transaction is open here. ──
-    fields = hiring_service.parse_resume_pdf(filename, path)
+    fields = hiring_service.parse_resume_pdf(filename, path, trace_id=trace_id)
     if not (fields.get("resume_text") or "").strip():
         raise NonRetryableResumeError(
             "No readable text could be extracted from this PDF. It may be a scan or corrupted."
@@ -782,7 +794,7 @@ def _process_claimed_upload(db: Session, upload: ResumeUpload) -> Dict[str, Any]
                 {"name": fields.get("name"), "experience": fields.get("experience"),
                  "skills": fields.get("skills") or [], "summary": fields.get("summary"),
                  "ats_score": fields.get("ats_score")},
-                requirement, job_title,
+                requirement, job_title, trace_id=trace_id,
             )
         else:
             skip_reason = "This job has no description to match against."
@@ -954,6 +966,10 @@ def _apply_candidate_fields(row: Candidate, fields, email_key, name_key, phone_k
             row.experience_years = years
     put("skills", [s for s in (fields.get("skills") or []) if isinstance(s, str)])
     put("education", fields.get("education") if isinstance(fields.get("education"), list) else None)
+    put("work_history", fields.get("work_history") if isinstance(fields.get("work_history"), list) else None)
+    # A degraded parse's summary is a "review manually" notice, not a summary.
+    if not fields.get("degraded"):
+        put("summary", (fields.get("summary") or "").strip() or None)
     row.resume_text = fields.get("resume_text") or row.resume_text
     # The temporary upload path is promoted to the candidate-owned path by
     # _store_candidate_resume once the candidate id is known.

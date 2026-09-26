@@ -7,7 +7,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 import os
 from .config import settings
-from .api import upload, query, rules, audio, fraud, interview, auth, telephonic, hiring, screening, orchestrator, mcp, observability, google_oauth, agent, whatsapp, voice, command_center, outcomes, feedback, evals, health, recruitment
+from .api import upload, query, rules, audio, fraud, interview, auth, telephonic, hiring, screening, orchestrator, mcp, observability, google_oauth, agent, whatsapp, voice, command_center, outcomes, feedback, evals, health, recruitment, recruitment_analytics
 from .api.deps import get_current_user
 from .database import engine
 from .rate_limit import limiter
@@ -56,6 +56,39 @@ async def lifespan(app: FastAPI):
         print("[Lifespan Startup] Table check complete!")
     except Exception as e:
         print(f"[Lifespan Startup Warning] create_all failed: {e}")
+
+    # 0a. create_all() never adds columns to a table that already exists, and
+    # deploys don't run Alembic — so a column added to an existing model is
+    # added here, idempotently, or every query on that table breaks.
+    try:
+        from sqlalchemy import inspect as _inspect, text as _text
+        existing = {c["name"] for c in _inspect(engine).get_columns("candidates")}
+        json_type = "JSON" if engine.dialect.name == "postgresql" else "TEXT"
+        for col, ddl in (("summary", "TEXT"), ("work_history", json_type)):
+            if col not in existing:
+                with engine.begin() as conn:
+                    conn.execute(_text(f"ALTER TABLE candidates ADD COLUMN {col} {ddl}"))
+                print(f"[Lifespan Startup] Added missing column candidates.{col}")
+    except Exception as e:
+        print(f"[Lifespan Startup Warning] candidates column check failed: {e}")
+
+    # 0b. Tag demo-seeded candidates created before the seeders set
+    # source="demo_seed", so Recruitment Analytics never counts them as real.
+    # Exact, not heuristic: the real upload pipeline is the only other code
+    # path that creates a Candidate, and it always sets source="bulk_upload".
+    # Idempotent — a no-op once no NULL-source rows remain.
+    try:
+        from sqlalchemy import update as _update
+        with engine.begin() as conn:
+            tagged = conn.execute(
+                _update(models.Candidate)
+                .where(models.Candidate.source.is_(None))
+                .values(source="demo_seed")
+            ).rowcount
+        if tagged:
+            print(f"[Lifespan Startup] Tagged {tagged} pre-existing demo-seeded candidate(s) as demo_seed")
+    except Exception as e:
+        print(f"[Lifespan Startup Warning] demo_seed backfill failed: {e}")
 
     # 1. Warm up embedding model (bge-base-en-v1.5) & run dummy forward-pass
     # to eliminate the 17.4s cold-start on the first user query.
@@ -247,6 +280,7 @@ app.include_router(agent.router, prefix="/api/v1", dependencies=_auth_guard)
 app.include_router(voice.router, prefix="/api/v1", dependencies=_auth_guard)
 app.include_router(command_center.router, prefix="/api/v1", dependencies=_auth_guard)
 app.include_router(recruitment.router, prefix="/api/v1", dependencies=_auth_guard)
+app.include_router(recruitment_analytics.router, prefix="/api/v1", dependencies=_auth_guard)
 
 # Mounted at the root (not /api/v1) so the callback path matches
 # GOOGLE_AUTH_REDIRECT_URL in .env exactly: /auth/google/callback.

@@ -10,6 +10,7 @@ by role and, for hiring managers and interviewers, by job/candidate ownership.
 """
 import logging
 import os
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -549,6 +550,9 @@ def application_360(
         "location": cand.location, "current_role": cand.current_role,
         "experience_text": cand.experience_text, "experience_years": cand.experience_years,
         "skills": cand.skills or [], "education": cand.education or [],
+        "summary": cand.summary,
+        "work_history": cand.work_history or [],
+        "is_demo": cand.source == "demo_seed",
         "has_resume": bool(cand.resume_file_path),
         "resume_filename": cand.resume_filename,
     }
@@ -719,7 +723,7 @@ def application_360(
 
 
 @router.post("/seed-demo")
-def seed_demo(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+def seed_demo(db: Session = Depends(get_db), user: User = Depends(require_role(models.HR_ADMIN))):
     from ..services.seed_service import seed_recruitment_demo
     return seed_recruitment_demo(db, user)
 
@@ -826,6 +830,69 @@ class BackgroundVerifyIn(BaseModel):
     candidate_role: Optional[str] = Field(None, max_length=200)
 
 
+def _alnum(s: Optional[str]) -> str:
+    return re.sub(r"[^a-z0-9]", "", (s or "").lower())
+
+
+def _default_employer(work_history: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Most recent *past* employer first: contacting a candidate's current
+    employer can tip them off before they have resigned, so it is only the
+    default when the resume lists no other employer."""
+    past = [w for w in work_history if not w.get("is_current")]
+    return (past or work_history or [None])[0]
+
+
+def _tenure_phrase(entry: Dict[str, Any]) -> Optional[str]:
+    start, end = entry.get("start"), entry.get("end")
+    if entry.get("is_current"):
+        return f"from {start} to the present" if start else "currently"
+    if start and end:
+        return f"from {start} to {end}"
+    if start:
+        return f"from {start}"
+    return None
+
+
+def _refresh_parsed_profile(db: Session, cand: Candidate) -> None:
+    """Re-run resume extraction on the candidate's stored resume text — for
+    candidates parsed before work history / summary were extracted."""
+    from ..services import hiring_service
+    from ..services.llmops import trace_id_for
+
+    fields = hiring_service.extract_resume_fields(
+        cand.resume_filename or "resume.pdf", cand.resume_text or "", trace_id=trace_id_for(f"profile:{cand.id}")
+    )
+    if fields.get("degraded"):
+        raise HTTPException(status_code=503, detail="The AI resume parser is unavailable right now. Please try again shortly.")
+    cand.work_history = fields.get("work_history") or []
+    if fields.get("summary"):
+        cand.summary = fields["summary"].strip()
+    if fields.get("education"):
+        cand.education = fields["education"]
+    cand.location = cand.location or fields.get("location")
+    cand.current_role = cand.current_role or fields.get("current_role")
+
+
+@router.post("/applications/{application_id}/employment-history")
+def extract_employment_history(
+    application_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user),
+):
+    """Extract work history + summary from the resume already on file."""
+    app = rs.get_application_for_user(db, user, application_id, rs.ACTION_ANALYZE)
+    cand = db.get(Candidate, app.candidate_id)
+    if not cand or not (cand.resume_text or "").strip():
+        raise HTTPException(status_code=409, detail="This candidate has no resume text on file to extract from.")
+    _refresh_parsed_profile(db, cand)
+    rs.record_activity(
+        db, candidate_id=cand.id, application_id=app.id, job_id=app.job_id,
+        event_type="candidate.profile_extracted", actor_type=rs.ACTOR_AI,
+        summary=f"Employment history extracted from resume — {len(cand.work_history or [])} employer(s) found",
+        payload={"employers": [w["company"] for w in cand.work_history or []]},
+    )
+    db.commit()
+    return {"summary": cand.summary, "work_history": cand.work_history or [], "education": cand.education or []}
+
+
 @router.post("/applications/{application_id}/background-verify")
 def background_verify(
     application_id: str,
@@ -833,81 +900,104 @@ def background_verify(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """Run open-web background verification for a candidate's declared company
-    experience via Tavily search (company legitimacy check + LinkedIn HR contacts)
-    and synthesize a personalized HR-to-HR reference check email template ready
-    for copying."""
+    """Verify one of the candidate's employers — by default a real employer
+    parsed from their resume (Candidate.work_history), never a guess — via
+    open-web signals (company legitimacy + LinkedIn HR contacts, Tavily),
+    and draft a personalized HR-to-HR employment verification email built
+    from exactly what the candidate declared about that job."""
     app = rs.get_application_for_user(db, user, application_id, rs.ACTION_ANALYZE)
     cand = db.get(Candidate, app.candidate_id)
     if not cand:
         raise HTTPException(status_code=404, detail="Candidate not found.")
     job = db.get(Role, app.job_id)
-    job_title = job.title if job else "Open Position"
+    job_title = job.title if job else None
 
-    # Determine company to verify
-    company_name = (body.company_name or "").strip()
-    if not company_name:
-        import re
-        role_text = cand.current_role or ""
-        match = re.search(r"(?:at|@|,)\s+([A-Za-z0-9\s&.,\-]+)", role_text)
-        if match:
-            company_name = match.group(1).strip()
-        elif cand.experience_text and len(cand.experience_text) > 2 and not cand.experience_text.lower().endswith("years"):
-            company_name = cand.experience_text.split(" - ")[0].strip()
-        else:
-            # Look for common company mentions in resume_text
-            company_name = "Previous Employer"
+    work_history: List[Dict[str, Any]] = cand.work_history or []
+    requested = (body.company_name or "").strip()
+    if requested:
+        entry = next((w for w in work_history if _alnum(w.get("company")) == _alnum(requested)), None)
+        company_name = entry["company"] if entry else requested
+    else:
+        entry = _default_employer(work_history)
+        if entry is None:
+            raise HTTPException(
+                status_code=422,
+                detail="No employer was found in this candidate's resume. Extract employment history from the resume, or enter the employer name to verify.",
+            )
+        company_name = entry["company"]
+    entry = entry or {}
 
-    claimed_role = (body.candidate_role or cand.current_role or "Specialist").strip()
-    candidate_name = cand.name or "Candidate"
-    location = cand.location or "India"
+    claimed_role = (body.candidate_role or "").strip() or entry.get("title") or cand.current_role
+    tenure = _tenure_phrase(entry) if entry else None
+    candidate_name = cand.name or "the candidate"
 
-    # Run verification connector
     from ..agent_tools.verification_tools import connector as bgv_connector
     bgv_res = bgv_connector._verify_company_background({
         "company_name": company_name,
-        "location": location,
+        **({"location": cand.location} if cand.location else {}),
     })
 
     legitimacy = bgv_res.get("legitimacy") or {}
-    hr_contacts = bgv_res.get("hr_contacts") or []
+    hr_contacts: List[Dict[str, Any]] = []
+    seen_contacts = set()
+    for c in bgv_res.get("hr_contacts") or []:
+        key = _alnum(c.get("name")) or (c.get("linkedin_url") or "").rstrip("/").lower()
+        if key and key not in seen_contacts:
+            seen_contacts.add(key)
+            hr_contacts.append(c)
     hr_phone = bgv_res.get("hr_contact_number") or {}
-    warnings = bgv_res.get("warnings")
+    warnings = list(bgv_res.get("warnings") or [])
+    if entry.get("is_current"):
+        warnings.append(
+            f"{company_name} is the candidate's CURRENT employer. Contact them only after the candidate has given explicit written consent."
+        )
+    if requested and not entry.get("company"):
+        warnings.append(f"'{company_name}' does not appear in the candidate's parsed work history — it was entered manually.")
 
     top_contact = hr_contacts[0] if hr_contacts else None
-    recipient_name = top_contact["name"] if top_contact else "Human Resources Team"
-    recipient_title = top_contact["title"] if top_contact else f"Human Resources & Talent Acquisition at {company_name}"
+    recipient_name = top_contact["name"] if top_contact else f"{company_name} HR Team"
+    recipient_title = top_contact["title"] if top_contact else f"Human Resources, {company_name}"
     recipient_url = top_contact["linkedin_url"] if top_contact else None
+    greeting = top_contact["name"].split()[0] if top_contact and top_contact.get("name") else f"{company_name} HR Team"
+    sender_name = user.name or user.email
 
-    sender_name = user.name or user.email or "Talent Acquisition Lead"
-    exp_str = f"({cand.experience_years} years experience stated)" if cand.experience_years else ""
+    declared = [f"Employer: {company_name}"]
+    if claimed_role:
+        declared.append(f"Designation: {claimed_role}")
+    if entry.get("start") or entry.get("end") or entry.get("is_current"):
+        declared.append(
+            f"Period of employment: {entry.get('start') or 'not stated'} – "
+            f"{'Present (currently employed)' if entry.get('is_current') else (entry.get('end') or 'not stated')}"
+        )
+    declared_block = "\n".join(f"  • {line}" for line in declared)
 
-    email_subject = f"Employment & Background Verification Request: {candidate_name} ({claimed_role})"
+    role_clause = f" as {claimed_role}" if claimed_role else ""
+    tenure_clause = f" {tenure}" if tenure else ""
+    applied_clause = f" for the {job_title} role" if job_title else ""
+
+    email_subject = f"Employment verification request — {candidate_name}{f', {claimed_role}' if claimed_role else ''} ({company_name})"
     email_body = (
-        f"Dear {recipient_name},\n\n"
-        f"I hope this message finds you well.\n\n"
-        f"I am reaching out from the Talent Acquisition & People Operations team. We are currently conducting "
-        f"a standard pre-employment background verification for {candidate_name}, who has applied for the "
-        f"{job_title} position with us.\n\n"
-        f"In their application documentation, {candidate_name} reported having previously worked at {company_name} "
-        f"in the capacity of {claimed_role} {exp_str}.\n\n"
-        f"To assist us in completing this verification, could you kindly confirm the following details from your records:\n"
-        f"  1. Official Start Date and End Date of Employment\n"
-        f"  2. Primary Designation and Department held at time of exit\n"
-        f"  3. Nature of Employment (Full-time / Part-time / Contractual)\n"
-        f"  4. Reason for Separation (Voluntary Resignation / Other, if disclosable)\n"
-        f"  5. Eligibility for Re-hire at {company_name}\n"
-        f"  6. Confirmation of professional conduct and standing\n\n"
-        f"The candidate has provided authorization for employment background verification.\n\n"
-        f"We sincerely appreciate your time and assistance. If {company_name} utilizes a third-party verification portal "
-        f"or requires an official verification fee, please let us know so we can arrange it promptly.\n\n"
-        f"Warm regards,\n\n"
+        f"Dear {greeting},\n\n"
+        f"I'm reaching out from our Talent Acquisition team regarding {candidate_name}, who is being considered{applied_clause}. "
+        f"As part of our standard pre-employment verification, we'd be grateful if you could confirm the details "
+        f"{candidate_name} has declared about their time at {company_name}{role_clause}{tenure_clause}.\n\n"
+        f"Details declared by the candidate:\n{declared_block}\n\n"
+        f"Could you please confirm or correct the following from your records?\n"
+        f"  1. Dates of employment (joining and relieving dates)\n"
+        f"  2. Designation held, and at the time of leaving\n"
+        f"  3. Type of employment (full-time / internship / contract)\n"
+        f"  4. Eligibility for rehire, if you are able to share it\n\n"
+        f"The candidate has authorised this verification, and any information you share will be kept strictly "
+        f"confidential and used only for this hiring decision. If {company_name} handles verifications through a "
+        f"dedicated email address or third-party portal, please point me to it and I'll follow that process.\n\n"
+        f"Thank you for your time.\n\n"
+        f"Best regards,\n"
         f"{sender_name}\n"
-        f"Talent Acquisition & People Operations Team\n"
+        f"Talent Acquisition\n"
+        + (f"{user.email}\n" if user.email and user.email != sender_name else "")
     )
 
-    # Record activity in audit trail
-    verdict = legitimacy.get("verdict", "checked")
+    verdict = legitimacy.get("verdict", "unknown")
     score = legitimacy.get("score", 0)
     rs.record_activity(
         db,
@@ -917,7 +1007,8 @@ def background_verify(
         event_type="candidate.bgv_verified",
         actor_type=rs.ACTOR_AI,
         summary=f"Background verification run for '{company_name}' — legitimacy: {verdict} ({score}/100)",
-        payload={"company": company_name, "verdict": verdict, "score": score, "hr_contacts_found": len(hr_contacts)},
+        payload={"company": company_name, "verdict": verdict, "score": score,
+                 "hr_contacts_found": len(hr_contacts), "from_resume": bool(entry.get("company"))},
         dedupe_key=f"bgv:{app.id}:{company_name}:{uuid.uuid4().hex[:6]}",
     )
     db.commit()
@@ -927,16 +1018,25 @@ def background_verify(
         "application_id": app.id,
         "company_name": company_name,
         "claimed_role": claimed_role,
+        "employment": {
+            "from_resume": bool(entry.get("company")),
+            "title": entry.get("title"),
+            "start": entry.get("start"),
+            "end": entry.get("end"),
+            "is_current": bool(entry.get("is_current")),
+        },
         "legitimacy": legitimacy,
         "hr_contacts": hr_contacts,
         "hr_contact_number": hr_phone,
-        "warnings": warnings,
+        "warnings": warnings or None,
         "personalized_email": {
             "subject": email_subject,
             "body": email_body,
             "recipient_name": recipient_name,
             "recipient_title": recipient_title,
             "recipient_url": recipient_url,
+            "sender_name": sender_name,
+            "sender_email": user.email,
         },
     }
 

@@ -84,13 +84,27 @@ RESUME_SYSTEM_INSTRUCTION = """You are a resume parsing and ATS scoring engine. 
 text of a resume PDF, extract structured fields and score the resume's overall quality/completeness
 the way an Applicant Tracking System would — independent of any specific job requirement.
 
+Only extract what the resume text actually states. Never guess or invent an employer, title, date,
+location or institution — use null (or an empty list) when it is not written in the resume. Project
+names, hackathons, clients and schools are NOT employers; only put real jobs/internships in work_history.
+In the summary, NEVER use "he", "she", "his", "her" or "him" — the resume does not state gender. Use the
+candidate's name, or "they"/"their".
+
 Return ONLY a JSON object with this exact shape:
 {"name": "<candidate full name, or null if not found>",
  "email": "<candidate email, or null if not found>",
  "phone": "<candidate phone number, or null if not found>",
- "experience": "<short experience summary, e.g. '4 Years'>",
+ "location": "<city/country as written in the resume, or null>",
+ "current_role": "<job title of the most recent position, or null>",
+ "experience": "<total professional experience computed from work_history dates, e.g. '1.5 Years'>",
  "skills": ["<skill1>", "<skill2>", ...up to 8 most relevant skills],
- "summary": "<1-2 sentence honest summary of the candidate's background>",
+ "work_history": [{"company": "<employer name exactly as written>",
+                   "title": "<job title held there>",
+                   "start": "<start date as written, e.g. 'Aug 2025', or null>",
+                   "end": "<end date as written, or null if ongoing>",
+                   "is_current": <true if the resume marks it ongoing/present, else false>}, ...most recent first],
+ "education": [{"institution": "<name>", "degree": "<degree/field, or null>", "years": "<e.g. '2022 – 2026', or null>"}],
+ "summary": "<2-3 sentence factual summary for a recruiter: current role and employer, core expertise, and the most notable concrete achievement — no praise words, no claims not in the resume>",
  "ats_score": <integer 0-100, resume structure/clarity/completeness quality>}"""
 
 MATCH_SYSTEM_INSTRUCTION = """You are a requirement-matching engine for a hiring pipeline. Given a
@@ -144,15 +158,74 @@ def _fallback_resume_fields(filename: str, text: str) -> Dict[str, Any]:
     }
 
 
-def extract_resume_fields(filename: str, text: str) -> Dict[str, Any]:
-    """Parses raw resume text into structured fields + an ATS quality score."""
+def _alnum(s: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", (s or "").lower())
+
+
+def _str_or_none(value: Any, limit: int = 120) -> Optional[str]:
+    if not isinstance(value, str):
+        return None
+    value = " ".join(value.split())
+    return value[:limit] if value and value.lower() not in ("null", "none", "n/a") else None
+
+
+def _clean_work_history(value: Any, resume_text: str) -> List[Dict[str, Any]]:
+    """Keep only employers whose name literally appears in the resume text.
+
+    Compared on alphanumerics only, since PDF extraction routinely drops the
+    spaces between words ("Logicmotive– AI&CloudIntern"). This is what makes
+    the Background Verification agent contact a real employer from the
+    resume rather than one the model inferred or invented.
+    """
+    if not isinstance(value, list):
+        return []
+    haystack = _alnum(resume_text)
+    out: List[Dict[str, Any]] = []
+    for item in value[:10]:
+        if not isinstance(item, dict):
+            continue
+        company = _str_or_none(item.get("company"))
+        if not company or len(_alnum(company)) < 2 or _alnum(company) not in haystack:
+            continue
+        out.append({
+            "company": company,
+            "title": _str_or_none(item.get("title")),
+            "start": _str_or_none(item.get("start"), 40),
+            "end": _str_or_none(item.get("end"), 40),
+            "is_current": item.get("is_current") is True,
+        })
+    return out
+
+
+def _clean_education(value: Any) -> List[Dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    out = []
+    for item in value[:5]:
+        if isinstance(item, dict) and _str_or_none(item.get("institution")):
+            out.append({
+                "institution": _str_or_none(item.get("institution")),
+                "degree": _str_or_none(item.get("degree")),
+                "years": _str_or_none(item.get("years"), 40),
+            })
+    return out
+
+
+def extract_resume_fields(filename: str, text: str, trace_id: str | None = None) -> Dict[str, Any]:
+    """Parses raw resume text into structured fields + an ATS quality score.
+
+    `trace_id`, when given, tags the resulting LLMCostRecord row (see
+    key_manager.execute_json_generation) so recruitment_analytics.py can
+    attribute this call's real cost back to the ResumeUpload that triggered
+    it instead of it sitting unattributed in the app-wide cost ledger.
+    """
     if not text.strip():
         return {**_fallback_resume_fields(filename, text), "summary": "No extractable text found in this PDF."}
 
     prompt = f"Resume filename: {filename}\n\nRaw extracted resume text:\n{text[:RESUME_TEXT_PROMPT_CHARS]}"
     fallback_used = False
     try:
-        result = generate_json(prompt, RESUME_SYSTEM_INSTRUCTION)
+        result = generate_json(prompt, RESUME_SYSTEM_INSTRUCTION, langfuse_trace_id=trace_id)
         if not isinstance(result, dict):
             raise ValueError("Resume extraction response was not a JSON object")
     except Exception as e:
@@ -179,6 +252,10 @@ def extract_resume_fields(filename: str, text: str) -> Dict[str, Any]:
         result["skills"] = []
     result.setdefault("experience", "Not specified")
     result.setdefault("summary", "")
+    result["work_history"] = _clean_work_history(result.get("work_history"), text)
+    result["education"] = _clean_education(result.get("education"))
+    result["location"] = _str_or_none(result.get("location"))
+    result["current_role"] = _str_or_none(result.get("current_role"))
     try:
         result["ats_score"] = max(0, min(100, int(result["ats_score"])))
     except (KeyError, TypeError, ValueError):
@@ -191,7 +268,7 @@ def extract_resume_fields(filename: str, text: str) -> Dict[str, Any]:
     return result
 
 
-def parse_resume_pdf(filename: str, file_path: str) -> Dict[str, Any]:
+def parse_resume_pdf(filename: str, file_path: str, trace_id: str | None = None) -> Dict[str, Any]:
     """Extracts text from an uploaded resume PDF and returns structured fields."""
     try:
         blocks = parse_pdf(file_path)
@@ -199,7 +276,7 @@ def parse_resume_pdf(filename: str, file_path: str) -> Dict[str, Any]:
     except Exception as e:
         print(f"[Hiring Resume Parse Error] {e}")
         text = ""
-    fields = extract_resume_fields(filename, text)
+    fields = extract_resume_fields(filename, text, trace_id=trace_id)
     fields["filename"] = filename
     fields["resume_text"] = text[:RESUME_TEXT_STORE_CHARS]
     return fields
@@ -268,7 +345,10 @@ def _fallback_match(candidate: Dict[str, Any], requirement: str) -> Dict[str, An
     }
 
 
-def match_candidate_to_requirement(candidate: Dict[str, Any], requirement: str, role_title: str = "the open role") -> Dict[str, Any]:
+def match_candidate_to_requirement(
+    candidate: Dict[str, Any], requirement: str, role_title: str = "the open role",
+    trace_id: str | None = None,
+) -> Dict[str, Any]:
     """Scores how well a parsed candidate fits an HR-written requirement brief."""
     if not requirement.strip():
         return _fallback_match(candidate, requirement)
@@ -286,7 +366,7 @@ def match_candidate_to_requirement(candidate: Dict[str, Any], requirement: str, 
     )
     fallback_used = False
     try:
-        result = generate_json(prompt, MATCH_SYSTEM_INSTRUCTION)
+        result = generate_json(prompt, MATCH_SYSTEM_INSTRUCTION, langfuse_trace_id=trace_id)
         if not isinstance(result, dict):
             raise ValueError("Match response was not a JSON object")
     except Exception as e:

@@ -580,6 +580,12 @@ class Candidate(Base):
     experience_years = Column(Float, nullable=True)          # parsed from the above when unambiguous, else null
     education = Column(JSON, default=list)
     skills = Column(JSON, default=list)
+    # Both straight from resume parsing (hiring_service.RESUME_SYSTEM_INSTRUCTION);
+    # null means "not extracted", never a placeholder. work_history is a list
+    # of {company, title, start, end, is_current}, most recent first — the
+    # real employers the Background Verification agent contacts.
+    summary = Column(Text, nullable=True)
+    work_history = Column(JSON, nullable=True)
     # Unlike /hiring/parse-resumes, the recruitment path KEEPS the file so
     # HR can reopen it and so fraud analysis has something to scan. Served
     # through main.py's auth-gated GET /uploads/{path}, never a static mount.
