@@ -6,7 +6,13 @@ from .config import settings
 _is_sqlite = "sqlite" in settings.DATABASE_URL
 
 engine = create_engine(
-    settings.DATABASE_URL, connect_args={"check_same_thread": False} if _is_sqlite else {}
+    settings.DATABASE_URL,
+    connect_args={"check_same_thread": False} if _is_sqlite else {},
+    # Managed Postgres (Neon) suspends idle compute and closes idle
+    # connections server-side; without a pre-ping the first request after an
+    # idle spell fails on a dead pooled connection ("SSL connection has been
+    # closed unexpectedly"). Recycle stays under the provider's idle cutoff.
+    **({} if _is_sqlite else {"pool_pre_ping": True, "pool_recycle": 240, "pool_size": 5, "max_overflow": 5}),
 )
 
 if _is_sqlite:
