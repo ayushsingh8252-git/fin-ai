@@ -20,13 +20,10 @@ from typing import List, Optional
 from pydantic import BaseModel, Field
 from langchain_core.prompts import ChatPromptTemplate
 
-from langchain_groq import ChatGroq
-from langchain_google_genai import ChatGoogleGenerativeAI
 
-from ..config import settings
+from . import llm_chains
 from .llmops import get_managed_prompt, langchain_invoke_kwargs
 from .resilience import retry_with_backoff
-from .model_config import GROQ_MODELS, GEMINI_MODELS
 
 # ─────────────────────────────────────────────────────────────────────────
 # Structured-output schemas
@@ -70,34 +67,10 @@ class AiTextSignal(BaseModel):
 # module's docstring for why this used to drift out of sync.
 
 
-def _build_models():
-    groq_key = settings.GROQ_API_KEY or settings.GROK_API_KEY
-    groq_llms = (
-        [ChatGroq(model=m, api_key=groq_key, temperature=0.1, timeout=30) for m in GROQ_MODELS]
-        if groq_key
-        else []
-    )
-    gemini_llms = (
-        [
-            ChatGoogleGenerativeAI(model=m, api_key=settings.GEMINI_API_KEY, temperature=0.1, timeout=30)
-            for m in GEMINI_MODELS
-        ]
-        if settings.GEMINI_API_KEY
-        else []
-    )
-    return groq_llms, gemini_llms
-
-
-_groq_llms, _gemini_llms = _build_models()
-
-
 def _structured_chain(prompt: ChatPromptTemplate, schema: type[BaseModel]):
-    legs = [llm.with_structured_output(schema) for llm in (*_groq_llms, *_gemini_llms)]
-    if not legs:
-        raise RuntimeError("No LLM provider configured (missing GROQ_API_KEY / GEMINI_API_KEY).")
-    primary, *rest = legs
-    runnable = primary.with_fallbacks(rest) if rest else primary
-    return prompt | runnable
+    """Groq-primary, Gemini-fallback runnable over every configured key
+    (services/llm_chains.py) — structured output bound on each leg."""
+    return llm_chains.structured_chain(prompt, schema, temperature=0.1)
 
 
 def _managed_chain(name: str, fallback: ChatPromptTemplate, schema: type[BaseModel]):
@@ -189,7 +162,7 @@ def extract_identity(text: str, langfuse_trace_id: str | None = None) -> Extract
     # step instead of a clean "na" one.
     chain, prompt_metadata = _managed_chain("fraud-identity-extraction", IDENTITY_PROMPT, ExtractedIdentity)
     return retry_with_backoff(
-        chain.invoke, {"text": text[:8000]}, max_attempts=2, base_delay=0.3, max_delay=2.0,
+        chain.invoke, {"text": text[:8000]}, max_attempts=1, base_delay=0.3, max_delay=2.0,  # the chain already falls back across every key/model
         **langchain_invoke_kwargs(langfuse_trace_id, prompt_metadata),
     )
 
@@ -198,7 +171,7 @@ def classify_ai_text(text: str, langfuse_trace_id: str | None = None) -> AiTextS
     try:
         chain, prompt_metadata = _managed_chain("fraud-ai-text-classification", AI_TEXT_PROMPT, AiTextSignal)
         return retry_with_backoff(
-            chain.invoke, {"text": text[:8000]}, max_attempts=2, base_delay=0.3, max_delay=2.0,
+            chain.invoke, {"text": text[:8000]}, max_attempts=1, base_delay=0.3, max_delay=2.0,  # the chain already falls back across every key/model
             **langchain_invoke_kwargs(langfuse_trace_id, prompt_metadata),
         )
     except Exception as e:

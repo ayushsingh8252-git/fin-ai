@@ -4,9 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Briefcase, Inbox, Workflow, BarChart3,
-  Loader2, RefreshCw, Database, ArrowLeft, LogOut,
-  LayoutGrid, ChevronDown, Radar, Search, ShieldCheck, Upload,
-  ShieldAlert, Phone, Video, Zap, Brain, UserPlus, Shield, BriefcaseBusiness,
+  Loader2, RefreshCw, Database, LogOut, ChevronDown,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ErrorBanner } from "@/components/ui/error-banner";
@@ -14,23 +12,10 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ToastProvider, useToast } from "@/components/ui/toast";
 import { errorMessage, getMe, seedDemoPipeline, type Me, type UserRole } from "@/lib/recruitmentApi";
 import { useAuth } from "@/contexts/AuthContext";
+import { ProductMenu } from "@/components/layout/ProductMenu";
+import { TryFreeBanner } from "@/components/TryFreeBanner";
 import { TalentBrandMarkSvg } from "./indicators";
 import { cn } from "@/lib/utils";
-
-const PRODUCTS = [
-  { href: "/command-center", label: "Command Center", icon: Radar },
-  { href: "/rag", label: "RAG Workspace", icon: Search },
-  { href: "/rules", label: "Rule Explorer", icon: ShieldCheck },
-  { href: "/upload", label: "Ingest Documents", icon: Upload },
-  { href: "/fraud-detection", label: "Fraud Detection", icon: ShieldAlert },
-  { href: "/telephonic-agent", label: "Telephonic Agent", icon: Phone },
-  { href: "/screening-agent", label: "Screening Agent", icon: Video },
-  { href: "/hiring-automation", label: "Hiring Pipeline", icon: Zap },
-  { href: "/recruitment", label: "Recruitment", icon: BriefcaseBusiness },
-  { href: "/knowledge", label: "Knowledge Transfer", icon: Brain },
-  { href: "/onboarding", label: "Onboarding", icon: UserPlus },
-  { href: "/security", label: "Security & Compliance", icon: Shield },
-] as const;
 
 const ROLE_LABEL: Record<UserRole, string> = {
   hr_admin: "HR Admin",
@@ -144,11 +129,8 @@ function ShellContent({ children }: { children: React.ReactNode }) {
     return name.slice(0, 2).toUpperCase();
   }, [loaded]);
 
-  const [productsOpen, setProductsOpen] = useState(false);
   const [userOpen, setUserOpen] = useState(false);
-  const productsRef = useRef<HTMLDivElement>(null);
   const userRef = useRef<HTMLDivElement>(null);
-  useDismiss(productsRef, productsOpen, () => setProductsOpen(false));
   useDismiss(userRef, userOpen, () => setUserOpen(false));
   const { signOut } = useAuth();
 
@@ -172,55 +154,7 @@ function ShellContent({ children }: { children: React.ReactNode }) {
         {/* ── Top bar: product identity + utilities ── */}
         <div className="mx-auto flex h-14 max-w-7xl items-center justify-between gap-3 px-4 sm:px-6 lg:px-8">
           <div className="flex min-w-0 items-center gap-3">
-            <div ref={productsRef} className="relative">
-              <button
-                type="button"
-                onClick={() => setProductsOpen((v) => !v)}
-                aria-expanded={productsOpen}
-                aria-haspopup="menu"
-                aria-label="Switch product"
-                title="Switch product"
-                className={cn(
-                  "flex h-8 w-8 items-center justify-center rounded-md border transition-colors cursor-pointer",
-                  productsOpen ? "border-zinc-300 bg-zinc-100 text-zinc-900" : "border-zinc-200 text-zinc-500 hover:bg-zinc-50 hover:text-zinc-900"
-                )}
-              >
-                <LayoutGrid className="h-4 w-4" />
-              </button>
-
-              {productsOpen && (
-                <div role="menu" className="absolute left-0 top-full z-50 mt-2 w-64 rounded-lg border border-zinc-200 bg-white p-1 shadow-lg">
-                  <Link
-                    href="/"
-                    role="menuitem"
-                    onClick={() => setProductsOpen(false)}
-                    className="flex items-center gap-2.5 rounded-md px-3 py-2 text-[13px] text-zinc-700 hover:bg-zinc-50"
-                  >
-                    <ArrowLeft className="h-4 w-4 text-zinc-400" /> Platform home
-                  </Link>
-                  <div className="my-1 border-t border-zinc-100" />
-                  <p className="px-3 pb-1 pt-1.5 text-[11px] font-medium text-zinc-400">Products</p>
-                  {PRODUCTS.map(({ href, label, icon: Icon }) => {
-                    const current = href === "/recruitment";
-                    return (
-                      <Link
-                        key={href}
-                        href={href}
-                        role="menuitem"
-                        onClick={() => setProductsOpen(false)}
-                        className={cn(
-                          "flex items-center gap-2.5 rounded-md px-3 py-2 text-[13px] transition-colors",
-                          current ? "bg-blue-50 font-medium text-blue-700" : "text-zinc-700 hover:bg-zinc-50"
-                        )}
-                      >
-                        <Icon className={cn("h-4 w-4 shrink-0", current ? "text-blue-600" : "text-zinc-400")} />
-                        {label}
-                      </Link>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
+            <ProductMenu />
 
             <Link href="/recruitment" className="flex min-w-0 items-center gap-2.5">
               <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-zinc-900 text-white">
@@ -332,7 +266,12 @@ function ShellContent({ children }: { children: React.ReactNode }) {
           </div>
         )}
 
-        {value && <RecruitmentContext.Provider value={value}>{children}</RecruitmentContext.Provider>}
+        {value && (
+          <RecruitmentContext.Provider value={value}>
+            <div className="mb-6"><TryFreeBanner /></div>
+            {children}
+          </RecruitmentContext.Provider>
+        )}
       </main>
     </div>
   );

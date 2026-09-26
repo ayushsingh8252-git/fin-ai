@@ -10,14 +10,28 @@ covering what's reachable without live credentials."""
 import uuid
 
 import pytest
-from fastapi.testclient import TestClient
-
 from app.agent_tools import registry
 from app.database import SessionLocal
-from app.main import app
+from app.mcp.base import MCPToolError
 from app.models import CandidateScoreCard, FraudScan
 
-client = TestClient(app)
+
+class _Resp:
+    def __init__(self, status_code, body):
+        self.status_code, self._body = status_code, body
+
+    def json(self):
+        return self._body
+
+
+def _call(connector, tool, params):
+    """The tool contract, called the way the planner/executor does
+    (registry.call_tool). The HTTP layer in front of it is HR-gated and
+    allowlisted — covered separately in test_agent_hr_command_center.py."""
+    try:
+        return _Resp(200, registry.call_tool(connector, tool, params))
+    except MCPToolError as e:
+        return _Resp(e.status_code, {"detail": {"code": e.code, "message": str(e)}})
 
 
 def test_unified_catalog_includes_every_product_connector():
@@ -43,31 +57,31 @@ def test_catalog_entries_have_required_fields():
 
 
 def test_call_unknown_connector_returns_404():
-    response = client.post("/api/v1/agent/tools/does_not_exist/some_tool/call", json={})
+    response = _call("does_not_exist", "some_tool", {})
     assert response.status_code == 404
     assert response.json()["detail"]["code"] == "unknown_connector"
 
 
 def test_rag_tool_rejects_empty_query():
-    response = client.post("/api/v1/agent/tools/rag/query_documents/call", json={"query": "  "})
+    response = _call("rag", "query_documents", {"query": "  "})
     assert response.status_code == 400
     assert response.json()["detail"]["code"] == "validation_error"
 
 
 def test_fraud_tool_unknown_scan_id_is_404_not_crash():
-    response = client.post("/api/v1/agent/tools/fraud/run_fraud_check/call", json={"scan_id": "does-not-exist"})
+    response = _call("fraud", "run_fraud_check", {"scan_id": "does-not-exist"})
     assert response.status_code == 404
     assert response.json()["detail"]["code"] == "not_found"
 
 
 def test_fraud_tool_requires_scan_id():
-    response = client.post("/api/v1/agent/tools/fraud/run_fraud_check/call", json={})
+    response = _call("fraud", "run_fraud_check", {})
     assert response.status_code == 400
     assert response.json()["detail"]["code"] == "validation_error"
 
 
 def test_telephonic_get_call_status_unknown_id_is_404():
-    response = client.post("/api/v1/agent/tools/telephonic/get_call_status/call", json={"call_id": "does-not-exist"})
+    response = _call("telephonic", "get_call_status", {"call_id": "does-not-exist"})
     assert response.status_code == 404
 
 
@@ -86,7 +100,7 @@ def test_telephonic_status_derives_availability_flags():
         db.close()
 
     try:
-        response = client.post("/api/v1/agent/tools/telephonic/get_call_status/call", json={"call_id": call_id})
+        response = _call("telephonic", "get_call_status", {"call_id": call_id})
         assert response.status_code == 200
         data = response.json()
         assert data["transcript_available"] is False
@@ -99,12 +113,12 @@ def test_telephonic_status_derives_availability_flags():
 
 
 def test_screening_tool_unknown_call_is_404():
-    response = client.post("/api/v1/agent/tools/screening/run_screening_analysis/call", json={"call_id": "does-not-exist"})
+    response = _call("screening", "run_screening_analysis", {"call_id": "does-not-exist"})
     assert response.status_code == 404
 
 
 def test_whatsapp_send_without_config_is_503_not_crash():
-    response = client.post("/api/v1/agent/tools/whatsapp/send_whatsapp_message/call", json={"recipient": "+15550001111", "message": "hi"})
+    response = _call("whatsapp", "send_whatsapp_message", {"recipient": "+15550001111", "message": "hi"})
     # Passes in every environment this suite runs in — only asserts it never
     # 500s, matching every other tool's config-check contract:
     #   503 — WhatsApp isn't configured (no credentials in this environment)
@@ -120,13 +134,13 @@ def test_whatsapp_send_without_config_is_503_not_crash():
 
 
 def test_whatsapp_status_lookup_unknown_message_id_is_404():
-    response = client.post("/api/v1/agent/tools/whatsapp/get_whatsapp_message_status/call", json={"message_id": "does-not-exist"})
+    response = _call("whatsapp", "get_whatsapp_message_status", {"message_id": "does-not-exist"})
     assert response.status_code == 404
 
 
 def test_google_integration_status_never_fabricates_success():
     """Must reflect real missing_config() state, never hard-code "configured": true."""
-    response = client.post("/api/v1/agent/tools/google_workspace_status/get_google_integration_status/call", json={})
+    response = _call("google_workspace_status", "get_google_integration_status", {})
     assert response.status_code == 200
     data = response.json()
     for key in ("oauth", "gmail", "calendar", "meet", "sheets", "docs", "drive"):
@@ -154,8 +168,8 @@ def test_calculate_candidate_score_falls_back_to_stable_placeholder(candidate_id
     candidate_id, not re-randomized), matching memory/orchestrator.py's
     _placeholder_score contract."""
     payload = {"candidate_id": candidate_id, "candidate_name": "Placeholder Test Candidate"}
-    r1 = client.post("/api/v1/agent/tools/hiring/calculate_candidate_score/call", json=payload)
-    r2 = client.post("/api/v1/agent/tools/hiring/calculate_candidate_score/call", json=payload)
+    r1 = _call("hiring", "calculate_candidate_score", payload)
+    r2 = _call("hiring", "calculate_candidate_score", payload)
     assert r1.status_code == 200 and r2.status_code == 200
     d1, d2 = r1.json(), r2.json()
     assert d1["telephonic_score_is_real"] is False
@@ -166,9 +180,7 @@ def test_calculate_candidate_score_falls_back_to_stable_placeholder(candidate_id
 
 
 def test_composite_scorecard_persists_both_interview_types(candidate_id):
-    response = client.post(
-        "/api/v1/agent/tools/hiring/get_candidate_scorecard/call",
-        json={"candidate_id": candidate_id, "candidate_name": "Composite Test Candidate"},
+    response = _call("hiring", "get_candidate_scorecard", {"candidate_id": candidate_id, "candidate_name": "Composite Test Candidate"},
     )
     assert response.status_code == 200
     data = response.json()
@@ -199,9 +211,7 @@ def test_composite_scorecard_downgrades_recommendation_on_fraud_verdict(candidat
         lambda params: {"scan_id": params["scan_id"], "risk_score": 91, "verdict": "likely_fraudulent", "explanation": "test", "key_concerns": []},
     )
 
-    response = client.post(
-        "/api/v1/agent/tools/hiring/get_candidate_scorecard/call",
-        json={"candidate_id": candidate_id, "candidate_name": "Fraud Test Candidate", "scan_id": "fake-scan-id"},
+    response = _call("hiring", "get_candidate_scorecard", {"candidate_id": candidate_id, "candidate_name": "Fraud Test Candidate", "scan_id": "fake-scan-id"},
     )
     assert response.status_code == 200
     data = response.json()

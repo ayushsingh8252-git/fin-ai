@@ -180,8 +180,16 @@ def generate_json_resilient(
     prompt_metadata: dict | None = None,
 ) -> dict | list:
     """
-    Thin retry wrapper around generate_json() for callers with deterministic fallbacks.
+    generate_json() with a retry for failures *outside* the key sweep.
+
+    key_manager already tries every Groq key, then every Gemini key, once
+    each (with rate-limit cooldowns). When that whole sweep fails it raises
+    LLMKeysExhausted, which is not retried here — repeating the sweep would
+    re-send the same request to keys that just failed (duplicate requests,
+    doubled latency) without any realistic chance of a different outcome.
     """
+    from .key_manager import LLMKeysExhausted
+
     return retry_with_backoff(
         generate_json,
         prompt,
@@ -192,6 +200,7 @@ def generate_json_resilient(
         max_attempts=max_attempts,
         base_delay=0.3,
         max_delay=2.0,
+        non_retryable=(LLMKeysExhausted,),
     )
 
 

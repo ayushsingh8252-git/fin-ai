@@ -348,7 +348,7 @@ export default function FraudDetectionPage() {
 
       <footer className="border-t border-zinc-200 bg-white py-10">
         <div className="max-w-6xl mx-auto px-6 text-center text-[12px] text-zinc-500 font-mono">
-          Fin AI · Fraud Detection Live Agent — every score above is computed live from your uploaded document. Nothing here is simulated.
+          AgenticFlow AI · Fraud Detection Live Agent — every score above is computed live from your uploaded document. Nothing here is simulated.
         </div>
       </footer>
     </div>

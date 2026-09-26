@@ -87,6 +87,9 @@ export interface InterviewRoomProps {
   sessionId?: string;
   email?: string;
   roleFieldsLocked?: boolean;
+  /** Invite-link mode: the candidate sees a submission confirmation, not the
+   * scored report — that evaluation is for the hiring team (Recruitment). */
+  candidateView?: boolean;
 }
 
 export default function InterviewRoom({
@@ -95,6 +98,7 @@ export default function InterviewRoom({
   sessionId,
   email,
   roleFieldsLocked = false,
+  candidateView = false,
 }: InterviewRoomProps) {
   const {
     videoRef, state: proctoring, faceBoxes,
@@ -452,6 +456,7 @@ export default function InterviewRoom({
                 jd_text: jdText || undefined,
                 resume_context: resumeContextRef.current || undefined,
                 max_turns: MAX_CANDIDATE_TURNS,
+                session_id: sessionId,
               }),
             },
             1,
@@ -476,7 +481,7 @@ export default function InterviewRoom({
         setPhase("listening");
       }
     },
-    [roleTitle, jdText, addTurn, speak, runEvaluation],
+    [roleTitle, jdText, sessionId, addTurn, speak, runEvaluation],
   );
 
   /** Opt-in screen recording — a separate getDisplayMedia() stream alongside
@@ -756,7 +761,7 @@ export default function InterviewRoom({
         <div className="p-4 sm:p-5 flex items-center justify-between border-b border-zinc-100 flex-wrap gap-3">
           <div className="flex items-center gap-2 text-zinc-500">
             <span className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-blue-600 text-xs font-bold text-white">A</span>
-            <span className="text-sm font-bold text-zinc-800">Fin AI · Screening Agent</span>
+            <span className="text-sm font-bold text-zinc-800">AgenticFlow AI · Screening Agent</span>
           </div>
           <div className="flex items-center gap-2">
             {!roleFieldsLocked && (
@@ -890,6 +895,36 @@ export default function InterviewRoom({
     );
   }
 
+  if (candidateView && phase === "complete") {
+    return (
+      <div className="mx-auto w-full max-w-xl py-16 px-4">
+        {evaluation ? (
+          <div className="rounded-xl border border-zinc-200 bg-white p-8 text-center">
+            <CheckCircle2 className="mx-auto mb-3 h-8 w-8 text-emerald-600" />
+            <h1 className="text-xl font-semibold text-zinc-900">Your interview has been submitted</h1>
+            <p className="mt-2 text-sm text-zinc-500">
+              Thank you for your time. Your responses were recorded and sent to the hiring team for {roleTitle || DEFAULT_ROLE}.
+              They will be in touch about next steps.
+            </p>
+          </div>
+        ) : (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 p-8 text-center">
+            <h1 className="text-lg font-semibold text-amber-800">Your interview couldn&rsquo;t be submitted yet</h1>
+            <p className="mt-2 text-sm text-amber-700">
+              {errorMessage || "The final submission failed."} Your answers so far are saved on our side.
+            </p>
+            <button
+              onClick={() => { setErrorMessage(null); void runEvaluation(transcript); }}
+              className="mt-4 rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"
+            >
+              Retry submission
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   if (phase === "complete" && evaluation) {
     return (
       <div className="mx-auto w-full max-w-4xl py-10 px-4 space-y-6">
@@ -900,7 +935,7 @@ export default function InterviewRoom({
               <span>Interview Complete · Candidate Assessment Report</span>
             </div>
             <h1 className="text-2xl font-extrabold text-zinc-900 mt-1">
-              Evaluation for {candidateName || "Ayush Singh"}
+              Evaluation for {candidateName || "candidate"}
             </h1>
             <p className="text-xs text-zinc-500 mt-0.5">
               Role: {roleTitle || DEFAULT_ROLE} · Generated at {new Date().toLocaleTimeString()}

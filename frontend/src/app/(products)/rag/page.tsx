@@ -3,8 +3,9 @@
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { BrandMark } from "@/components/BrandMark";
+import { ProductMenu } from "@/components/layout/ProductMenu";
 import {
-  Send, Upload, Loader2, Crosshair, ArrowLeft, Sparkles,
+  Send, Upload, Loader2, Crosshair, Sparkles,
   FileText, X, CheckCircle2, Search, Globe,
   Users, MessageSquare,
   Share2, FileCode, Layers,
@@ -1291,19 +1292,14 @@ export default function RAGPage() {
             {isSidebarOpen ? <PanelLeftClose className="w-4 h-4 text-blue-600" /> : <PanelLeft className="w-4 h-4 text-zinc-600" />}
           </button>
 
-          <Link
-            href="/"
-            className="hidden sm:flex items-center gap-2 text-xs font-mono font-semibold text-zinc-600 hover:text-zinc-900 transition-colors bg-zinc-100/80 hover:bg-zinc-200/80 px-3 py-1.5 rounded-lg border border-zinc-200/80"
-          >
-            <ArrowLeft className="w-3.5 h-3.5" /> Back
-          </Link>
+          <ProductMenu />
 
           <div className="hidden sm:block h-4 w-px bg-zinc-200" />
 
           <Link href="/" className="flex items-center gap-2 group">
             <BrandMark variant="dark" />
             <span className="font-bold text-[14px] sm:text-[15px] tracking-tight text-zinc-900 truncate">
-              Fin AI <span className="text-blue-600 font-mono text-[10px] sm:text-xs uppercase ml-1 px-1.5 py-0.5 rounded bg-blue-50 border border-blue-200 hidden md:inline">RAG Workspace</span>
+              AgenticFlow AI <span className="text-blue-600 font-mono text-[10px] sm:text-xs uppercase ml-1 px-1.5 py-0.5 rounded bg-blue-50 border border-blue-200 hidden md:inline">RAG Workspace</span>
             </span>
           </Link>
         </div>

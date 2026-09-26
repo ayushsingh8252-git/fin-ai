@@ -188,14 +188,81 @@ export interface ScreeningInfo {
   results: ScreeningResultInfo[];
 }
 
+export type InterviewMode = "ai_screening" | "telephonic" | "human";
+
 export interface InterviewInfo {
   id: string;
-  mode: string;
-  status: string;
+  mode: InterviewMode | string;
+  status: string; // scheduled | dialing | in_progress | completed | failed
+  status_detail: string | null;
   scheduled_at: string | null;
+  duration_minutes: number | null;
   interviewer_email: string | null;
   meet_link: string | null;
+  calendar_event_id: string | null;
+  calendar_html_link: string | null;
+  candidate_link: string | null;
+  screening_session_id: string | null;
+  call_record_id: string | null;
+  completed_at: string | null;
   created_at: string | null;
+  has_report: boolean;
+}
+
+/** What actually happened for one external step of scheduling. */
+export interface ScheduleStep {
+  status: "created" | "sent" | "placed" | "queued" | "failed" | "skipped" | string;
+  error?: string;
+  detail?: string;
+  html_link?: string | null;
+  meet_url?: string | null;
+  http_status?: number;
+}
+
+export interface ScheduleInterviewResponse {
+  interview: InterviewInfo;
+  steps: { calendar?: ScheduleStep; email?: ScheduleStep; call?: ScheduleStep };
+}
+
+export interface InterviewTurn {
+  role: "interviewer" | "candidate" | string;
+  text: string;
+}
+
+export interface InterviewReport {
+  interview: InterviewInfo;
+  candidate: { id: string; name: string | null; email: string | null } | null;
+  job: { id: string; title: string; department: string | null } | null;
+  report_available: boolean;
+  evaluation: {
+    summary: string | null;
+    recommendation: string | null;
+    overall_score: number | null;
+    communication_score: number | null;
+    relevance_score: number | null;
+    confidence_score: number | null;
+    strengths: string[];
+    areas_for_improvement: string[];
+    matched_skills: string[];
+    missing_skills: string[];
+    key_takeaway: string | null;
+    suggested_next_step: string | null;
+    generated_at: string | null;
+  } | null;
+  transcript: InterviewTurn[];
+  transcript_verified: boolean | null;
+  session: {
+    status: string | null;
+    started_at: string | null;
+    completed_at: string | null;
+    duration_sec: number | null;
+    error: string | null;
+  } | null;
+  client_reported: {
+    integrity_score: number | null;
+    proctor_flags_count: number | null;
+    time_taken_sec: number | null;
+  } | null;
 }
 
 export interface ActivityEvent {
@@ -530,20 +597,25 @@ export const bulkSetStage = (applicationIds: string[], stage: Stage, reason?: st
     body: JSON.stringify({ application_ids: applicationIds, stage, reason: reason || null }),
   });
 
-export const bulkAnalyze = (applicationIds: string[]) =>
-  request<BulkStageResponse>(`/bulk/analyze`, {
-    method: "POST",
-    body: JSON.stringify({ application_ids: applicationIds }),
-  });
-
 export const scheduleInterview = (
   applicationId: string,
-  payload: { scheduled_at: string; mode?: string; interviewer_email?: string; notes?: string },
+  payload: {
+    scheduled_at: string;
+    mode: InterviewMode;
+    duration_minutes?: number;
+    interviewer_email?: string;
+    notes?: string;
+    add_to_calendar?: boolean;
+    send_invite_email?: boolean;
+  },
 ) =>
-  request<InterviewInfo>(`/applications/${applicationId}/interviews`, {
+  request<ScheduleInterviewResponse>(`/applications/${applicationId}/interviews`, {
     method: "POST",
     body: JSON.stringify(payload),
   });
+
+export const getInterviewReport = (applicationId: string, interviewId: string) =>
+  request<InterviewReport>(`/applications/${applicationId}/interviews/${interviewId}/report`);
 
 export const createOffer = (
   applicationId: string,

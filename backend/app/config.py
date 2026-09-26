@@ -256,18 +256,6 @@ class Settings(BaseSettings):
     # local/ngrok dev often predates having this configured.
     WHATSAPP_APP_SECRET: str = ""
 
-    # Command Center — password unlock (server-side alternative to the voice
-    # biometric gate; see api/command_center.py). A bcrypt hash, never the
-    # plaintext password — generate with:
-    #   python -c "import bcrypt; print(bcrypt.hashpw(b'yourpassword', bcrypt.gensalt()).decode())"
-    # Empty means the /command-center/unlock endpoint is disabled (503),
-    # same "empty = not configured, fail with a clear error" convention used
-    # across every other integration in this file.
-    # Under Docker Compose: escape every `$` in the hash as `$$` in .env —
-    # Compose interpolates env_file contents and will otherwise silently
-    # truncate the hash at the first unresolved `$word` (see .env.example).
-    COMMAND_CENTER_PASSWORD_HASH: str = ""
-
     # --- Auth (JWT) ---
     # Signs/verifies the access token issued by POST /auth/google (see
     # api/auth.py) and required by api/deps.py's get_current_user on every

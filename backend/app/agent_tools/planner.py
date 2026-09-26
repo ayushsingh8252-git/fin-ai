@@ -19,7 +19,7 @@ a literal value — resolved by _resolve_placeholders before that step runs.
 import json
 import re
 from contextlib import nullcontext
-from typing import Any, Dict, List, Optional
+from typing import Any, Collection, Dict, List, Optional
 
 from ..services.llm_service import generate_json_resilient
 from ..services.llmops import ManagedPrompt, get_langfuse, get_managed_prompt, new_trace_id
@@ -50,6 +50,9 @@ chaining its inner tools.
 instead of guessing a literal value.
 - If a tool's status is "not_configured", do not use it — explain in a step's params under a "_blocked" \
 key why, or omit that part of the plan entirely.
+- Never invent a phone number, email address, id, file path, date or time. Use only values the user \
+wrote or an earlier step's result ("$stepN.field"). If a required value is missing, still include the \
+step but leave that param as an empty string so the user is asked for it before anything runs.
 - If nothing in the catalog can satisfy the request, return {"steps": []}.
 Return ONLY the JSON object, nothing else."""
 
@@ -81,7 +84,11 @@ def _resolve_placeholders(value: Any, results: List[Dict[str, Any]]) -> Any:
     return value
 
 
-def build_plan(prompt: str, langfuse_trace_id: Optional[str] = None) -> Dict[str, Any]:
+def build_plan(
+    prompt: str,
+    langfuse_trace_id: Optional[str] = None,
+    tools: Optional[Collection[tuple]] = None,
+) -> Dict[str, Any]:
     """Prompt -> {"steps": [...]}. Does not execute anything.
 
     `langfuse_trace_id`, if given, nests the planning LLM call under the
@@ -96,6 +103,10 @@ def build_plan(prompt: str, langfuse_trace_id: Optional[str] = None) -> Dict[str
         langfuse_trace_id = new_trace_id()
 
     catalog = registry.unified_catalog()
+    if tools is not None:
+        # Callers scope the planner (e.g. the HR Command Center) — the model
+        # never sees, and validation never accepts, tools outside the scope.
+        catalog = [t for t in catalog if (t["connector"], t["tool"]) in tools]
     catalog_text = json.dumps(catalog, indent=None)
     managed_prompt = _planner_system_instruction()
 
@@ -183,7 +194,7 @@ def execute_plan(plan: Dict[str, Any], langfuse_trace_id: Optional[str] = None) 
     }
 
 
-def plan_and_run(prompt: str) -> Dict[str, Any]:
+def plan_and_run(prompt: str, tools: Optional[Collection[tuple]] = None) -> Dict[str, Any]:
     """One Langfuse trace per call, covering both stages: the planning
     generation (inside build_plan) and every executed tool step (inside
     execute_plan) all nest under this function's own root span, giving one
@@ -202,7 +213,7 @@ def plan_and_run(prompt: str) -> Dict[str, Any]:
         else nullcontext()
     )
     with root_cm as root:
-        plan = build_plan(prompt, langfuse_trace_id=trace_id)
+        plan = build_plan(prompt, langfuse_trace_id=trace_id, tools=tools)
         if plan.get("error"):
             execution = {"steps": [], "completed": False, "final_result": None}
         else:

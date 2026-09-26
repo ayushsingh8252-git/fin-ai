@@ -62,13 +62,15 @@ FALLBACK_EVALUATION = {
 _VALID_RECOMMENDATIONS = {"Strong Hire", "Hire", "Lean Hire", "No Hire"}
 
 
-def _coerce_recommendation(value: Any, overall_score: int) -> str:
+def _coerce_recommendation(value: Any, overall_score: Optional[int]) -> str:
     """Trusts the LLM's own verdict when it's one of the known labels;
     otherwise derives a safe default from the computed overall_score so the
     report always carries a recommendation even if the model's field was
     missing or off-schema."""
     if isinstance(value, str) and value.strip() in _VALID_RECOMMENDATIONS:
         return value.strip()
+    if overall_score is None:
+        return "Review Needed"
     if overall_score >= 85:
         return "Strong Hire"
     if overall_score >= 70:
@@ -181,20 +183,23 @@ def generate_evaluation(
             raise ValueError("Evaluation response was not a JSON object")
     except Exception as e:
         print(f"[Interview Evaluation Error] {e}")
-        return FALLBACK_EVALUATION
+        # Flagged so an invite-link interview isn't closed out on a
+        # non-evaluation — the caller can keep the transcript and retry.
+        return {**FALLBACK_EVALUATION, "evaluation_unavailable": True}
 
+    # A sub-score the model didn't return stays None — never a made-up 50.
     for field in ("communication_score", "relevance_score", "confidence_score"):
         try:
-            result[field] = max(0, min(100, int(result.get(field, 50))))
+            result[field] = max(0, min(100, int(result.get(field))))
         except (TypeError, ValueError):
-            result[field] = 50
+            result[field] = None
 
     # Single server-computed, auditable overall score instead of leaving
-    # aggregation of the three sub-scores implicit/undone.
-    result["overall_score"] = round(
-        0.5 * result["relevance_score"]
-        + 0.3 * result["communication_score"]
-        + 0.2 * result["confidence_score"]
+    # aggregation of the three sub-scores implicit/undone — only when all
+    # three are real.
+    subs = (result["relevance_score"], result["communication_score"], result["confidence_score"])
+    result["overall_score"] = (
+        round(0.5 * subs[0] + 0.3 * subs[1] + 0.2 * subs[2]) if all(v is not None for v in subs) else None
     )
 
     result["recommendation"] = _coerce_recommendation(result.get("recommendation"), result["overall_score"])

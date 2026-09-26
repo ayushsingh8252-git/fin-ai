@@ -16,13 +16,10 @@ from typing import List, Literal, Optional
 from pydantic import BaseModel, Field, field_validator
 from langchain_core.prompts import ChatPromptTemplate
 
-from langchain_groq import ChatGroq
-from langchain_google_genai import ChatGoogleGenerativeAI
 
-from ..config import settings
+from . import llm_chains
 from .llmops import get_managed_prompt, langchain_invoke_kwargs
 from .resilience import retry_with_backoff
-from .model_config import GROQ_MODELS, GEMINI_MODELS
 
 INTERVIEWER_NAME = "Ayush"
 
@@ -85,37 +82,10 @@ class ScreeningQuestionSet(BaseModel):
 # confirmed removed from Groq's catalog).
 
 
-def _build_models():
-    groq_key = settings.GROQ_API_KEY or settings.GROK_API_KEY
-    groq_llms = (
-        [ChatGroq(model=m, api_key=groq_key, temperature=0.3, timeout=30) for m in GROQ_MODELS]
-        if groq_key
-        else []
-    )
-    gemini_llms = (
-        [
-            ChatGoogleGenerativeAI(model=m, api_key=settings.GEMINI_API_KEY, temperature=0.3, timeout=30)
-            for m in GEMINI_MODELS
-        ]
-        if settings.GEMINI_API_KEY
-        else []
-    )
-    return groq_llms, gemini_llms
-
-
-_groq_llms, _gemini_llms = _build_models()
-
-
 def _structured_chain(prompt: ChatPromptTemplate, schema: type[BaseModel]):
-    """Groq-primary, Gemini-fallback runnable — structured output bound on
-    each leg individually before fallbacks are composed, since fallbacks must
-    wrap the already-structured runnables, not the raw chat models."""
-    legs = [llm.with_structured_output(schema) for llm in (*_groq_llms, *_gemini_llms)]
-    if not legs:
-        raise RuntimeError("No LLM provider configured (missing GROQ_API_KEY / GEMINI_API_KEY).")
-    primary, *rest = legs
-    runnable = primary.with_fallbacks(rest) if rest else primary
-    return prompt | runnable
+    """Groq-primary, Gemini-fallback runnable over every configured key
+    (services/llm_chains.py) — structured output bound on each leg."""
+    return llm_chains.structured_chain(prompt, schema, temperature=0.3)
 
 
 def _managed_chain(name: str, fallback: ChatPromptTemplate, schema: type[BaseModel]):
@@ -225,7 +195,7 @@ def _fallback_resume_profile(resume_text: str) -> ResumeProfile:
         past_roles=[],
         projects=[],
         tech_stack=[],
-        resume_highlight=(resume_text[:120].strip() or "your background"),
+        resume_highlight="",  # never a raw slice of the resume text
     )
 
 
@@ -234,9 +204,11 @@ def _fallback_jd_profile() -> JDProfile:
 
 
 def _fallback_telephonic_screening_analysis() -> TelephonicScreeningAnalysis:
-    return TelephonicScreeningAnalysis(
-        jd_match_score=50,
-        verdict="Consider",
+    # model_construct: no score and no verdict were produced, so none is
+    # stored (the schema requires them only of real LLM output).
+    return TelephonicScreeningAnalysis.model_construct(
+        jd_match_score=None,
+        verdict=None,
         strengths=[],
         gaps=[],
         summary="Automated JD-match analysis is temporarily unavailable — both the "
@@ -266,9 +238,9 @@ def _fallback_question_bank(role_title: str, resume_profile: ResumeProfile) -> L
     greeting = ScreeningQuestion(
         category="greeting",
         text=(
-            f"Hi {name}, thanks for joining! I see you've worked on "
-            f"{resume_profile.resume_highlight or 'some interesting things'} — excited to "
-            f"chat today about the {role_title} role. Ready to get started?"
+            (f"Hi {name}, thanks for joining! I see you've worked on {resume_profile.resume_highlight} — "
+             if resume_profile.resume_highlight else f"Hi {name}, thanks for joining! ")
+            + f"I'm excited to chat today about the {role_title} role. Ready to get started?"
         ),
     )
     resume_qs = [ScreeningQuestion(category="resume", text=t) for t in _GENERIC_RESUME_QUESTIONS]
@@ -285,7 +257,7 @@ def get_resume_profile(resume_text: str, langfuse_trace_id: str | None = None) -
     try:
         chain, prompt_metadata = _managed_chain("screening-resume-profile", RESUME_PROMPT, ResumeProfile)
         return retry_with_backoff(
-            chain.invoke, {"resume_text": resume_text[:8000]}, max_attempts=2, base_delay=0.3, max_delay=2.0,
+            chain.invoke, {"resume_text": resume_text[:8000]}, max_attempts=1, base_delay=0.3, max_delay=2.0,  # the chain already falls back across every key/model
             **langchain_invoke_kwargs(langfuse_trace_id, prompt_metadata),
         )
     except Exception as e:
@@ -297,7 +269,7 @@ def get_jd_profile(jd_text: str, langfuse_trace_id: str | None = None) -> JDProf
     try:
         chain, prompt_metadata = _managed_chain("screening-jd-profile", JD_PROMPT, JDProfile)
         return retry_with_backoff(
-            chain.invoke, {"role_title": "the open role", "jd_text": jd_text[:6000]}, max_attempts=2, base_delay=0.3, max_delay=2.0,
+            chain.invoke, {"role_title": "the open role", "jd_text": jd_text[:6000]}, max_attempts=1, base_delay=0.3, max_delay=2.0,  # the chain already falls back across every key/model
             **langchain_invoke_kwargs(langfuse_trace_id, prompt_metadata),
         )
     except Exception as e:
@@ -316,9 +288,9 @@ def analyze_telephonic_screening(
         for t in transcript
     )
     if not formatted.strip():
-        return TelephonicScreeningAnalysis(
-            jd_match_score=0, verdict="Not a Fit", strengths=[], gaps=[],
-            summary="No candidate responses were recorded in this call.",
+        return TelephonicScreeningAnalysis.model_construct(
+            jd_match_score=None, verdict=None, strengths=[], gaps=[],
+            summary="No candidate responses were recorded in this call, so there is nothing to score.",
         )
 
     try:
@@ -332,7 +304,7 @@ def analyze_telephonic_screening(
                 "jd_text": (jd_text or "No job description provided — assess general fit for the role title.")[:6000],
                 "transcript": formatted[:8000],
             },
-            max_attempts=2, base_delay=0.3, max_delay=2.0,
+            max_attempts=1, base_delay=0.3, max_delay=2.0,  # the chain already falls back across every key/model
             **langchain_invoke_kwargs(langfuse_trace_id, prompt_metadata),
         )
     except Exception as e:
@@ -395,7 +367,7 @@ def generate_question_set(
                 "tech_stack": ", ".join(resume_profile.tech_stack) or "n/a",
                 "jd_context": jd_context,
             },
-            max_attempts=2, base_delay=0.3, max_delay=2.0,
+            max_attempts=1, base_delay=0.3, max_delay=2.0,  # the chain already falls back across every key/model
             **langchain_invoke_kwargs(langfuse_trace_id, prompt_metadata),
         )
         questions = result.questions

@@ -7,7 +7,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 import os
 from .config import settings
-from .api import upload, query, rules, audio, fraud, interview, auth, telephonic, hiring, screening, orchestrator, mcp, observability, google_oauth, agent, whatsapp, voice, command_center, outcomes, feedback, evals, health, recruitment, recruitment_analytics
+from .api import upload, query, rules, audio, fraud, interview, auth, telephonic, hiring, screening, orchestrator, mcp, observability, google_oauth, agent, whatsapp, voice, outcomes, feedback, evals, health, recruitment, recruitment_analytics
 from .api.deps import get_current_user
 from .database import engine
 from .rate_limit import limiter
@@ -62,15 +62,26 @@ async def lifespan(app: FastAPI):
     # added here, idempotently, or every query on that table breaks.
     try:
         from sqlalchemy import inspect as _inspect, text as _text
-        existing = {c["name"] for c in _inspect(engine).get_columns("candidates")}
         json_type = "JSON" if engine.dialect.name == "postgresql" else "TEXT"
-        for col, ddl in (("summary", "TEXT"), ("work_history", json_type)):
-            if col not in existing:
-                with engine.begin() as conn:
-                    conn.execute(_text(f"ALTER TABLE candidates ADD COLUMN {col} {ddl}"))
-                print(f"[Lifespan Startup] Added missing column candidates.{col}")
+        ts_type = "TIMESTAMP WITH TIME ZONE" if engine.dialect.name == "postgresql" else "DATETIME"
+        added_columns = {
+            "candidates": (("summary", "TEXT"), ("work_history", json_type)),
+            "screening_sessions": (("transcript", json_type), ("started_at", ts_type), ("completed_at", ts_type)),
+            "interviews": (
+                ("duration_minutes", "INTEGER"), ("calendar_html_link", "TEXT"),
+                ("status_detail", "TEXT"), ("completed_at", ts_type),
+            ),
+        }
+        inspector = _inspect(engine)
+        for table, columns in added_columns.items():
+            existing = {c["name"] for c in inspector.get_columns(table)}
+            for col, ddl in columns:
+                if col not in existing:
+                    with engine.begin() as conn:
+                        conn.execute(_text(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}"))
+                    print(f"[Lifespan Startup] Added missing column {table}.{col}")
     except Exception as e:
-        print(f"[Lifespan Startup Warning] candidates column check failed: {e}")
+        print(f"[Lifespan Startup Warning] column check failed: {e}")
 
     # 0b. Tag demo-seeded candidates created before the seeders set
     # source="demo_seed", so Recruitment Analytics never counts them as real.
@@ -278,7 +289,6 @@ app.include_router(feedback.router, prefix="/api/v1", dependencies=_auth_guard)
 app.include_router(evals.router, prefix="/api/v1", dependencies=_auth_guard)
 app.include_router(agent.router, prefix="/api/v1", dependencies=_auth_guard)
 app.include_router(voice.router, prefix="/api/v1", dependencies=_auth_guard)
-app.include_router(command_center.router, prefix="/api/v1", dependencies=_auth_guard)
 app.include_router(recruitment.router, prefix="/api/v1", dependencies=_auth_guard)
 app.include_router(recruitment_analytics.router, prefix="/api/v1", dependencies=_auth_guard)
 

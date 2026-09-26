@@ -24,6 +24,13 @@ load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..",
 COOLDOWN_DEFAULT_SECONDS = 60
 
 
+class LLMKeysExhausted(RuntimeError):
+    """Every configured Groq and Gemini key was tried once and failed.
+    Deliberately not retried by callers (llm_service.generate_json_resilient):
+    the sweep already *was* the retry/fallback, and running it again would
+    only duplicate requests against keys that just failed."""
+
+
 def is_rate_limit_error(e: Exception) -> bool:
     """
     Detects HTTP 429, rate limit, quota exceeded, or resource exhausted errors.
@@ -430,7 +437,7 @@ class LLMKeyManager:
         err_msg = "All configured Groq and Gemini API keys failed."
         if total_errors:
             err_msg += f" Details: {'; '.join(total_errors)}"
-        raise RuntimeError(err_msg)
+        raise LLMKeysExhausted(err_msg)
 
 
 key_manager = LLMKeyManager()

@@ -16,7 +16,7 @@ import {
   FolderOpen,
   Phone, Video, Minus, Plus, ShieldCheck, BadgeCheck, Lock, Calculator,
   Scale, UserCheck, ClipboardX, ShieldAlert, MousePointer2,
-  Award, Mail, ClipboardList, Target, FileSearch, ChevronDown,
+  Award, Mail, ClipboardList, Target, FileSearch, ChevronDown, BriefcaseBusiness, Radar,
 } from "lucide-react";
 
 /* ── Inline GitHub Icon ── */
@@ -147,7 +147,7 @@ export default function LandingPage() {
         <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
           <Link href="/" className="flex items-center group">
             <span className="font-extrabold text-[20px] tracking-tight text-zinc-900 font-sans">
-              fin ai
+              AgenticFlow AI
             </span>
           </Link>
 
@@ -163,13 +163,27 @@ export default function LandingPage() {
             ))}
           </div>
 
-          <div className="hidden lg:flex items-center gap-3">
+          <div className="hidden lg:flex items-center gap-1">
+            <Link
+              href="/recruitment"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-semibold text-zinc-800 rounded-md hover:bg-zinc-100 transition-colors"
+            >
+              <BriefcaseBusiness className="w-4 h-4 text-blue-600" />
+              Recruitment
+            </Link>
             <Link
               href="/command-center"
-              className="text-[13px] font-semibold bg-blue-600 text-white px-4 py-2 rounded-xl hover:bg-blue-700 transition-colors shadow-sm inline-flex items-center gap-1.5"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium text-zinc-600 rounded-md hover:bg-zinc-100 hover:text-zinc-900 transition-colors"
             >
-              <Bot className="w-3.5 h-3.5" />
-              <span>Command Center</span>
+              <Radar className="w-4 h-4 text-zinc-400" />
+              HR Command Center
+            </Link>
+            <Link
+              href="/recruitment"
+              className="ml-2 text-[13px] font-semibold bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors shadow-sm inline-flex items-center gap-1.5"
+            >
+              Try all features free
+              <ArrowRight className="w-3.5 h-3.5" />
             </Link>
           </div>
 
@@ -196,12 +210,18 @@ export default function LandingPage() {
                   {l.label}
                 </a>
               ))}
-              <div className="pt-2 border-t border-zinc-100 mt-2">
+              <div className="pt-2 border-t border-zinc-100 mt-2 space-y-1">
+                <Link href="/recruitment" className="flex items-center gap-2 py-2 text-sm font-semibold text-zinc-800">
+                  <BriefcaseBusiness className="w-4 h-4 text-blue-600" /> Recruitment
+                </Link>
+                <Link href="/command-center" className="flex items-center gap-2 py-2 text-sm font-medium text-zinc-700">
+                  <Radar className="w-4 h-4 text-zinc-400" /> HR Command Center
+                </Link>
                 <Link
-                  href="/command-center"
-                  className="block text-sm font-bold bg-blue-600 text-white px-4 py-2.5 rounded-xl text-center"
+                  href="/recruitment"
+                  className="mt-1 block text-sm font-bold bg-blue-600 text-white px-4 py-2.5 rounded-lg text-center"
                 >
-                  Launch Command Center
+                  Try all features free
                 </Link>
               </div>
             </motion.div>
@@ -216,8 +236,8 @@ export default function LandingPage() {
             {/* Left Column */}
             <div className="relative">
               <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-zinc-200 bg-zinc-50 mb-6">
-                <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                <span className="text-[12px] font-medium text-zinc-600">The #1 Enterprise Agentic AI Engine</span>
+                <div className="w-2 h-2 rounded-full bg-emerald-500" />
+                <span className="text-[12px] font-medium text-zinc-600">Open for testing — every feature is free to try</span>
               </div>
 
               <h1 className="text-[clamp(2.1rem,4.6vw,3.6rem)] font-extrabold leading-[1.08] tracking-tight text-zinc-900 mb-6">
@@ -234,16 +254,23 @@ export default function LandingPage() {
                 Automate complex enterprise policy extraction, orchestrate autonomous multi-agent reasoning, index document vectors with hybrid RAG, and execute deterministic actions.
               </p>
 
-              <div className="flex items-center gap-4">
+              <div className="flex flex-wrap items-center gap-3">
                 <Link
-                  href="/command-center"
-                  className="inline-flex items-center gap-2.5 px-6 py-3.5 rounded-xl text-[14px] font-semibold bg-blue-600 text-white hover:bg-blue-700 shadow-md shadow-blue-600/20 transition-all"
+                  href="/recruitment"
+                  className="inline-flex items-center gap-2 px-6 py-3.5 rounded-xl text-[14px] font-semibold bg-blue-600 text-white hover:bg-blue-700 shadow-md shadow-blue-600/20 transition-all"
                 >
-                  <Bot className="w-4 h-4" />
-                  <span>Launch Command Center</span>
+                  <span>Try all features free</span>
                   <ArrowRight className="w-4 h-4" />
                 </Link>
+                <Link
+                  href="/command-center"
+                  className="inline-flex items-center gap-2 px-5 py-3.5 rounded-xl text-[14px] font-semibold border border-zinc-200 bg-white text-zinc-800 hover:bg-zinc-50 transition-all"
+                >
+                  <Radar className="w-4 h-4 text-zinc-500" />
+                  <span>HR Command Center</span>
+                </Link>
               </div>
+              <p className="mt-3 text-[13px] text-zinc-500">Free to test · Google sign-in · No credit card required</p>
 
               <FloatingHeroDoodles />
             </div>
@@ -318,7 +345,7 @@ export default function LandingPage() {
           <SectionHeader
             badge="Agent Orchestrator"
             title="Every Agent, Mapped to What It Actually Does"
-            subtitle="From foundational retrieval engines to outcome-facing automation — the full roster powering Fin AI."
+            subtitle="From foundational retrieval engines to outcome-facing automation — the full roster powering AgenticFlow AI."
           />
         </div>
         <div className="max-w-[1360px] mx-auto px-6 mt-16">
@@ -335,7 +362,7 @@ export default function LandingPage() {
           <SectionHeader
             badge="The Math"
             title="What 100 first-round screenings actually cost"
-            subtitle="Compare the full manual process: sourcing, screening, coordination, and interviews against Fin AI."
+            subtitle="Compare the full manual process: sourcing, screening, coordination, and interviews against AgenticFlow AI."
           />
 
           <MathComparisonCard />
@@ -345,9 +372,8 @@ export default function LandingPage() {
           </div>
 
           <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 mt-10 text-[12px] text-zinc-500">
-            <span className="flex items-center gap-1.5"><BadgeCheck className="w-3.5 h-3.5 text-emerald-600" /> GST invoice on every purchase</span>
-            <span className="flex items-center gap-1.5"><Lock className="w-3.5 h-3.5 text-emerald-600" /> No setup fees</span>
-            <span className="flex items-center gap-1.5"><ShieldCheck className="w-3.5 h-3.5 text-emerald-600" /> Cancel anytime</span>
+            <span className="flex items-center gap-1.5"><BadgeCheck className="w-3.5 h-3.5 text-emerald-600" /> Free while in testing — no billing is set up yet</span>
+            <span className="flex items-center gap-1.5"><Lock className="w-3.5 h-3.5 text-emerald-600" /> No credit card required</span>
           </div>
         </div>
       </section>
@@ -380,7 +406,7 @@ function SiteFooter() {
           <div>
             <Link href="/" className="flex items-center mb-4">
               <span className="font-extrabold text-[20px] tracking-tight text-white font-sans">
-                fin ai
+                AgenticFlow AI
               </span>
             </Link>
             <p className="text-[13px] text-zinc-400 leading-relaxed max-w-xs mb-5">
@@ -415,7 +441,7 @@ function SiteFooter() {
 
         <div className="flex flex-col sm:flex-row items-center justify-between gap-3 mt-14 pt-6 border-t border-white/10">
           <p className="text-[12px] text-zinc-500 font-mono">
-            fin.ai · Autonomous AI Platform · © {new Date().getFullYear()}
+            AgenticFlow AI · Autonomous AI Platform · © {new Date().getFullYear()}
           </p>
           <button
             onClick={() => reopenCookieConsent()}
@@ -876,7 +902,7 @@ function BurningArchitectureModal({ isOpen, onClose }: { isOpen: boolean; onClos
                 onClick={onClose}
                 className="w-full sm:w-auto text-center px-5 py-2.5 rounded-xl bg-zinc-950 hover:bg-zinc-800 text-white font-bold text-xs transition-all shadow-md shadow-zinc-950/20 border border-zinc-800"
               >
-                Launch Command Center →
+                Open HR Command Center →
               </Link>
             </div>
           </motion.div>
@@ -1615,7 +1641,7 @@ function IntegrationsCardInteractive() {
         href="/command-center"
         className="mt-4 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 text-white text-[13px] font-bold hover:bg-blue-700 transition-colors shadow-sm self-start"
       >
-        <ArrowRight className="w-3.5 h-3.5" /> Deploy Connected Tools in Command Center
+        <ArrowRight className="w-3.5 h-3.5" /> Open HR Command Center
       </Link>
     </div>
   );
@@ -1658,7 +1684,7 @@ function MathComparisonCard() {
 
       <div className="relative">
         <div className="text-[11px] font-mono font-bold uppercase tracking-widest text-blue-100 mb-3">
-          Manual vs. Fin AI · {MATH_CANDIDATES} candidates
+          Manual vs. AgenticFlow AI · {MATH_CANDIDATES} candidates
         </div>
         <p className="text-[19px] sm:text-[26px] font-bold text-white mb-8 leading-snug">
           You spend <span className="line-through decoration-2 decoration-orange-200/80 text-orange-100">{inr(MATH_MANUAL_COST)}</span> doing this by hand.
@@ -1672,7 +1698,7 @@ function MathComparisonCard() {
           </div>
           <div className="p-5 rounded-2xl bg-white/15 ring-1 ring-white/25 shadow-lg shadow-black/10">
             <div className="text-2xl sm:text-3xl font-extrabold text-emerald-300 font-mono">{inr(MATH_AI_COST)}</div>
-            <div className="text-[13px] font-bold text-white mt-1.5">Fin AI cost</div>
+            <div className="text-[13px] font-bold text-white mt-1.5">AgenticFlow AI cost</div>
             <div className="text-[11px] text-blue-100/80 mt-0.5">Telephonic Agent + Screening Agent, end to end</div>
           </div>
           <div className="p-5 rounded-2xl bg-white/5 ring-1 ring-white/10">

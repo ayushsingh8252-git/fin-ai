@@ -167,6 +167,13 @@ class ScreeningSession(Base):
     role_title = Column(String, nullable=False)
     jd_text = Column(Text, nullable=True)
     status = Column(String, default="invited")  # invited -> opened -> in_progress -> completed
+    # Server-kept record of the interview: every question the server issued
+    # and every answer it received, [{"role": "interviewer"|"candidate",
+    # "text": str}]. Evaluation scores THIS, not a transcript the browser
+    # submits (services/interview_transcript.py).
+    transcript = Column(JSON, nullable=True)
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -757,6 +764,12 @@ class Interview(Base):
     status = Column(String, nullable=False, default="scheduled")
     screening_session_id = Column(String, ForeignKey("screening_sessions.id"), nullable=True, index=True)
     call_record_id = Column(String, ForeignKey("call_records.id"), nullable=True, index=True)
+    duration_minutes = Column(Integer, nullable=True)
+    calendar_html_link = Column(String, nullable=True)  # the real Google Calendar event page
+    # Why a scheduled step didn't happen (e.g. the telephony provider rejected
+    # the call) — shown to the recruiter instead of a silent "scheduled".
+    status_detail = Column(Text, nullable=True)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 

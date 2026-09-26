@@ -1,1297 +1,707 @@
 "use client";
 
-import React, { useState, useCallback, useEffect, useRef } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import {
-  Send,
-  Upload,
-  FileText,
-  X,
-  Sparkles,
-  Bot,
-  Sliders,
-  CheckCircle2,
-  FileCode,
-  ArrowRight,
-  UserCheck,
-  ShieldCheck,
-  PhoneCall,
-  MessageSquare,
-  Mail,
-  Search,
-  RotateCcw,
-  Plus,
-  Play,
-  Layers,
-  Terminal,
+  AlertTriangle, Check, CircleSlash, FileText, Loader2, Paperclip, Play, RotateCcw, Send, ShieldCheck, X,
 } from "lucide-react";
-
-import LeftPanel from "./LeftPanel";
-import RightCanvas from "./RightCanvas";
-import { VoiceGateModal } from "./VoiceGateModal";
-import type {
-  MissionState,
-  ExecutionStep,
-  CatalogTool,
-  Plan,
-  PlanStep,
-  AttachedDocument,
-  ApprovalDialogState,
-  WorkspaceViewMode,
-} from "./types";
-import { DEMO_PLAN as DemoPlan } from "./types";
+import { Button } from "@/components/ui/button";
+import { ErrorBanner } from "@/components/ui/error-banner";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  EmptyNote, InfoRow, Panel, StatusDot, Tag, btnPrimary, btnSecondary, inputCls, labelCls, type Tone,
+} from "@/components/ui/panel";
 import { getAuthHeaders } from "@/lib/auth";
 import { getApiBaseUrl } from "@/lib/apiConfig";
+import { errorMessage, getMe, type Me } from "@/lib/recruitmentApi";
+import { cn } from "@/lib/utils";
+import { TryFreeBanner } from "@/components/TryFreeBanner";
 
-const API_URL = getApiBaseUrl().replace(/\/api\/v1$/, "");
-
-/**
- * Calls a real backend tool. On a transient failure (timeout, network error,
- * 5xx) it retries with backoff — real success on retry returns a real
- * result; once retries are exhausted it returns a real, visible failure.
- * It never substitutes canned demo data for a failed call: a failure here is
- * always reported as a failure, logged to the console (and to the step's
- * own `error` field, surfaced in the trace panel) so a bad run is
- * diagnosable, not silently masked as a good one.
+/** HR Command Center.
+ *
+ * Describe an HR task → the backend LLM planner (agent_tools/planner.py)
+ * picks real tools from the HR tool allowlist (api/agent.py::HR_TOOLS) →
+ * the recruiter reviews the plan → steps run one at a time against the real
+ * tool endpoints. Anything that contacts a person or writes to a calendar
+ * pauses for explicit approval. Nothing here is simulated: a step is shown as
+ * done only when its API call returned success, and results are rendered
+ * from the actual response body.
+ *
+ * Deliberately no automatic retries: retrying a timed-out "send WhatsApp" or
+ * "place call" can deliver it twice. A failed step offers a manual retry.
  */
-async function callRealTool(
-  connector: string,
-  tool: string,
-  params: Record<string, unknown>,
-  signal?: AbortSignal,
-  stepIndex?: number
-): Promise<{ ok: boolean; status: number; body: Record<string, unknown> }> {
-  const maxAttempts = 3;
-  let lastFailure: { status: number; body: Record<string, unknown> } = {
-    status: 0,
-    body: { detail: "Tool call failed" },
-  };
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    if (signal?.aborted) {
-      return { ok: false, status: 0, body: { detail: "Mission aborted" } };
-    }
+const API = getApiBaseUrl();
+const PLAN_TIMEOUT_MS = 90_000;
+const TOOL_TIMEOUT_MS = 120_000;
 
-    const timeoutController = new AbortController();
-    const timeoutId = setTimeout(() => timeoutController.abort(), 8000);
-    const onAbort = () => timeoutController.abort();
-    if (signal) signal.addEventListener("abort", onAbort);
+type ToolInfo = {
+  connector: string;
+  connector_display_name?: string;
+  tool: string;
+  description: string;
+  status: string;
+  input_schema?: { required?: string[]; properties?: Record<string, { type?: string; description?: string }> };
+};
+type PlanStep = { connector: string; tool: string; params: Record<string, unknown>; invalid?: boolean };
+type StepStatus = "pending" | "running" | "done" | "failed" | "awaiting_approval";
+type StepState = {
+  status: StepStatus;
+  params: Record<string, unknown>;
+  result?: Record<string, unknown>;
+  error?: string;
+  durationMs?: number;
+};
+type Attachment = { file_path: string; filename: string; size: number };
 
-    try {
-      const res = await fetch(`${API_URL}/api/v1/agent/tools/${connector}/${tool}/call`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-        body: JSON.stringify(params),
-        signal: timeoutController.signal,
-      });
-      const body = await res.json().catch(() => ({}));
+const OUTREACH = new Set([
+  "whatsapp.send_whatsapp_message",
+  "gmail.send_email",
+  "telephonic.place_screening_call",
+  "google_calendar.create_meet",
+  "google_calendar.create_event",
+]);
+const key = (s: { connector: string; tool: string }) => `${s.connector}.${s.tool}`;
 
-      if (res.ok) {
-        return { ok: true, status: res.status, body };
-      }
-      lastFailure = { status: res.status, body };
-      // A 4xx is the caller's/tool's own rejection of this input (bad
-      // params, not_found, not_configured) — retrying the identical request
-      // can't produce a different outcome, so only 5xx/network conditions
-      // are retried.
-      if (res.status >= 400 && res.status < 500) {
-        break;
-      }
-    } catch (err) {
-      lastFailure = { status: 0, body: { detail: (err as Error)?.message || "Service unreachable" } };
-    } finally {
-      clearTimeout(timeoutId);
-      if (signal) signal.removeEventListener("abort", onAbort);
-    }
+const EXAMPLES = [
+  "Summarise the attached resume and list the candidate's employers",
+  "Parse the attached resume and match it against: Backend engineer, 3+ years Python, FastAPI and AWS",
+  "Check whether the company Logicmotive looks like a legitimate employer",
+  "Draft a take-home assignment for a junior data analyst role",
+];
 
-    if (attempt < maxAttempts) {
-      console.warn(
-        `[CommandCenter] step ${stepIndex ?? "?"} (${connector}.${tool}) attempt ${attempt}/${maxAttempts} failed, retrying...`,
-        lastFailure
-      );
-      await sleep(Math.min(3000, 500 * 2 ** (attempt - 1)));
-    }
+async function call(path: string, init: RequestInit, timeoutMs: number) {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${API}${path}`, {
+      ...init,
+      signal: controller.signal,
+      headers: { ...(init.body && !(init.body instanceof FormData) ? { "Content-Type": "application/json" } : {}), ...getAuthHeaders() },
+    });
+    const body = await res.json().catch(() => ({}));
+    return { ok: res.ok, status: res.status, body: body as Record<string, unknown> };
+  } catch (err) {
+    const timedOut = err instanceof DOMException && err.name === "AbortError";
+    return {
+      ok: false,
+      status: 0,
+      body: { detail: timedOut ? `No response after ${Math.round(timeoutMs / 1000)}s. The request may still be running on the server.` : "Couldn't reach the server." },
+    };
+  } finally {
+    window.clearTimeout(timer);
   }
-
-  console.error(
-    `[CommandCenter] step ${stepIndex ?? "?"} (${connector}.${tool}) failed after ${maxAttempts} attempt(s) — reporting honest failure, no demo substitution.`,
-    lastFailure
-  );
-  return { ok: false, status: lastFailure.status, body: lastFailure.body };
 }
 
-// Extracts a real email address / E.164-ish phone number / free-text time
-// mention straight out of the user's own prompt, so a request like "email
-// jane@x.com about the 3pm interview" or "whatsapp +917209602122 that we're
-// confirmed for tomorrow" carries the actual values the user typed instead
-// of the canned demo candidate's contact info.
-const EMAIL_RE = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/;
-const PHONE_RE = /\+?\d[\d\s-]{7,14}\d/;
-const TIME_RE = /\b(\d{1,2}(:\d{2})?\s?(am|pm|AM|PM))\b|\b(tomorrow|today|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i;
-
-function extractPromptEntities(prompt: string): { email: string | null; phone: string | null; time: string | null } {
-  const emailMatch = prompt.match(EMAIL_RE);
-  const phoneMatch = prompt.match(PHONE_RE);
-  const timeMatch = prompt.match(TIME_RE);
-  return {
-    email: emailMatch ? emailMatch[0] : null,
-    phone: phoneMatch ? phoneMatch[0].replace(/\s|-/g, "") : null,
-    time: timeMatch ? timeMatch[0] : null,
-  };
+function detailText(body: Record<string, unknown>, status: number): string {
+  const d = body?.detail;
+  if (typeof d === "string") return d;
+  if (d && typeof d === "object" && "message" in d) return String((d as { message: unknown }).message);
+  if (status === 401) return "Your session has expired — sign in again.";
+  if (status === 403) return "Your role doesn't have access to this.";
+  if (status === 429) return "Too many requests — wait a minute and try again.";
+  return status ? `Request failed (HTTP ${status}).` : "Request failed.";
 }
 
-/**
- * Intelligent plan synthesizer for custom user prompts when backend planner is unconfigured
- */
-function synthesizePlanFromPrompt(prompt: string, hasDoc: boolean): Plan {
-  const p = prompt.toLowerCase();
-  const steps: PlanStep[] = [];
-  const entities = extractPromptEntities(prompt);
+const STEP_REF = /^\$step(\d+)((?:\.[A-Za-z0-9_]+)*)$/;
 
-  const mentionsResume = p.includes("resume") || p.includes("candidate") || p.includes("hire") || p.includes("cv") || hasDoc;
-  const mentionsMatching = p.includes("jd") || p.includes("match") || p.includes("requirement") || p.includes("role") || mentionsResume;
-  const mentionsFraud = p.includes("fraud") || p.includes("verify") || p.includes("background") || p.includes("integrity") || p.includes("authentic");
-  const mentionsScorecard = p.includes("score") || p.includes("evaluate") || p.includes("report") || mentionsMatching;
-  const mentionsWhatsApp = p.includes("whatsapp") || p.includes("text") || p.includes("message");
-  const mentionsCall = p.includes("call") || p.includes("phone") || p.includes("voice") || p.includes("telephonic");
-  const mentionsEmail = p.includes("email") || p.includes("mail") || p.includes("gmail");
-  const mentionsScreening = p.includes("screen") || p.includes("interview") || mentionsCall;
-  const mentionsRag = p.includes("search") || p.includes("rag") || p.includes("policy") || p.includes("knowledge") || p.includes("docs");
-  const mentionsCalendar = p.includes("calendar") || p.includes("schedule") || p.includes("meet");
-
-  if (mentionsResume) {
-    steps.push({
-      connector: "hiring",
-      tool: "get_candidate_profile",
-      params: { file_path: "uploads/hiring/ayush_singh_resume.pdf", filename: "ayush-singh-resume.pdf" },
-    });
-  }
-
-  if (mentionsMatching) {
-    steps.push({
-      connector: "hiring",
-      tool: "match_candidate_requirement",
-      params: {
-        candidate: "$step1.candidate",
-        requirement: "Senior AI Systems & Full Stack Engineer with FastAPI, React, and Multi-Agent Orchestration depth.",
-        role_title: "Senior AI Systems Engineer",
-      },
-    });
-  }
-
-  if (mentionsFraud) {
-    steps.push({
-      connector: "fraud",
-      tool: "run_fraud_check",
-      params: { scan_id: "$step1.scan_id" },
-    });
-  }
-
-  if (mentionsScorecard) {
-    steps.push({
-      connector: "hiring",
-      tool: "generate_candidate_scorecard",
-      params: {
-        candidate_name: "$step1.candidate.name",
-        candidate_email: "$step1.candidate.email",
-        role_title: "Senior AI Systems Engineer",
-      },
-    });
-  }
-
-  if (mentionsCall || mentionsScreening) {
-    steps.push({
-      connector: "telephonic",
-      tool: "place_screening_call",
-      params: {
-        to: entities.phone || "$step1.candidate.phone",
-        candidate_name: "$step1.candidate.name",
-        role_title: "Senior AI Systems Engineer",
-      },
-    });
-  }
-
-  if (mentionsCalendar) {
-    steps.push({
-      connector: "google_calendar",
-      tool: "create_meet",
-      params: {
-        summary: entities.time ? `Technical Discussion (${entities.time})` : "Technical Discussion with Ayush Singh",
-        attendee_email: entities.email || "$step1.candidate.email",
-      },
-    });
-  }
-
-  if (mentionsWhatsApp) {
-    steps.push({
-      connector: "whatsapp",
-      tool: "send_whatsapp_message",
-      params: {
-        recipient: entities.phone || "$step1.candidate.phone",
-        // The prompt itself is the message when the user wrote out real
-        // content (email/time found) — otherwise fall back to the demo copy.
-        message: entities.email || entities.time || entities.phone ? prompt : "Hi Ayush! Your profile has been shortlisted for the Senior AI Systems Engineer role (Score: 89/100). Please let us know your availability for a technical interview.",
-      },
-    });
-  }
-
-  if (mentionsEmail) {
-    steps.push({
-      connector: "gmail",
-      // real schema is {to, subject, body} — see mcp/connectors/google/gmail.py
-      tool: "send_email",
-      params: {
-        to: entities.email || "$step1.candidate.email",
-        subject: entities.time ? `Interview scheduled: ${entities.time}` : "Shortlisted: Senior AI Systems Engineer Application",
-        body: entities.email || entities.time ? prompt : "Hello Ayush, we have reviewed your candidate profile and would love to proceed to the next technical discussion.",
-      },
-    });
-  }
-
-  if (mentionsRag && steps.length === 0) {
-    steps.push({
-      connector: "rag",
-      tool: "query_documents",
-      params: { query: prompt, top_k: 5 },
-    });
-  }
-
-  // Fallback default if nothing specific matched
-  if (steps.length === 0) {
-    return DemoPlan;
-  }
-
-  return { steps };
-}
-
-function resolvePlaceholders(
-  value: unknown,
-  results: Record<number, Record<string, unknown>>
-): unknown {
+function resolveParams(value: unknown, results: Record<number, Record<string, unknown> | undefined>): unknown {
   if (typeof value === "string") {
-    const match = value.trim().match(/^\$step(\d+)((?:\.[A-Za-z0-9_]+)*)$/);
-    if (!match) return value;
-    const stepIndex = parseInt(match[1], 10);
-    const pathParts = match[2].split(".").filter(Boolean);
-    let resolved: unknown = results[stepIndex];
-    for (const key of pathParts) {
-      if (resolved && typeof resolved === "object" && key in (resolved as Record<string, unknown>)) {
-        resolved = (resolved as Record<string, unknown>)[key];
-      } else {
-        return value;
-      }
+    const m = value.trim().match(STEP_REF);
+    if (!m) return value;
+    let cur: unknown = results[Number(m[1])];
+    for (const part of m[2].split(".").filter(Boolean)) {
+      if (cur && typeof cur === "object" && part in (cur as Record<string, unknown>)) cur = (cur as Record<string, unknown>)[part];
+      else return value;
     }
-    return resolved;
+    return cur === undefined ? value : cur;
   }
-  if (Array.isArray(value)) {
-    return value.map((v) => resolvePlaceholders(v, results));
-  }
-  if (typeof value === "object" && value !== null) {
-    const resolved: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(value)) {
-      resolved[k] = resolvePlaceholders(v, results);
-    }
-    return resolved;
+  if (Array.isArray(value)) return value.map((v) => resolveParams(v, results));
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, resolveParams(v, results)]));
   }
   return value;
 }
 
+const isUnresolved = (v: unknown) => v === undefined || v === null || (typeof v === "string" && (v.trim() === "" || STEP_REF.test(v.trim())));
+
+const pretty = (k: string) => k.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase());
+
+// ── Page ────────────────────────────────────────────────────────────────
+
 export default function CommandCenter() {
+  const [me, setMe] = useState<Me | null>(null);
+  const [meError, setMeError] = useState<string | null>(null);
+  const [tools, setTools] = useState<ToolInfo[] | null>(null);
+  const [toolsError, setToolsError] = useState<string | null>(null);
+
   const [prompt, setPrompt] = useState("");
-  const [jobDescription, setJobDescription] = useState("");
-  const [attachedDoc, setAttachedDoc] = useState<AttachedDocument | null>(null);
-  const [showJdInput, setShowJdInput] = useState(false);
-  const [isVoiceAuthenticated, setIsVoiceAuthenticated] = useState<boolean>(() => {
-    if (typeof window !== "undefined") {
-      return sessionStorage.getItem("cc_authenticated") === "true";
-    }
-    return false;
-  });
+  const [attachment, setAttachment] = useState<Attachment | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
 
-  const handleAuthenticated = useCallback((_name?: string) => {
-    if (typeof window !== "undefined") {
-      try {
-        sessionStorage.setItem("cc_authenticated", "true");
-      } catch {
-        // ignore
-      }
-    }
-    setIsVoiceAuthenticated(true);
-  }, []);
-
-  const [state, setState] = useState<MissionState>({
-    phase: "idle",
-    prompt: "",
-    jobDescription: "",
-    attachedDoc: null,
-    plan: null,
-    executionSteps: [],
-    selectedNodeId: null,
-    activeStepIndex: null,
-    approvalDialog: null,
-    leftActiveTab: "trace",
-    viewMode: "graph",
-    planningLogs: [],
-  });
-
-  const [executionMode, setExecutionMode] = useState<"auto" | "manual">("auto");
-  const [catalogTools, setCatalogTools] = useState<CatalogTool[]>([]);
-  const abortRef = useRef<AbortController | null>(null);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const resultsRef = useRef<Record<number, Record<string, unknown>>>({});
-  const parsedDataRef = useRef<Record<string, unknown> | null>(null);
+  const [planning, setPlanning] = useState(false);
+  const [planError, setPlanError] = useState<string | null>(null);
+  const [plan, setPlan] = useState<PlanStep[] | null>(null);
+  const [planPrompt, setPlanPrompt] = useState("");
+  const [steps, setSteps] = useState<StepState[]>([]);
+  const [running, setRunning] = useState(false);
+  const resultsRef = useRef<Record<number, Record<string, unknown> | undefined>>({});
 
   useEffect(() => {
-    fetchCatalog();
-    if (typeof window !== "undefined") {
-      const urlParams = new URLSearchParams(window.location.search);
-      const urlPrompt = urlParams.get("prompt");
-      if (urlPrompt) {
-        setPrompt(urlPrompt);
-        handleLoadSampleResume();
-      }
-    }
+    getMe().then(setMe).catch((err) => setMeError(errorMessage(err)));
   }, []);
 
-  async function fetchCatalog() {
-    try {
-      const res = await fetch(`${API_URL}/api/v1/agent/tools`, { headers: getAuthHeaders() });
-      if (res.ok) {
-        const data = await res.json();
-        setCatalogTools(data.tools || []);
-      }
-    } catch {
-      console.warn("[CommandCenter] Tool catalog offline - running local autonomous suite");
+  const allowed = me?.permissions.includes("analyze") ?? false;
+
+  useEffect(() => {
+    if (!allowed) return;
+    call("/api/v1/agent/tools", { method: "GET" }, 20_000).then(({ ok, status, body }) => {
+      if (ok) setTools((body.tools as ToolInfo[]) || []);
+      else setToolsError(detailText(body, status));
+    });
+  }, [allowed]);
+
+  const toolIndex = useMemo(() => new Map((tools || []).map((t) => [key(t), t])), [tools]);
+
+  const uploadResume = async (file: File) => {
+    setUploading(true);
+    setUploadError(null);
+    const form = new FormData();
+    form.append("file", file);
+    const { ok, status, body } = await call("/api/v1/agent/attachments", { method: "POST", body: form }, 60_000);
+    if (ok) setAttachment(body as unknown as Attachment);
+    else setUploadError(detailText(body, status));
+    setUploading(false);
+  };
+
+  const makePlan = async () => {
+    if (!prompt.trim()) return;
+    setPlanning(true);
+    setPlanError(null);
+    setPlan(null);
+    setSteps([]);
+    resultsRef.current = {};
+    const { ok, status, body } = await call(
+      "/api/v1/agent/plan",
+      { method: "POST", body: JSON.stringify({ prompt, ...(attachment ? { attachment: { file_path: attachment.file_path, filename: attachment.filename } } : {}) }) },
+      PLAN_TIMEOUT_MS,
+    );
+    setPlanning(false);
+    if (!ok) return setPlanError(detailText(body, status));
+    if (body.error) return setPlanError(String(body.error));
+    const planSteps = (body.steps as PlanStep[]) || [];
+    if (planSteps.length === 0) {
+      return setPlanError("The planner couldn't map this request to any of the available HR tools. Try rephrasing, or check the tool list on the right.");
     }
-  }
-
-  const handleLoadSampleResume = () => {
-    setAttachedDoc({
-      name: "ayush-singh-resume.pdf",
-      size: 473243,
-      type: "application/pdf",
-      isSample: true,
-    });
+    setPlan(planSteps);
+    setPlanPrompt(prompt);
+    setSteps(planSteps.map((s) => ({ status: "pending", params: s.params || {} })));
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setAttachedDoc({
-      name: file.name,
-      size: file.size,
-      type: file.type,
-      file,
-      isSample: false,
-    });
-  };
+  const patchStep = (i: number, patch: Partial<StepState>) =>
+    setSteps((prev) => prev.map((s, idx) => (idx === i ? { ...s, ...patch } : s)));
 
-  /** Main submission handler for ANY prompt */
-  const handleSubmit = useCallback(
-    async (missionPrompt: string) => {
-      const trimmed = missionPrompt.trim();
-      if (!trimmed) return;
+  /** Runs steps from `start` until one needs approval, fails, or all finish. */
+  const runFrom = async (start: number, approvedParams?: Record<string, unknown>) => {
+    if (!plan) return;
+    setRunning(true);
+    for (let i = start; i < plan.length; i++) {
+      const step = plan[i];
+      const params = i === start && approvedParams
+        ? approvedParams
+        : (resolveParams(step.params || {}, resultsRef.current) as Record<string, unknown>);
 
-      setState({
-        phase: "planning",
-        prompt: trimmed,
-        jobDescription,
-        attachedDoc,
-        plan: null,
-        executionSteps: [],
-        selectedNodeId: null,
-        activeStepIndex: null,
-        approvalDialog: null,
-        leftActiveTab: "trace",
-        viewMode: "graph",
-        startedAt: Date.now(),
-        planningLogs: [`Analyzing natural language intent: "${trimmed}"`],
-      });
-
-      const controller = new AbortController();
-      abortRef.current = controller;
-
-      try {
-        const thoughts = [
-          attachedDoc
-            ? `Candidate document loaded: ${attachedDoc.name} (${Math.round(attachedDoc.size / 1024)} KB)`
-            : "Extracting goal parameters & criteria...",
-          "Querying unified connector catalog (21 connectors, 71 tools registered)...",
-          "Synthesizing optimal tool execution DAG...",
-          "Resolving runtime dependency bindings ($step1.candidate)...",
-          "Autonomous execution plan compiled. Ready for dispatch.",
-        ];
-
-        for (const thought of thoughts) {
-          if (controller.signal.aborted) return;
-          await sleep(90);
-          setState((prev) => ({
-            ...prev,
-            planningLogs: [...(prev.planningLogs || []), thought],
-          }));
-        }
-
-        let plan: Plan = synthesizePlanFromPrompt(trimmed, !!attachedDoc);
-
-        // Try requesting the real backend LLM planner with a fast 2.5s timeout
-        try {
-          const timeoutController = new AbortController();
-          const timeoutId = setTimeout(() => timeoutController.abort(), 2500);
-
-          const planRes = await fetch(`${API_URL}/api/v1/agent/plan`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-            body: JSON.stringify({ prompt: trimmed }),
-            signal: timeoutController.signal,
-          }).finally(() => clearTimeout(timeoutId));
-
-          if (planRes.ok) {
-            const data = await planRes.json();
-            if (data.steps && data.steps.length > 0) {
-              plan = data;
-            }
-          }
-        } catch {
-          // Fast fallback to synthesized plan immediately
-        }
-
-        if (controller.signal.aborted) return;
-
-        // If file is attached and real backend upload is accessible, try real parsing with 2.5s fast timeout
-        let parsedCandidateData: Record<string, unknown> | null = null;
-        if (attachedDoc && attachedDoc.file) {
-          try {
-            const timeoutController = new AbortController();
-            const timeoutId = setTimeout(() => timeoutController.abort(), 2500);
-
-            const formData = new FormData();
-            formData.append("files", attachedDoc.file);
-            const uploadRes = await fetch(`${API_URL}/api/v1/hiring/parse-resumes`, {
-              method: "POST",
-              headers: getAuthHeaders(),
-              body: formData,
-              signal: timeoutController.signal,
-            }).finally(() => clearTimeout(timeoutId));
-
-            if (uploadRes.ok) {
-              const uploadData = await uploadRes.json();
-              if (uploadData.candidates?.[0]) {
-                parsedCandidateData = uploadData.candidates[0];
-              }
-            }
-          } catch {
-            // fast fallback
-          }
-        }
-
-        // Initialize execution steps
-        const execSteps: ExecutionStep[] = plan.steps.map((step, i) => ({
-          index: i + 1,
-          connector: step.connector,
-          tool: step.tool,
-          params: step.params,
-          status: "pending" as const,
-        }));
-
-        resultsRef.current = {};
-        parsedDataRef.current = parsedCandidateData;
-
-        setState((prev) => ({
-          ...prev,
-          phase: "planned",
-          plan,
-          executionSteps: execSteps,
-        }));
-
-        // If user is in manual step-by-step mode, wait for explicit step trigger
-        if (executionMode === "manual") {
-          return;
-        }
-
-        await sleep(120);
-        if (controller.signal.aborted) return;
-
-        setState((prev) => ({ ...prev, phase: "executing" }));
-        // Alias, not a copy — writes below must land in resultsRef.current
-        // too, since handleApproveStep/executeSingleStep resolve $stepN
-        // placeholders from that ref after this function returns at an
-        // approval gate.
-        const results = resultsRef.current;
-
-        for (let i = 0; i < plan.steps.length; i++) {
-          if (controller.signal.aborted) return;
-
-          const stepIndex = i + 1;
-          const planStep = plan.steps[i];
-
-          setState((prev) => ({
-            ...prev,
-            activeStepIndex: stepIndex,
-            selectedNodeId: `step-${stepIndex}`,
-            executionSteps: prev.executionSteps.map((s) =>
-              s.index === stepIndex ? { ...s, status: "running" as const, startedAt: Date.now() } : s
-            ),
-          }));
-
-          const resolvedParams = resolvePlaceholders(planStep.params, results) as Record<
-            string,
-            unknown
-          >;
-          const startTime = Date.now();
-
-          // ── HUMAN APPROVAL GATE FOR EXTERNAL ACTIONS (WhatsApp / Call / Email) ──
-          const isExternalOutreach =
-            planStep.connector === "whatsapp" ||
-            planStep.connector === "gmail" ||
-            planStep.tool.includes("call") ||
-            planStep.tool.includes("screening_call") ||
-            planStep.tool.includes("send_email");
-
-          if (isExternalOutreach) {
-            const isCall = planStep.connector === "telephonic" || planStep.tool.includes("call");
-            const isEmail = planStep.connector === "gmail" || planStep.tool.includes("email");
-
-            setState((prev) => ({
-              ...prev,
-              phase: "waiting_approval",
-              activeStepIndex: stepIndex,
-              selectedNodeId: `step-${stepIndex}`,
-              approvalDialog: {
-                stepIndex,
-                type: isCall ? "call" : isEmail ? "email" : "whatsapp",
-                title: isCall
-                  ? "Authorize Voice Screening Call"
-                  : isEmail
-                  ? "Authorize Email Outreach"
-                  : "Authorize WhatsApp Outreach Dispatch",
-                description: isCall
-                  ? "Candidate Ayush Singh qualified (Score: 89/100). The AI telephonic agent is prepared to place an automated technical screening call to the candidate's phone."
-                  : isEmail
-                  ? "Candidate Ayush Singh qualified (Score: 89/100). Formal shortlisting email notification is queued. Confirm destination email address and body."
-                  : "Candidate Ayush Singh qualified (Score: 89/100). Autonomous WhatsApp notification prepared. Confirm candidate phone number and message payload.",
-                recipient:
-                  (resolvedParams.recipient as string) ||
-                  (resolvedParams.to as string) ||
-                  (isEmail ? "ayush.singh@agenticflow.ai" : "+91 98765 43210"),
-                messageContent:
-                  (resolvedParams.message as string) ||
-                  (resolvedParams.body as string) ||
-                  "Hi Ayush! Your profile has been shortlisted for the Senior AI Systems Engineer role (Score: 89/100). We would love to coordinate a technical interview. Please reply with your availability.",
-              },
-              executionSteps: prev.executionSteps.map((s) =>
-                s.index === stepIndex ? { ...s, status: "waiting_approval" as const } : s
-              ),
-            }));
-
-            // Pause until user clicks Approve in left panel
-            return;
-          }
-
-          // Execute Step — always a real call. A failure is reported as a
-          // failed step with the real error, never fabricated as success.
-          try {
-            const { ok, status, body } = await callRealTool(
-              planStep.connector,
-              planStep.tool,
-              resolvedParams,
-              controller.signal,
-              stepIndex
-            );
-            const elapsed = Date.now() - startTime;
-
-            if (ok) {
-              results[stepIndex] = body;
-              setState((prev) => ({
-                ...prev,
-                executionSteps: prev.executionSteps.map((s) =>
-                  s.index === stepIndex
-                    ? { ...s, status: "completed" as const, result: body, resolvedParams, completedAt: Date.now(), durationMs: elapsed }
-                    : s
-                ),
-              }));
-            } else {
-              const errorMsg = (body?.detail as any)?.message || (body?.detail as string) || `Tool call failed (HTTP ${status})`;
-              setState((prev) => ({
-                ...prev,
-                phase: "failed",
-                executionSteps: prev.executionSteps.map((s) =>
-                  s.index === stepIndex
-                    ? { ...s, status: "failed" as const, result: body, error: String(errorMsg), resolvedParams, completedAt: Date.now(), durationMs: elapsed }
-                    : s
-                ),
-              }));
-              return;
-            }
-          } catch (err) {
-            if (controller.signal.aborted) return;
-            const elapsed = Date.now() - startTime;
-            setState((prev) => ({
-              ...prev,
-              phase: "failed",
-              executionSteps: prev.executionSteps.map((s) =>
-                s.index === stepIndex
-                  ? { ...s, status: "failed" as const, error: (err as Error)?.message || "Network error reaching the backend", resolvedParams, completedAt: Date.now(), durationMs: elapsed }
-                  : s
-              ),
-            }));
-            return;
-          }
-
-          await sleep(80);
-        }
-
-        // Finalize
-        setState((prev) => ({
-          ...prev,
-          phase: "completed",
-          activeStepIndex: null,
-          completedAt: Date.now(),
-          totalDurationMs: Date.now() - (prev.startedAt || Date.now()),
-        }));
-      } catch {
-        setState((prev) => ({ ...prev, phase: "failed" }));
-      }
-    },
-    [jobDescription, attachedDoc]
-  );
-
-  /** Resume execution after human approval — always a real call to the
-   * backend tool (Gmail/WhatsApp/Sarvam telephonic). Approving is the user's
-   * explicit go-ahead to actually send/call; faking success here would mean
-   * the "Approve" button never did what it says it does. */
-  const handleApproveStep = useCallback(
-    async (stepIndex: number, updatedParams?: Record<string, unknown>) => {
-      setState((prev) => ({
-        ...prev,
-        phase: "executing",
-        approvalDialog: null,
-        executionSteps: prev.executionSteps.map((s) =>
-          s.index === stepIndex ? { ...s, status: "running" as const, startedAt: Date.now() } : s
-        ),
-      }));
-
-      const targetStep = state.executionSteps.find((s) => s.index === stepIndex);
-      if (!targetStep) return;
-
-      // The approval dialog always edits a generic {recipient, message} pair
-      // (LeftPanel.tsx), but gmail.send_email's real params are {to, subject,
-      // body} — see mcp/connectors/google/gmail.py — so map the edited
-      // fields across for email steps, otherwise an edited email would
-      // silently send to/with the original unedited values.
-      const edits = { ...(updatedParams || {}) };
-      if (targetStep.connector === "gmail") {
-        if (typeof edits.recipient === "string") edits.to = edits.recipient;
-        if (typeof edits.message === "string") edits.body = edits.message;
-      }
-
-      const resolvedParams = {
-        ...(resolvePlaceholders(targetStep.params, resultsRef.current) as Record<string, unknown>),
-        ...edits,
-      };
-      const startTime = Date.now();
-
-      try {
-        const { ok, status, body } = await callRealTool(targetStep.connector, targetStep.tool, resolvedParams, undefined, stepIndex);
-        const elapsed = Date.now() - startTime;
-
-        if (ok) {
-          resultsRef.current[stepIndex] = body;
-          setState((prev) => {
-            const updatedSteps = prev.executionSteps.map((s) =>
-              s.index === stepIndex
-                ? { ...s, status: "completed" as const, result: body, resolvedParams, completedAt: Date.now(), durationMs: elapsed }
-                : s
-            );
-            const allDone = updatedSteps.every((s) => s.status === "completed");
-            return {
-              ...prev,
-              phase: allDone ? "completed" : "executing",
-              activeStepIndex: null,
-              completedAt: allDone ? Date.now() : prev.completedAt,
-              totalDurationMs: allDone ? Date.now() - (prev.startedAt || Date.now()) : prev.totalDurationMs,
-              executionSteps: updatedSteps,
-            };
-          });
-        } else {
-          const errorMsg = (body?.detail as any)?.message || (body?.detail as string) || `Tool call failed (HTTP ${status})`;
-          setState((prev) => ({
-            ...prev,
-            phase: "failed",
-            activeStepIndex: null,
-            executionSteps: prev.executionSteps.map((s) =>
-              s.index === stepIndex
-                ? { ...s, status: "failed" as const, result: body, error: String(errorMsg), resolvedParams, completedAt: Date.now(), durationMs: elapsed }
-                : s
-            ),
-          }));
-        }
-      } catch (err) {
-        const elapsed = Date.now() - startTime;
-        setState((prev) => ({
-          ...prev,
-          phase: "failed",
-          activeStepIndex: null,
-          executionSteps: prev.executionSteps.map((s) =>
-            s.index === stepIndex
-              ? { ...s, status: "failed" as const, error: (err as Error)?.message || "Network error reaching the backend", resolvedParams, completedAt: Date.now(), durationMs: elapsed }
-              : s
-          ),
-        }));
-      }
-    },
-    [state.executionSteps]
-  );
-
-  const executeSingleStep = useCallback(
-    async (stepIndex: number) => {
-      const plan = state.plan;
-      if (!plan || stepIndex < 1 || stepIndex > plan.steps.length) return;
-
-      const planStep = plan.steps[stepIndex - 1];
-      const results = resultsRef.current;
-
-      setState((prev) => ({
-        ...prev,
-        phase: "executing",
-        activeStepIndex: stepIndex,
-        selectedNodeId: `step-${stepIndex}`,
-        executionSteps: prev.executionSteps.map((s) =>
-          s.index === stepIndex ? { ...s, status: "running" as const, startedAt: Date.now() } : s
-        ),
-      }));
-
-      const resolvedParams = resolvePlaceholders(planStep.params, results) as Record<string, unknown>;
-      const startTime = Date.now();
-
-      // Human Approval Gate Check
-      const isExternalOutreach =
-        planStep.connector === "whatsapp" ||
-        planStep.connector === "gmail" ||
-        planStep.tool.includes("call") ||
-        planStep.tool.includes("screening_call") ||
-        planStep.tool.includes("send_email");
-
-      if (isExternalOutreach) {
-        const isCall = planStep.connector === "telephonic" || planStep.tool.includes("call");
-        const isEmail = planStep.connector === "gmail" || planStep.tool.includes("email");
-
-        setState((prev) => ({
-          ...prev,
-          phase: "waiting_approval",
-          activeStepIndex: stepIndex,
-          selectedNodeId: `step-${stepIndex}`,
-          approvalDialog: {
-            stepIndex,
-            type: isCall ? "call" : isEmail ? "email" : "whatsapp",
-            title: isCall
-              ? "Authorize Voice Screening Call"
-              : isEmail
-              ? "Authorize Email Outreach"
-              : "Authorize WhatsApp Outreach Dispatch",
-            description: isCall
-              ? "Candidate Ayush Singh qualified (Score: 89/100). The AI telephonic agent is prepared to place an automated technical screening call to the candidate's phone."
-              : isEmail
-              ? "Candidate Ayush Singh qualified (Score: 89/100). Formal shortlisting email notification is queued. Confirm destination email address and body."
-              : "Candidate Ayush Singh qualified (Score: 89/100). Autonomous WhatsApp notification prepared. Confirm candidate phone number and message payload.",
-            recipient:
-              (resolvedParams.recipient as string) ||
-              (resolvedParams.to as string) ||
-              (isEmail ? "ayush.singh@agenticflow.ai" : "+91 98765 43210"),
-            messageContent:
-              (resolvedParams.message as string) ||
-              (resolvedParams.body as string) ||
-              "Hi Ayush! Your profile has been shortlisted for the Senior AI Systems Engineer role (Score: 89/100). We would love to coordinate a technical interview. Please reply with your availability.",
-          },
-          executionSteps: prev.executionSteps.map((s) =>
-            s.index === stepIndex ? { ...s, status: "waiting_approval" as const } : s
-          ),
-        }));
+      if (OUTREACH.has(key(step)) && !(i === start && approvedParams)) {
+        patchStep(i, { status: "awaiting_approval", params });
+        setRunning(false);
         return;
       }
 
-      try {
-        const { ok, status, body } = await callRealTool(planStep.connector, planStep.tool, resolvedParams, undefined, stepIndex);
-        const elapsed = Date.now() - startTime;
-
-        if (ok) {
-          results[stepIndex] = body;
-          setState((prev) => {
-            const updatedSteps = prev.executionSteps.map((s) =>
-              s.index === stepIndex
-                ? { ...s, status: "completed" as const, result: body, resolvedParams, completedAt: Date.now(), durationMs: elapsed }
-                : s
-            );
-            const allDone = updatedSteps.every((s) => s.status === "completed");
-            return {
-              ...prev,
-              phase: allDone ? "completed" : "planned",
-              activeStepIndex: null,
-              executionSteps: updatedSteps,
-              completedAt: allDone ? Date.now() : prev.completedAt,
-              totalDurationMs: allDone ? Date.now() - (prev.startedAt || Date.now()) : prev.totalDurationMs,
-            };
-          });
-        } else {
-          const errorMsg = (body?.detail as any)?.message || (body?.detail as string) || `Tool call failed (HTTP ${status})`;
-          setState((prev) => ({
-            ...prev,
-            phase: "failed",
-            activeStepIndex: null,
-            executionSteps: prev.executionSteps.map((s) =>
-              s.index === stepIndex
-                ? { ...s, status: "failed" as const, result: body, error: String(errorMsg), resolvedParams, completedAt: Date.now(), durationMs: elapsed }
-                : s
-            ),
-          }));
-        }
-      } catch (err) {
-        const elapsed = Date.now() - startTime;
-        setState((prev) => ({
-          ...prev,
-          phase: "failed",
-          activeStepIndex: null,
-          executionSteps: prev.executionSteps.map((s) =>
-            s.index === stepIndex
-              ? { ...s, status: "failed" as const, error: (err as Error)?.message || "Network error reaching the backend", resolvedParams, completedAt: Date.now(), durationMs: elapsed }
-              : s
-          ),
-        }));
+      patchStep(i, { status: "running", params, error: undefined });
+      const t0 = performance.now();
+      const { ok, status, body } = await call(
+        `/api/v1/agent/tools/${step.connector}/${step.tool}/call`,
+        { method: "POST", body: JSON.stringify(params) },
+        TOOL_TIMEOUT_MS,
+      );
+      const durationMs = Math.round(performance.now() - t0);
+      if (!ok) {
+        patchStep(i, { status: "failed", error: detailText(body, status), durationMs });
+        setRunning(false);
+        return;
       }
-    },
-    [state.plan]
-  );
-
-  const executeNextStep = useCallback(() => {
-    const nextPending = state.executionSteps.find((s) => s.status === "pending");
-    if (nextPending) {
-      executeSingleStep(nextPending.index);
+      resultsRef.current[i + 1] = body;
+      patchStep(i, { status: "done", result: body, durationMs });
     }
-  }, [state.executionSteps, executeSingleStep]);
+    setRunning(false);
+  };
 
-  const handleFollowUp = useCallback((text: string) => {
-    handleSubmit(text);
-  }, [handleSubmit]);
+  const reset = () => {
+    setPlan(null);
+    setSteps([]);
+    setPlanError(null);
+    resultsRef.current = {};
+  };
 
-  const handleReset = useCallback(() => {
-    if (abortRef.current) abortRef.current.abort();
-    setState({
-      phase: "idle",
-      prompt: "",
-      jobDescription: "",
-      attachedDoc: null,
-      plan: null,
-      executionSteps: [],
-      selectedNodeId: null,
-      activeStepIndex: null,
-      approvalDialog: null,
-      leftActiveTab: "trace",
-      viewMode: "graph",
-      planningLogs: [],
-    });
-  }, []);
+  const blocked = plan?.some((s) => s.invalid || toolIndex.get(key(s))?.status === "not_configured") ?? false;
+  const started = steps.some((s) => s.status !== "pending");
+  const finished = plan !== null && steps.length > 0 && steps.every((s) => s.status === "done");
 
-  const isIdle = state.phase === "idle";
+  // ── Access states ──
+  if (meError) {
+    return (
+      <Shell>
+        <ErrorBanner message={meError} />
+      </Shell>
+    );
+  }
+  if (!me) {
+    return (
+      <Shell>
+        <Skeleton className="h-40 w-full rounded-lg bg-zinc-200/70" />
+      </Shell>
+    );
+  }
+  if (!allowed) {
+    return (
+      <Shell>
+        <EmptyNote>
+          The HR Command Center is available to HR Admins, Recruiters and Hiring Managers. Your role ({me.role.replace(/_/g, " ")}) doesn&apos;t have access — ask an HR Admin.
+        </EmptyNote>
+      </Shell>
+    );
+  }
 
   return (
-    <div className="cc-root" style={{ width: "100%", height: "100vh", overflow: "hidden", position: "relative" }}>
-      {/* ── VOICE BIOMETRIC SECURITY GATE OVERLAY ── */}
-      <VoiceGateModal
-        isOpen={!isVoiceAuthenticated}
-        onAuthenticated={handleAuthenticated}
-      />
-
-      <div
-        style={{
-          width: "100%",
-          height: "100%",
-          filter: isVoiceAuthenticated ? "none" : "blur(14px)",
-          transition: "filter 0.4s ease",
-          pointerEvents: isVoiceAuthenticated ? "auto" : "none",
-        }}
-      >
-        {/* ── INITIAL STATE: MINIMALIST CENTERED AGENT LAUNCHER ── */}
-        {isIdle && (
-        <div
-          style={{
-            height: "100vh",
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: "20px",
-            position: "relative",
-          }}
-          className="cc-canvas-bg"
-        >
-          <motion.div
-            initial={{ opacity: 0, y: 16 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.25 }}
-            style={{ width: "100%", maxWidth: 720 }}
-          >
-            {/* Tag */}
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginBottom: 14 }}>
-              <div
-                style={{
-                  width: 28,
-                  height: 28,
-                  borderRadius: 6,
-                  background: "rgba(255, 255, 255, 0.08)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
+    <Shell>
+      <div className="grid gap-5 lg:grid-cols-3">
+        <div className="space-y-5 lg:col-span-2">
+          {/* ── Compose ── */}
+          <Panel title="What do you need done?" description="The AI planner turns this into steps using real HR tools. You review the plan before anything runs.">
+            <div className="space-y-3">
+              <textarea
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) makePlan();
                 }}
-              >
-                <Bot size={16} className="text-zinc-200" />
-              </div>
-              <span style={{ fontSize: 13, fontWeight: 600, color: "#f4f4f5", letterSpacing: "0.02em" }}>
-                Agent Command Center
-              </span>
-            </div>
+                rows={4}
+                maxLength={4000}
+                disabled={planning || running}
+                placeholder="e.g. Parse the attached resume and match it against a backend engineer role that needs Python and AWS"
+                aria-label="Describe the task"
+                className={cn(inputCls, "h-auto py-2.5 leading-relaxed")}
+              />
 
-            <h1
-              style={{
-                fontSize: 24,
-                fontWeight: 700,
-                color: "#f4f4f5",
-                textAlign: "center",
-                lineHeight: 1.3,
-                marginBottom: 6,
-              }}
-            >
-              What mission should the autonomous agents execute?
-            </h1>
-
-            <p style={{ fontSize: 13, color: "#a1a1aa", textAlign: "center", marginBottom: 20 }}>
-              Enter any custom instruction or select a workflow. The agents autonomously generate the plan,
-              execute tools, and verify data.
-            </p>
-
-            {/* Custom Prompt Box */}
-            <div className="cc-card" style={{ padding: "20px", background: "#111115" }}>
-              <div style={{ position: "relative" }}>
-                <textarea
-                  value={prompt}
-                  onChange={(e) => setPrompt(e.target.value)}
-                  placeholder="Enter any custom mission... e.g. Analyze candidate against JD, run fraud checks, and send WhatsApp outreach after human approval."
-                  rows={3}
-                  style={{
-                    width: "100%",
-                    background: "transparent",
-                    border: "none",
-                    outline: "none",
-                    fontSize: 14,
-                    color: "#f4f4f5",
-                    resize: "none",
-                    lineHeight: 1.6,
-                    paddingRight: prompt ? 30 : 0,
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && prompt.trim()) {
-                      handleSubmit(prompt);
-                    }
-                  }}
-                />
-
-                {prompt && (
-                  <button
-                    onClick={() => setPrompt("")}
-                    style={{
-                      position: "absolute",
-                      top: 0,
-                      right: 0,
-                      background: "transparent",
-                      border: "none",
-                      color: "#71717a",
-                      cursor: "pointer",
-                      padding: 4,
-                    }}
-                    title="Clear prompt"
-                  >
-                    <X size={14} />
-                  </button>
-                )}
-              </div>
-
-              {/* Document / Resume Upload Section */}
-              <div style={{ marginTop: 12, borderTop: "1px solid rgba(255, 255, 255, 0.06)", paddingTop: 14 }}>
-                {attachedDoc ? (
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      background: "rgba(255, 255, 255, 0.04)",
-                      border: "1px solid rgba(255, 255, 255, 0.1)",
-                      borderRadius: 8,
-                      padding: "8px 12px",
-                    }}
-                  >
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <FileText size={16} className="text-zinc-300" />
-                      <div>
-                        <div style={{ fontSize: 12, fontWeight: 500, color: "#f4f4f5" }}>
-                          {attachedDoc.name}
-                        </div>
-                        <div style={{ fontSize: 10, color: "#71717a", fontFamily: "var(--font-geist-mono), monospace" }}>
-                          {Math.round(attachedDoc.size / 1024)} KB {attachedDoc.isSample ? "• Built-in Sample" : "• Attached File"}
-                        </div>
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => setAttachedDoc(null)}
-                      style={{ background: "transparent", border: "none", color: "#71717a", cursor: "pointer" }}
-                    >
-                      <X size={14} />
-                    </button>
-                  </div>
-                ) : (
-                  <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                    <div
-                      onClick={() => fileInputRef.current?.click()}
-                      className="cc-dropzone"
-                      style={{
-                        flex: 1,
-                        padding: "10px",
-                        textAlign: "center",
-                        fontSize: 12,
-                        color: "#a1a1aa",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        gap: 6,
-                      }}
-                    >
-                      <Upload size={13} />
-                      <span>Upload Candidate Resume (PDF / DOCX)</span>
-                    </div>
-
-                    <button
-                      onClick={handleLoadSampleResume}
-                      className="cc-btn-secondary"
-                      style={{ fontSize: 11, padding: "8px 12px", whiteSpace: "nowrap" }}
-                    >
-                      <FileCode size={12} /> Use Ayush Singh Resume
-                    </button>
-
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      accept=".pdf,.docx,.txt"
-                      onChange={handleFileUpload}
-                      style={{ display: "none" }}
-                    />
-                  </div>
-                )}
-              </div>
-
-              {/* Target Job Description Optional Drawer */}
-              <div style={{ marginTop: 12 }}>
-                <button
-                  onClick={() => setShowJdInput(!showJdInput)}
-                  style={{
-                    background: "none",
-                    border: "none",
-                    color: "#71717a",
-                    fontSize: 11,
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 4,
-                    cursor: "pointer",
-                    padding: 0,
-                  }}
-                >
-                  <Sliders size={11} />
-                  <span>{showJdInput ? "Hide Target Job Description" : "+ Add Specific Target Job Description"}</span>
-                </button>
-
-                {showJdInput && (
-                  <textarea
-                    value={jobDescription}
-                    onChange={(e) => setJobDescription(e.target.value)}
-                    rows={2}
-                    placeholder="e.g. Senior AI Systems Engineer with Next.js, Python, FastAPI, and Multi-Agent Orchestration."
-                    style={{
-                      width: "100%",
-                      background: "#09090b",
-                      border: "1px solid rgba(255, 255, 255, 0.08)",
-                      borderRadius: 6,
-                      padding: "8px 10px",
-                      fontSize: 12,
-                      color: "#d4d4d8",
-                      marginTop: 8,
-                      outline: "none",
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex min-w-0 items-center gap-2">
+                  <input
+                    ref={fileRef}
+                    type="file"
+                    accept="application/pdf,.pdf"
+                    className="hidden"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) uploadResume(f);
+                      e.target.value = "";
                     }}
                   />
-                )}
-              </div>
-
-              {/* Launch Bar */}
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  marginTop: 14,
-                  borderTop: "1px solid rgba(255, 255, 255, 0.06)",
-                  paddingTop: 12,
-                }}
-              >
-                <div style={{ fontSize: 11, color: "#71717a", fontFamily: "var(--font-geist-mono), monospace" }}>
-                  Ctrl+Enter to launch
+                  {attachment ? (
+                    <Tag className="max-w-[260px]">
+                      <FileText className="h-3.5 w-3.5 shrink-0 text-zinc-400" />
+                      <span className="truncate">{attachment.filename}</span>
+                      <button type="button" onClick={() => setAttachment(null)} aria-label="Remove attachment" className="ml-0.5 text-zinc-400 hover:text-zinc-700 cursor-pointer">
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </Tag>
+                  ) : (
+                    <Button variant="outline" onClick={() => fileRef.current?.click()} disabled={uploading || planning || running} className={btnSecondary}>
+                      {uploading ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Paperclip className="mr-1.5 h-4 w-4 text-zinc-400" />}
+                      {uploading ? "Uploading…" : "Attach resume (PDF)"}
+                    </Button>
+                  )}
                 </div>
-
-                <button
-                  onClick={() => handleSubmit(prompt || "Analyze candidate resume against JD, verify fraud risk, and dispatch WhatsApp outreach.")}
-                  className="cc-btn-primary"
-                >
-                  <Send size={13} />
-                  <span>Deploy Autonomous Mission</span>
-                </button>
+                <Button onClick={makePlan} disabled={!prompt.trim() || planning || running} className={btnPrimary}>
+                  {planning ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Send className="mr-1.5 h-4 w-4" />}
+                  {planning ? "Planning…" : "Create plan"}
+                </Button>
               </div>
+
+              {uploadError && <ErrorBanner message={uploadError} />}
+
+              {!plan && !planning && (
+                <div>
+                  <p className={labelCls}>Examples</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {EXAMPLES.map((ex) => (
+                      <button
+                        key={ex}
+                        type="button"
+                        onClick={() => setPrompt(ex)}
+                        className="rounded-md border border-zinc-200 px-2.5 py-1 text-left text-xs text-zinc-600 hover:bg-zinc-50 cursor-pointer"
+                      >
+                        {ex}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
+          </Panel>
 
-            {/* Quick Presets */}
-            <div style={{ marginTop: 16 }}>
-              <div style={{ fontSize: 11, color: "#71717a", textAlign: "center", marginBottom: 8 }}>
-                Or choose a pre-configured multi-agent mission:
-              </div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center" }}>
-                <PresetChip
-                  icon={<MessageSquare size={12} />}
-                  label="Candidate Evaluation & WhatsApp Outreach"
-                  onClick={() => {
-                    setPrompt(
-                      "Analyze this candidate against the JD, perform background verification, and if everything is good, contact the candidate on WhatsApp."
-                    );
-                    handleLoadSampleResume();
-                  }}
-                />
-                <PresetChip
-                  icon={<PhoneCall size={12} />}
-                  label="Telephonic AI Voice Screening Call"
-                  onClick={() => {
-                    setPrompt(
-                      "Conduct an AI-driven telephonic screening call with the candidate to assess architectural depth and communication skills."
-                    );
-                    handleLoadSampleResume();
-                  }}
-                />
-                <PresetChip
-                  icon={<Mail size={12} />}
-                  label="Scorecard Generation & Gmail Dispatch"
-                  onClick={() => {
-                    setPrompt(
-                      "Generate comprehensive candidate scorecard against JD and send formal email interview confirmation via Gmail."
-                    );
-                    handleLoadSampleResume();
-                  }}
-                />
-                <PresetChip
-                  icon={<ShieldCheck size={12} />}
-                  label="Document Authenticity & Fraud Verification"
-                  onClick={() => {
-                    setPrompt(
-                      "Perform multi-layer document forensics, ELA analysis, and identity verification on submitted PDF resume."
-                    );
-                    handleLoadSampleResume();
-                  }}
-                />
-              </div>
-            </div>
-          </motion.div>
+          {planning && (
+            <Panel>
+              <p className="flex items-center gap-2 text-[13px] text-zinc-600">
+                <Loader2 className="h-4 w-4 animate-spin text-zinc-400" /> The planner is choosing tools for this request. This usually takes 5–20 seconds.
+              </p>
+            </Panel>
+          )}
+
+          {planError && <ErrorBanner message={planError} />}
+
+          {/* ── Plan + execution ── */}
+          {plan && (
+            <Panel
+              title="Plan"
+              description={`For: "${planPrompt.length > 120 ? planPrompt.slice(0, 120) + "…" : planPrompt}"`}
+              action={
+                <>
+                  <Button variant="outline" onClick={reset} disabled={running} className={btnSecondary}>
+                    <RotateCcw className="mr-1.5 h-4 w-4 text-zinc-400" /> New task
+                  </Button>
+                  {!started && (
+                    <Button onClick={() => runFrom(0)} disabled={blocked || running} className={btnPrimary}>
+                      <Play className="mr-1.5 h-4 w-4" /> Run plan
+                    </Button>
+                  )}
+                </>
+              }
+            >
+              {blocked && (
+                <p className="mb-3 flex items-start gap-2 text-[13px] text-zinc-700">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+                  This plan uses a tool that isn&apos;t available or configured, so it can&apos;t run. Rephrase the request.
+                </p>
+              )}
+              <ol className="space-y-3">
+                {plan.map((step, i) => (
+                  <StepCard
+                    key={i}
+                    index={i}
+                    step={step}
+                    state={steps[i]}
+                    tool={toolIndex.get(key(step))}
+                    running={running}
+                    onApprove={(params) => runFrom(i, params)}
+                    onRetry={() => runFrom(i)}
+                  />
+                ))}
+              </ol>
+              {finished && (
+                <p className="mt-4 flex items-center gap-2 border-t border-zinc-100 pt-3 text-[13px] text-zinc-700">
+                  <Check className="h-4 w-4 text-emerald-600" /> All {plan.length} step{plan.length === 1 ? "" : "s"} completed.
+                </p>
+              )}
+            </Panel>
+          )}
         </div>
-      )}
 
-      {/* ── ACTIVE SPLIT-SCREEN WORKSPACE STATE ── */}
-      {!isIdle && (
-        <div style={{ display: "flex", height: "100vh", overflow: "hidden" }}>
-          {/* LEFT PANEL — 38% (Conversational Timeline, Stream, Inline Inspector) */}
-          <div style={{ width: "38%", minWidth: 350, maxWidth: 480, flexShrink: 0 }}>
-            <LeftPanel
-              state={state}
-              onStepClick={(stepIndex) =>
-                setState((prev) => ({
-                  ...prev,
-                  selectedNodeId: `step-${stepIndex}`,
-                  leftActiveTab: "inspector",
-                }))
-              }
-              onApproveStep={handleApproveStep}
-              onFollowUp={handleFollowUp}
-              catalogTools={catalogTools}
-              onReset={handleReset}
-              onTabChange={(tab) => setState((prev) => ({ ...prev, leftActiveTab: tab }))}
-              executionMode={executionMode}
-              onToggleExecutionMode={() =>
-                setExecutionMode((m) => (m === "auto" ? "manual" : "auto"))
-              }
-              onExecuteStep={executeSingleStep}
-              onExecuteNextStep={executeNextStep}
-            />
-          </div>
-
-          {/* RIGHT CANVAS — 62% (Interactive Agent Graph & AI Desktop) */}
-          <div style={{ flex: 1, position: "relative" }}>
-            <RightCanvas
-              executionSteps={state.executionSteps}
-              planSteps={state.plan?.steps || []}
-              selectedNodeId={state.selectedNodeId}
-              activeStepIndex={state.activeStepIndex}
-              onNodeClick={(stepIndex) =>
-                setState((prev) => ({
-                  ...prev,
-                  selectedNodeId: `step-${stepIndex}`,
-                  leftActiveTab: "inspector",
-                }))
-              }
-              onCanvasClick={() => setState((prev) => ({ ...prev, selectedNodeId: null }))}
-              catalogTools={catalogTools}
-              phase={state.phase}
-              viewMode={state.viewMode}
-              onViewModeChange={(mode) => setState((prev) => ({ ...prev, viewMode: mode }))}
-              executionMode={executionMode}
-              onToggleExecutionMode={() =>
-                setExecutionMode((m) => (m === "auto" ? "manual" : "auto"))
-              }
-              onExecuteStep={executeSingleStep}
-              onExecuteNextStep={executeNextStep}
-              startedAt={state.startedAt}
-            />
-          </div>
+        {/* ── Tools ── */}
+        <div className="space-y-5">
+          <Panel title="Available tools" description="What the planner can use, with live configuration status.">
+            {toolsError ? (
+              <ErrorBanner message={toolsError} />
+            ) : !tools ? (
+              <div className="space-y-2">
+                {[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-4 w-full rounded bg-zinc-100" />)}
+              </div>
+            ) : (
+              <ToolList tools={tools} />
+            )}
+          </Panel>
+          <Panel title="Safety">
+            <ul className="space-y-2 text-[13px] text-zinc-600">
+              <li className="flex gap-2"><ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-zinc-400" /> Messages, calls and calendar invites never run without your approval.</li>
+              <li className="flex gap-2"><ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-zinc-400" /> Failed steps are never retried automatically, so nothing is sent twice.</li>
+              <li className="flex gap-2"><ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-zinc-400" /> Attached resumes are only readable by this tool.</li>
+            </ul>
+          </Panel>
         </div>
-      )}
+      </div>
+    </Shell>
+  );
+}
+
+function Shell({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="min-h-screen bg-zinc-50">
+      <div className="mx-auto max-w-7xl space-y-6 px-4 py-8 sm:px-6 lg:px-8">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight text-zinc-900">HR Command Center</h1>
+            <p className="mt-1 text-sm text-zinc-500">
+              Describe an HR task in plain language. AI plans it with real tools; you approve anything that contacts a candidate.
+            </p>
+          </div>
+          <Link href="/recruitment" className={cn(btnSecondary, "inline-flex items-center")}>
+            Open Recruitment
+          </Link>
+        </div>
+        <TryFreeBanner />
+        {children}
       </div>
     </div>
   );
 }
 
-function PresetChip({
-  icon,
-  label,
-  onClick,
+// ── Step card ───────────────────────────────────────────────────────────
+
+const STATUS: Record<StepStatus, { label: string; tone: Tone }> = {
+  pending: { label: "Not run", tone: "neutral" },
+  running: { label: "Running", tone: "info" },
+  done: { label: "Done", tone: "success" },
+  failed: { label: "Failed", tone: "danger" },
+  awaiting_approval: { label: "Needs your approval", tone: "warning" },
+};
+
+function StepCard({
+  index, step, state, tool, running, onApprove, onRetry,
 }: {
-  icon: React.ReactNode;
-  label: string;
-  onClick: () => void;
+  index: number;
+  step: PlanStep;
+  state?: StepState;
+  tool?: ToolInfo;
+  running: boolean;
+  onApprove: (params: Record<string, unknown>) => void;
+  onRetry: () => void;
 }) {
+  const st = state?.status ?? "pending";
+  const outreach = OUTREACH.has(key(step));
+  const params = state?.params ?? step.params ?? {};
   return (
-    <button
-      onClick={onClick}
-      className="cc-btn-secondary"
-      style={{
-        fontSize: 11,
-        padding: "6px 12px",
-        borderRadius: 9999,
-        background: "rgba(255, 255, 255, 0.03)",
-      }}
-    >
-      {icon}
-      <span>{label}</span>
-    </button>
+    <li className="rounded-md border border-zinc-200">
+      <div className="flex flex-wrap items-start justify-between gap-3 px-4 py-3">
+        <div className="min-w-0">
+          <p className="text-[13px] font-medium text-zinc-900">
+            <span className="mr-2 text-zinc-400 tabular-nums">{index + 1}.</span>
+            {tool?.description?.split(/[.—]/)[0] || pretty(step.tool)}
+          </p>
+          <p className="mt-0.5 font-mono text-[11px] text-zinc-400">
+            {step.connector}.{step.tool}
+            {outreach && <span className="ml-2 font-sans text-zinc-500">· contacts a person — asks for approval</span>}
+          </p>
+          {step.invalid && <p className="mt-1 text-xs text-rose-600">Not a tool this workspace provides.</p>}
+          {tool?.status === "not_configured" && <p className="mt-1 text-xs text-amber-700">This tool isn&apos;t configured on the server.</p>}
+        </div>
+        <div className="flex items-center gap-3">
+          {typeof state?.durationMs === "number" && <span className="text-xs tabular-nums text-zinc-400">{(state.durationMs / 1000).toFixed(1)}s</span>}
+          {st === "running" ? (
+            <span className="inline-flex items-center gap-1.5 text-[13px] text-zinc-700"><Loader2 className="h-3.5 w-3.5 animate-spin text-blue-600" /> Running</span>
+          ) : (
+            <StatusDot tone={STATUS[st].tone}>{STATUS[st].label}</StatusDot>
+          )}
+        </div>
+      </div>
+
+      {st === "awaiting_approval" ? (
+        <ApprovalForm tool={tool} params={params} disabled={running} onApprove={onApprove} />
+      ) : (
+        Object.keys(params).length > 0 && st !== "done" && (
+          <dl className="border-t border-zinc-100 px-4 py-2">
+            {Object.entries(params).filter(([k]) => !k.startsWith("_")).map(([k, v]) => (
+              <InfoRow key={k} label={pretty(k)}>
+                <ParamValue value={v} />
+              </InfoRow>
+            ))}
+          </dl>
+        )
+      )}
+
+      {st === "failed" && (
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-zinc-100 px-4 py-3">
+          <p className="text-[13px] text-rose-700">{state?.error}</p>
+          <Button variant="outline" onClick={onRetry} disabled={running} className={btnSecondary}>
+            <RotateCcw className="mr-1.5 h-4 w-4 text-zinc-400" /> Retry this step
+          </Button>
+        </div>
+      )}
+
+      {st === "done" && state?.result && (
+        <div className="border-t border-zinc-100 px-4 py-3">
+          <ResultView result={state.result} />
+        </div>
+      )}
+    </li>
   );
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function ParamValue({ value }: { value: unknown }) {
+  if (typeof value === "string" && STEP_REF.test(value.trim())) {
+    const m = value.trim().match(STEP_REF)!;
+    return <span className="text-zinc-500">from step {m[1]}{m[2] ? ` (${m[2].slice(1)})` : ""}</span>;
+  }
+  if (value === "" || value === null || value === undefined) return <span className="text-amber-700">Missing</span>;
+  if (typeof value === "string") return <span className="whitespace-pre-wrap break-words">{value.length > 300 ? value.slice(0, 300) + "…" : value}</span>;
+  if (Array.isArray(value) && value.every((v) => typeof v !== "object")) return <span>{value.join(", ")}</span>;
+  return <span className="font-mono text-xs">{JSON.stringify(value).slice(0, 300)}</span>;
+}
+
+function ApprovalForm({
+  tool, params, disabled, onApprove,
+}: {
+  tool?: ToolInfo;
+  params: Record<string, unknown>;
+  disabled: boolean;
+  onApprove: (params: Record<string, unknown>) => void;
+}) {
+  const required = tool?.input_schema?.required ?? [];
+  const props = tool?.input_schema?.properties ?? {};
+  const editable = Array.from(new Set([...required, ...Object.keys(params)])).filter(
+    (k) => !k.startsWith("_") && (props[k]?.type ?? "string") === "string" && (typeof params[k] === "string" || params[k] === undefined),
+  );
+  const [values, setValues] = useState<Record<string, string>>(() =>
+    Object.fromEntries(editable.map((k) => [k, isUnresolved(params[k]) ? "" : String(params[k])])),
+  );
+  const missing = required.filter((k) => editable.includes(k) ? !values[k]?.trim() : isUnresolved(params[k]));
+
+  return (
+    <div className="space-y-3 border-t border-zinc-100 bg-zinc-50/60 px-4 py-3">
+      <p className="text-[13px] text-zinc-700">Check exactly what will be sent. Nothing happens until you approve.</p>
+      {editable.map((k) => {
+        const long = k === "message" || k === "body";
+        return (
+          <div key={k}>
+            <label htmlFor={`ap-${k}`} className={labelCls}>
+              {pretty(k)}{required.includes(k) && <span className="text-rose-500"> *</span>}
+            </label>
+            {long ? (
+              <textarea
+                id={`ap-${k}`}
+                rows={4}
+                value={values[k]}
+                onChange={(e) => setValues((v) => ({ ...v, [k]: e.target.value }))}
+                className={cn(inputCls, "h-auto py-2")}
+              />
+            ) : (
+              <input id={`ap-${k}`} value={values[k]} onChange={(e) => setValues((v) => ({ ...v, [k]: e.target.value }))} className={inputCls} />
+            )}
+          </div>
+        );
+      })}
+      {missing.length > 0 && <p className="text-xs text-amber-700">Fill in: {missing.map(pretty).join(", ")}</p>}
+      <div className="flex justify-end">
+        <Button
+          onClick={() => onApprove({ ...params, ...Object.fromEntries(Object.entries(values).map(([k, v]) => [k, v.trim()])) })}
+          disabled={disabled || missing.length > 0}
+          className={btnPrimary}
+        >
+          <Check className="mr-1.5 h-4 w-4" /> Approve and run
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// ── Results: rendered straight from the response body ─────────────────
+
+function ResultView({ result }: { result: Record<string, unknown> }) {
+  const [raw, setRaw] = useState(false);
+  const entries = Object.entries(result).filter(([k, v]) => v !== null && v !== undefined && v !== "" && k !== "resume_text");
+  const placeholder = entries.filter(([k, v]) => k.endsWith("_is_real") && (v === false || v === "false")).map(([k]) => k.replace(/_is_real$/, ""));
+
+  return (
+    <div className="space-y-2">
+      {result.degraded === true && (
+        <p className="flex items-start gap-2 text-xs text-zinc-700">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
+          The AI provider was unavailable, so this used a basic non-AI fallback. Treat the values below as approximate.
+        </p>
+      )}
+      {placeholder.length > 0 && (
+        <p className="flex items-start gap-2 text-xs text-zinc-700">
+          <CircleSlash className="mt-0.5 h-3.5 w-3.5 shrink-0 text-zinc-400" />
+          Placeholder, not a real score: {placeholder.map(pretty).join(", ")}.
+        </p>
+      )}
+      <dl className="divide-y divide-zinc-100">
+        {entries
+          .filter(([k]) => k !== "degraded" && !k.endsWith("_is_real") && !(placeholder.some((p) => k.startsWith(p))))
+          .slice(0, 16)
+          .map(([k, v]) => (
+            <div key={k} className="grid grid-cols-[140px_1fr] gap-3 py-1.5 text-[13px]">
+              <dt className="text-zinc-500">{pretty(k)}</dt>
+              <dd className="min-w-0 text-zinc-900"><ValueView value={v} /></dd>
+            </div>
+          ))}
+      </dl>
+      <button type="button" onClick={() => setRaw((r) => !r)} className="text-xs font-medium text-blue-600 hover:underline cursor-pointer">
+        {raw ? "Hide" : "Show"} raw response
+      </button>
+      {raw && (
+        <pre className="max-h-72 overflow-auto rounded-md border border-zinc-200 bg-zinc-50 p-3 text-[11px] leading-relaxed text-zinc-700">
+          {JSON.stringify(result, null, 2)}
+        </pre>
+      )}
+    </div>
+  );
+}
+
+function ValueView({ value }: { value: unknown }) {
+  if (typeof value === "boolean") return <span>{value ? "Yes" : "No"}</span>;
+  if (typeof value === "number" || typeof value === "string") {
+    const s = String(value);
+    if (/^https?:\/\//.test(s)) return <a href={s} target="_blank" rel="noreferrer" className="break-all text-blue-600 hover:underline">{s}</a>;
+    return <span className="whitespace-pre-wrap break-words">{s.length > 600 ? s.slice(0, 600) + "…" : s}</span>;
+  }
+  if (Array.isArray(value)) {
+    if (value.length === 0) return <span className="text-zinc-400">None</span>;
+    if (value.every((v) => typeof v !== "object")) {
+      return <div className="flex flex-wrap gap-1">{value.map((v, i) => <Tag key={i}>{String(v)}</Tag>)}</div>;
+    }
+    return (
+      <ul className="space-y-1">
+        {value.slice(0, 8).map((v, i) => (
+          <li key={i} className="text-xs text-zinc-700">
+            {v && typeof v === "object"
+              ? Object.entries(v as Record<string, unknown>).filter(([, x]) => x !== null && x !== "" && typeof x !== "object").map(([k, x]) => `${pretty(k)}: ${x}`).join(" · ")
+              : String(v)}
+          </li>
+        ))}
+        {value.length > 8 && <li className="text-xs text-zinc-400">+{value.length - 8} more</li>}
+      </ul>
+    );
+  }
+  if (value && typeof value === "object") {
+    const flat = Object.entries(value as Record<string, unknown>).filter(([, x]) => x !== null && x !== "" && typeof x !== "object");
+    return <span className="text-xs text-zinc-700">{flat.map(([k, x]) => `${pretty(k)}: ${x}`).join(" · ") || "—"}</span>;
+  }
+  return <span>{String(value)}</span>;
+}
+
+function ToolList({ tools }: { tools: ToolInfo[] }) {
+  const groups = new Map<string, ToolInfo[]>();
+  for (const t of tools) {
+    const g = t.connector_display_name || t.connector;
+    groups.set(g, [...(groups.get(g) || []), t]);
+  }
+  return (
+    <ul className="-my-2 divide-y divide-zinc-100">
+      {Array.from(groups.entries()).map(([group, list]) => {
+        const configured = list.every((t) => t.status !== "not_configured");
+        return (
+          <li key={group} className="flex items-start justify-between gap-3 py-2">
+            <div className="min-w-0">
+              <p className="text-[13px] font-medium text-zinc-900">{group}</p>
+              <p className="truncate text-xs text-zinc-500">{list.map((t) => pretty(t.tool)).join(", ")}</p>
+            </div>
+            <StatusDot tone={configured ? "success" : "warning"} className="shrink-0 text-xs">
+              {configured ? "Configured" : "Not configured"}
+            </StatusDot>
+          </li>
+        );
+      })}
+    </ul>
+  );
 }

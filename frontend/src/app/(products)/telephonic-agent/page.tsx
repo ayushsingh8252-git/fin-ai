@@ -136,7 +136,7 @@ export default function TelephonicAgentPage() {
 
       <footer className="border-t border-zinc-200 bg-white py-10">
         <div className="max-w-6xl mx-auto px-6 text-center text-[12px] text-zinc-500 font-mono">
-          Fin AI · Telephonic Agent — the &ldquo;Place a Real Call&rdquo; panel above places a real
+          AgenticFlow AI · Telephonic Agent — the &ldquo;Place a Real Call&rdquo; panel above places a real
           phone call via Sarvam AI. Everything below it is an illustrative product demo.
         </div>
       </footer>
@@ -784,7 +784,7 @@ function AgentProfileCard() {
         AS
       </div>
       <div className="relative text-lg font-extrabold text-white">{AGENT_NAME}</div>
-      <div className="relative text-[12px] text-blue-100 font-mono mt-1">Telephonic Agent · Fin AI</div>
+      <div className="relative text-[12px] text-blue-100 font-mono mt-1">Telephonic Agent · AgenticFlow AI</div>
       <div className="relative flex items-center gap-1.5 mt-4 px-3 py-1.5 rounded-full bg-white/15 border border-white/20 text-[11px] font-mono text-white">
         <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" /> Always on
       </div>

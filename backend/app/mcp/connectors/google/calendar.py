@@ -60,6 +60,7 @@ class CalendarConnector(BaseMCPConnector):
                 "properties": {
                     "calendar_id": {"type": "string", "description": "Usually 'primary'."},
                     "summary": {"type": "string"},
+                    "description": {"type": "string", "description": "Optional event body text."},
                     "start_iso": {"type": "string", "description": "RFC3339 datetime with timezone offset, e.g. '2026-09-01T10:00:00-07:00'."},
                     "end_iso": {"type": "string"},
                     "attendee_emails": {"type": "array", "items": {"type": "string"}},
@@ -145,6 +146,8 @@ class CalendarConnector(BaseMCPConnector):
             "start": {"dateTime": params["start_iso"]},
             "end": {"dateTime": params["end_iso"]},
         }
+        if params.get("description"):
+            body["description"] = params["description"]
         if params.get("attendee_emails"):
             body["attendees"] = [{"email": e} for e in params["attendee_emails"]]
         return body

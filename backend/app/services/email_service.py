@@ -46,15 +46,16 @@ def _send_email(to_email: str, subject: str, body: str) -> tuple[bool, Optional[
         return False, error
 
 
-def send_invite_email(to_email: str, role_title: str, interview_link: str) -> bool:
+def send_invite_email(to_email: str, role_title: str, interview_link: str, when: Optional[str] = None) -> bool:
     subject = f"Your AI Screening Interview — {role_title}"
+    timing = f" It's scheduled for {when}." if when else ""
     body = (
         f"Hi,\n\nYou've been invited to a first-round AI screening interview for the "
-        f"{role_title} role.\n\nWhen you're ready, click the link below to begin:\n"
+        f"{role_title} role.{timing}\n\nWhen you're ready, click the link below to begin:\n"
         f"{interview_link}\n\nA few tips before you start:\n"
         "- Use a quiet room with a working camera and microphone.\n"
         "- Have your resume ready (PDF only).\n"
-        "- The interview covers 11 questions and takes about 15-20 minutes.\n\n"
+        "- The interviewer asks about six questions; it usually takes 10-15 minutes.\n\n"
         "Good luck!\nAgenticFlow"
     )
     ok, _ = _send_email(to_email, subject, body)

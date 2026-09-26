@@ -509,3 +509,20 @@ def fraud_scan_application_task(self, application_id: str, scan_id: str):
     finally:
         db.close()
 
+
+@celery_app.task(name="place_interview_call")
+def place_interview_call_task(interview_id: str):
+    """Places a scheduled telephonic interview's call at its scheduled time.
+    No automatic retry: a provider rejection (quota, bad number) is recorded
+    on the Interview for the recruiter, never retried around. dial_interview
+    is idempotent, so a redelivered task can't call the candidate twice."""
+    from .database import SessionLocal
+    from .services.interview_scheduling import dial_interview
+
+    db = SessionLocal()
+    try:
+        result = dial_interview(db, interview_id)
+        logger.info("[recruitment] interview %s call -> %s", interview_id, result.get("status"))
+        return result
+    finally:
+        db.close()

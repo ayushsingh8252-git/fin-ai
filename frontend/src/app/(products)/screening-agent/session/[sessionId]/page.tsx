@@ -1,10 +1,8 @@
 "use client";
 
 import { use, useEffect, useState } from "react";
-import { AlertTriangle, Loader2, Video } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Loader2, Video } from "lucide-react";
 import InterviewRoom from "../../_components/InterviewRoom";
-import InterviewReport from "../../_components/InterviewReport";
-import type { EvaluationResult } from "../../_components/types";
 import { getApiBaseUrl } from "@/lib/apiConfig";
 
 const API_URL = getApiBaseUrl();
@@ -22,11 +20,6 @@ export default function ScreeningSessionPage({ params }: { params: Promise<{ ses
   const [session, setSession] = useState<SessionData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  // Once an interview finishes, GET /interview/report/{id} persists — reused
-  // here so reloading (or revisiting) this link shows the real completed
-  // report instead of dropping the candidate back into a fresh setup screen.
-  const [completedReport, setCompletedReport] = useState<EvaluationResult | null>(null);
-  const [reportError, setReportError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -39,21 +32,9 @@ export default function ScreeningSessionPage({ params }: { params: Promise<{ ses
         }
         const data = (await res.json()) as SessionData;
         if (cancelled) return;
+        // A completed link shows a confirmation only — the scored report
+        // is for the hiring team and needs a signed-in recruiter.
         setSession(data);
-
-        if (data.status === "completed") {
-          try {
-            const reportRes = await fetch(`${API_URL}/api/v1/interview/report/${sessionId}`);
-            if (reportRes.ok) {
-              const report = (await reportRes.json()) as EvaluationResult;
-              if (!cancelled) setCompletedReport(report);
-            } else if (!cancelled) {
-              setReportError("This interview is complete, but the detailed report couldn't be loaded.");
-            }
-          } catch {
-            if (!cancelled) setReportError("This interview is complete, but the detailed report couldn't be loaded.");
-          }
-        }
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : "Could not load this interview link.");
       } finally {
@@ -93,25 +74,14 @@ export default function ScreeningSessionPage({ params }: { params: Promise<{ ses
         )}
 
         {!loading && !error && session && session.status === "completed" && (
-          <>
-            <div className="max-w-2xl mx-auto text-center mb-10">
-              <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-zinc-900 mb-2">
-                Your interview for {session.role_title} is complete
-              </h1>
-              <p className="text-zinc-500 text-sm">
-                Thanks for taking the time to interview — here&rsquo;s your report from that session.
-              </p>
-            </div>
-            <div className="max-w-3xl mx-auto">
-              {completedReport ? (
-                <InterviewReport evaluation={completedReport} />
-              ) : (
-                <div className="rounded-2xl border border-amber-200 bg-amber-50 p-6 text-center text-sm text-amber-700">
-                  {reportError || "Loading your report…"}
-                </div>
-              )}
-            </div>
-          </>
+          <div className="mx-auto max-w-xl rounded-xl border border-zinc-200 bg-white p-8 text-center">
+            <CheckCircle2 className="mx-auto mb-3 h-8 w-8 text-emerald-600" />
+            <h1 className="text-xl font-semibold text-zinc-900">This interview is complete</h1>
+            <p className="mt-2 text-sm text-zinc-500">
+              Your interview for {session.role_title} was submitted to the hiring team. There&rsquo;s nothing more to do
+              on this link — they will contact you about next steps.
+            </p>
+          </div>
         )}
 
         {!loading && !error && session && session.status !== "completed" && (
@@ -131,6 +101,7 @@ export default function ScreeningSessionPage({ params }: { params: Promise<{ ses
               sessionId={session.session_id}
               email={session.email}
               roleFieldsLocked
+              candidateView
             />
           </>
         )}

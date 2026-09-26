@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
-  Check, ChevronDown, ChevronRight, Copy, ExternalLink, FileText, Loader2, Plus, RefreshCw, Send, X,
+  Check, ChevronDown, ChevronRight, FileText, Loader2, Plus, RefreshCw, Send, X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ErrorBanner } from "@/components/ui/error-banner";
@@ -12,7 +12,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/components/ui/toast";
 import {
   errorMessage, getApplication360, setStage, openResume,
-  sendScreeningInvite, scheduleInterview, createOffer, updateOffer,
+  createOffer, updateOffer,
   sendWhatsAppMessage, triggerTelephonicCall,
   type Application360, type OfferInfo, type Stage,
 } from "@/lib/recruitmentApi";
@@ -23,6 +23,7 @@ import {
   ContactCard, EducationCard, EmploymentHistoryCard, ExtractFromResumeButton, VerificationStatusCard,
 } from "./_profile";
 import { BackgroundVerificationTab, type SavedBgvResult } from "./_bgv";
+import { InterviewsTab } from "./_interviews";
 import {
   EmptyNote, InfoRow, Panel, StatusDot, Tag, btnPrimary, btnSecondary, inputCls, labelCls, type Tone,
 } from "./_ui";
@@ -296,182 +297,6 @@ function VoiceScreeningTab({ data, onReload }: { data: Application360; onReload:
           </ol>
         </Panel>
       )}
-    </div>
-  );
-}
-
-// ── Interviews ──────────────────────────────────────────────────────────
-
-const MODE_LABEL: Record<string, string> = { human: "Panel interview", telephonic: "Telephonic", ai_screening: "AI screening" };
-
-function InterviewsTab({ data, onReload }: { data: Application360; onReload: () => void }) {
-  const { application, screening } = data;
-  const interviews = data.interviews || [];
-  const [showForm, setShowForm] = useState(false);
-  const [mode, setMode] = useState<"human" | "telephonic" | "ai_screening">("human");
-  const [when, setWhen] = useState("");
-  const [interviewer, setInterviewer] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [generating, setGenerating] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
-  const { toast } = useToast();
-
-  const link = screening?.session_id && typeof window !== "undefined"
-    ? `${window.location.origin}/screening-agent/session/${screening.session_id}`
-    : null;
-
-  const generate = async () => {
-    setGenerating(true);
-    try {
-      await sendScreeningInvite(application.id);
-      toast("success", "Assessment link created.");
-      onReload();
-    } catch (err) {
-      toast("error", errorMessage(err));
-    } finally {
-      setGenerating(false);
-    }
-  };
-
-  const schedule = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!when) return;
-    setSaving(true);
-    setError(null);
-    try {
-      await scheduleInterview(application.id, {
-        mode,
-        scheduled_at: new Date(when).toISOString(),
-        interviewer_email: interviewer || undefined,
-      });
-      setShowForm(false);
-      setWhen("");
-      setInterviewer("");
-      toast("success", "Interview scheduled.");
-      onReload();
-    } catch (err) {
-      setError(errorMessage(err));
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <div className="space-y-4">
-      <Panel
-        title="AI technical assessment"
-        description="A link the candidate opens to take an AI-run technical interview."
-        action={
-          !screening && (
-            <Button onClick={generate} disabled={generating} className={btnPrimary}>
-              {generating && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}
-              Create link
-            </Button>
-          )
-        }
-      >
-        {screening ? (
-          <div className="space-y-3">
-            <dl className="-my-2 divide-y divide-zinc-100">
-              <InfoRow label="Status">
-                <StatusDot tone={screening.session_status === "completed" ? "success" : "info"}>{screening.session_status}</StatusDot>
-              </InfoRow>
-            </dl>
-            {link && (
-              <div className="flex gap-2">
-                <input readOnly value={link} aria-label="Assessment link" className={cn(inputCls, "bg-zinc-50 font-mono text-xs")} />
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    navigator.clipboard.writeText(link);
-                    setCopied(true);
-                    setTimeout(() => setCopied(false), 2000);
-                  }}
-                  className={btnSecondary}
-                >
-                  {copied ? <Check className="mr-1.5 h-4 w-4 text-emerald-600" /> : <Copy className="mr-1.5 h-4 w-4 text-zinc-400" />}
-                  {copied ? "Copied" : "Copy"}
-                </Button>
-                <a href={link} target="_blank" rel="noopener noreferrer" className={cn(btnSecondary, "inline-flex items-center")}>
-                  <ExternalLink className="mr-1.5 h-4 w-4 text-zinc-400" /> Open
-                </a>
-              </div>
-            )}
-          </div>
-        ) : (
-          <p className="text-[13px] text-zinc-500">No assessment link created yet.</p>
-        )}
-      </Panel>
-
-      <Panel
-        title="Interviews"
-        description={`${interviews.length} scheduled`}
-        action={
-          <Button variant="outline" onClick={() => setShowForm((v) => !v)} className={btnSecondary}>
-            <Plus className="mr-1.5 h-4 w-4 text-zinc-400" /> Schedule
-          </Button>
-        }
-      >
-        {showForm && (
-          <form onSubmit={schedule} className="mb-4 space-y-3 rounded-md border border-zinc-200 p-4">
-            <div className="grid gap-3 sm:grid-cols-3">
-              <div>
-                <label htmlFor="iv-mode" className={labelCls}>Type</label>
-                <select id="iv-mode" value={mode} onChange={(e) => setMode(e.target.value as typeof mode)} className={inputCls}>
-                  <option value="human">Panel interview</option>
-                  <option value="telephonic">Telephonic</option>
-                  <option value="ai_screening">AI screening</option>
-                </select>
-              </div>
-              <div>
-                <label htmlFor="iv-when" className={labelCls}>Date and time</label>
-                <input id="iv-when" type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)} required className={inputCls} />
-              </div>
-              <div>
-                <label htmlFor="iv-who" className={labelCls}>Interviewer email</label>
-                <input
-                  id="iv-who"
-                  type="email"
-                  value={interviewer}
-                  onChange={(e) => setInterviewer(e.target.value)}
-                  placeholder="Defaults to you"
-                  className={inputCls}
-                />
-              </div>
-            </div>
-            {error && <ErrorBanner message={error} />}
-            <div className="flex justify-end gap-2">
-              <Button type="button" variant="outline" onClick={() => setShowForm(false)} className={btnSecondary}>Cancel</Button>
-              <Button type="submit" disabled={saving} className={btnPrimary}>
-                {saving && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}
-                Schedule interview
-              </Button>
-            </div>
-          </form>
-        )}
-
-        {interviews.length === 0 ? (
-          <p className="text-[13px] text-zinc-500">No interviews scheduled.</p>
-        ) : (
-          <ul className="-my-2 divide-y divide-zinc-100">
-            {interviews.map((iv) => (
-              <li key={iv.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
-                <div>
-                  <p className="text-[13px] font-medium text-zinc-900">{MODE_LABEL[iv.mode] || iv.mode}</p>
-                  <p className="text-xs text-zinc-500">
-                    {iv.scheduled_at ? new Date(iv.scheduled_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "Time not set"}
-                    {iv.interviewer_email && ` · ${iv.interviewer_email}`}
-                  </p>
-                </div>
-                <StatusDot tone={iv.status === "completed" ? "success" : iv.status === "cancelled" ? "danger" : "info"} className="text-xs capitalize">
-                  {iv.status}
-                </StatusDot>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Panel>
     </div>
   );
 }

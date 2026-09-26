@@ -170,16 +170,20 @@ def test_schedule_interview(client, db):
     job = make_job(db, user)
     cand, application = make_candidate_and_app(db, job, stage="SHORTLISTED")
 
+    from datetime import datetime, timedelta, timezone
+    when = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
     res = c.post(f"/api/v1/recruitment/applications/{application.id}/interviews", json={
-        "scheduled_at": "2026-09-25T14:00:00Z",
+        "scheduled_at": when,
         "mode": "human",
         "interviewer_email": "interviewer@example.com",
+        "add_to_calendar": False,
     })
     assert res.status_code == 200
     body = res.json()
-    assert body["status"] == "scheduled"
-    assert "meet_link" in body
-    assert body["meet_link"].startswith("https://meet.google.com/")
+    assert body["interview"]["status"] == "scheduled"
+    # No Calendar event -> no Meet link; one is never made up client-side.
+    assert body["interview"]["meet_link"] is None
+    assert body["steps"]["calendar"]["status"] == "skipped"
 
     # Check stage auto-advanced to INTERVIEW
     db.refresh(application)

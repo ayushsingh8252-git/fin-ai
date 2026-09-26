@@ -1,11 +1,10 @@
 import type { Metadata } from "next";
 import CommandCenter from "./CommandCenter";
-import "./command-center.css";
 
 export const metadata: Metadata = {
-  title: "Agent Command Center — AgenticFlow AI",
+  title: "HR Command Center — AgenticFlow AI",
   description:
-    "Mission control for AI agents. Submit natural-language goals and watch autonomous agents plan, execute, and deliver results in real time.",
+    "Describe an HR task in plain language. AI plans it with real HR tools, and you approve anything that contacts a candidate.",
 };
 
 export default function CommandCenterPage() {

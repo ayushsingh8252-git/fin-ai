@@ -120,6 +120,13 @@ def _dial(
         record.status = "failed"
         record.error_message = e.detail
         db.commit()
+        if e.status_code == 429 or any(w in (e.detail or "").lower() for w in ("quota", "rate limit", "insufficient credit", "too many requests")):
+            # Provider quota / rate limit: surfaced as-is, never retried
+            # around or reported as a placed call.
+            raise HTTPException(
+                status_code=429,
+                detail="The telephony provider's quota or rate limit was reached, so the call was not placed. Try again later.",
+            )
         raise HTTPException(status_code=502, detail=f"Sarvam rejected the call: {e.detail}")
     except Exception as e:
         record.status = "failed"
@@ -423,6 +430,8 @@ async def sarvam_webhook(call_record_id: str, request: Request, db: Session = De
             db.commit()
 
     if terminal:
+        from ..services import interview_scheduling
+        interview_scheduling.sync_from_call(db, record)
         orchestrator.end_session(
             record.id,
             scores={

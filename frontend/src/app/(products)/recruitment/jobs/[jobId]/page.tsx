@@ -17,7 +17,7 @@ import {
 } from "@/components/ui/dialog";
 import {
   errorMessage, getJob, listCandidates, retryUpload,
-  bulkSetStage, bulkAnalyze, setStage, updateJob, deleteJob,
+  bulkSetStage, setStage, updateJob, deleteJob,
   type CandidatePage, type Job, type Stage, type CandidateApplication
 } from "@/lib/recruitmentApi";
 import { AnalysisIndicator, ScoreCell, StageBadge, PipelineProgressionSvg, EmptyStateGeometricSvg } from "../../_components/indicators";
@@ -214,23 +214,6 @@ export default function JobWorkspacePage() {
       const res = await bulkSetStage(ids, targetStage);
       const successCount = res.results.filter((r) => r.status === "ok").length;
       toast("success", `Moved ${successCount} candidates to ${STAGE_LABEL[targetStage]}.`);
-      setSelectedIds(new Set());
-      reload();
-    } catch (err) {
-      setBulkError(errorMessage(err));
-    } finally {
-      setBulkLoading(false);
-    }
-  };
-
-  const handleBulkAnalyze = async () => {
-    if (selectedIds.size === 0) return;
-    setBulkLoading(true);
-    setBulkError(null);
-    try {
-      const ids = Array.from(selectedIds);
-      await bulkAnalyze(ids);
-      toast("success", `Requested re-evaluation for ${ids.length} candidates.`);
       setSelectedIds(new Set());
       reload();
     } catch (err) {
@@ -585,7 +568,7 @@ export default function JobWorkspacePage() {
 
             <select
               value={sortBy}
-              onChange={(e) => setSortBy(e.target.value as any)}
+              onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
               className="h-8 rounded-lg border border-zinc-200/80 bg-zinc-50 px-2.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-100 focus:outline-none"
             >
               <option value="match_desc">Sort: Match Score</option>
@@ -893,15 +876,6 @@ export default function JobWorkspacePage() {
                 <option value="REJECTED">Reject</option>
               </select>
 
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={bulkLoading}
-                onClick={handleBulkAnalyze}
-                className="h-8 rounded-lg border-zinc-700 bg-zinc-800 text-xs font-semibold text-white hover:bg-zinc-700"
-              >
-                {bulkLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : "Re-evaluate"}
-              </Button>
             </div>
           </div>
         </div>

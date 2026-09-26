@@ -69,7 +69,7 @@ export default function ScreeningAgentPage() {
 
       <footer className="border-t border-zinc-200 bg-white py-10">
         <div className="max-w-6xl mx-auto px-6 text-center text-[12px] text-zinc-500 font-mono">
-          Fin AI · Screening Agent — the live interview above is real (camera, proctoring, Groq, transcription),
+          AgenticFlow AI · Screening Agent — the live interview above is real (camera, proctoring, Groq, transcription),
           and its report is generated from your actual answers. Only the &ldquo;Create in Minutes&rdquo; step below is a mockup.
         </div>
       </footer>

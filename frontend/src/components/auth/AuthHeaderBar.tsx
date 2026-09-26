@@ -13,8 +13,9 @@ export default function AuthHeaderBar() {
   const pathname = usePathname();
   const { status, user, signOut } = useAuth();
 
-  // Recruitment has its own profile menu (with sign-out) in its header.
-  if (pathname?.startsWith("/command-center") || pathname?.startsWith("/recruitment")) return null;
+  // Product pages have a profile menu (with sign-out) in their own header —
+  // ProductNav, or the Recruitment shell. Only pages without one show this.
+  if (!(pathname === "/" || pathname?.startsWith("/rag"))) return null;
   if (status !== "signed-in" || !user) return null;
 
   return (

@@ -36,6 +36,7 @@ Inner tools -> composite:
     get_candidate_scorecard         (composite: orchestrates the above + fraud fold-in)
 """
 import logging
+import os
 from typing import Any, Dict, List, Optional
 
 from ..mcp.base import BaseMCPConnector, MCPToolError
@@ -48,6 +49,28 @@ from ..services.hiring_service import (
 from ..services.resilience import call_with_resilience
 
 logger = logging.getLogger(__name__)
+
+
+def _safe_resume_path(file_path: str) -> str:
+    """Only resumes uploaded via POST /agent/attachments may be parsed.
+
+    Without this, any signed-in user (or a planner step) could pass the path
+    of another candidate's resume — or any other file on the server — and get
+    its extracted text back.
+    """
+    root = os.path.abspath(os.path.join("uploads", "agent"))  # same cwd-relative dir api/agent.py writes to
+    resolved = os.path.abspath(str(file_path))
+    try:
+        inside = os.path.commonpath([resolved, root]) == root
+    except ValueError:  # different drive on Windows
+        inside = False
+    if not inside or not os.path.isfile(resolved):
+        raise MCPToolError(
+            "Resume not found. Attach the resume in the Command Center first.",
+            code="validation_error", status_code=400,
+        )
+    return resolved
+
 
 
 class HiringConnector(BaseMCPConnector):
@@ -213,8 +236,9 @@ class HiringConnector(BaseMCPConnector):
         file_path = params.get("file_path")
         if not file_path:
             raise MCPToolError("`file_path` is required", code="validation_error", status_code=400)
+        file_path = _safe_resume_path(file_path)
         try:
-            return parse_resume_pdf(params.get("filename") or file_path, file_path)
+            return parse_resume_pdf(params.get("filename") or os.path.basename(file_path), file_path)
         except Exception as e:
             raise MCPToolError(f"Resume parsing failed: {e}", code="business_logic_error", status_code=502) from None
 
@@ -237,8 +261,9 @@ class HiringConnector(BaseMCPConnector):
         if not isinstance(candidate, dict):
             if not file_path:
                 raise MCPToolError("Either `candidate` (preferred, zero LLM cost) or `file_path` is required", code="validation_error", status_code=400)
+            file_path = _safe_resume_path(file_path)
             try:
-                candidate = parse_resume_pdf(file_path, file_path)
+                candidate = parse_resume_pdf(os.path.basename(file_path), file_path)
             except Exception as e:
                 raise MCPToolError(f"Resume parsing failed: {e}", code="business_logic_error", status_code=502) from None
         return generate_actionable_summary(candidate, params.get("requirement"))

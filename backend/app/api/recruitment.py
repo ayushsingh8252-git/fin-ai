@@ -12,7 +12,7 @@ import logging
 import os
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
@@ -620,12 +620,7 @@ def application_360(
         .order_by(models.Interview.created_at.desc())
         .all()
     )
-    interviews = [{
-        "id": iv.id, "mode": iv.mode, "status": iv.status,
-        "scheduled_at": _iso(iv.scheduled_at),
-        "interviewer_email": iv.interviewer_email if contact_visible else None,
-        "meet_link": iv.meet_link, "created_at": _iso(iv.created_at),
-    } for iv in interview_rows]
+    interviews = [_serialize_interview(iv, contact_visible) for iv in interview_rows]
 
     # ── Offers ──
     offer_rows = (
@@ -1128,32 +1123,43 @@ def bulk_set_stage(
     return {"results": results}
 
 
-class BulkAnalyzeIn(BaseModel):
-    application_ids: List[str] = Field(..., min_length=1, max_length=100)
-
-
-@router.post("/bulk/analyze")
-def bulk_analyze(
-    body: BulkAnalyzeIn, db: Session = Depends(get_db), user: User = Depends(get_current_user),
-):
-    """Bulk re-evaluate applications."""
-    results = []
-    for app_id in body.application_ids:
-        try:
-            app = rs.get_application_for_user(db, user, app_id, rs.ACTION_ANALYZE)
-            results.append({"application_id": app_id, "status": "ok"})
-        except Exception as exc:
-            results.append({"application_id": app_id, "status": "error", "error": str(exc)})
-    return {"results": results}
-
-
 # ── Interview scheduling ─────────────────────────────────────────────────
 
 class ScheduleInterviewIn(BaseModel):
     scheduled_at: datetime
-    mode: str = Field("human", pattern="^(human|telephonic|ai_screening)$")
+    mode: str = Field("ai_screening", pattern="^(human|telephonic|ai_screening)$")
+    duration_minutes: int = Field(30, ge=10, le=240)
     interviewer_email: Optional[str] = Field(None, max_length=200)
     notes: Optional[str] = Field(None, max_length=1000)
+    add_to_calendar: bool = True     # real Google Calendar event on the connected account
+    send_invite_email: bool = True   # ai_screening: email the candidate their link
+
+
+def _serialize_interview(iv: models.Interview, contact_visible: bool = True) -> Dict[str, Any]:
+    link = None
+    if iv.mode == "ai_screening" and iv.screening_session_id:
+        from ..services.interview_scheduling import interview_link
+        link = interview_link(settings.FRONTEND_BASE_URL, iv.screening_session_id)
+    return {
+        "id": iv.id,
+        "application_id": iv.application_id,
+        "candidate_id": iv.candidate_id,
+        "mode": iv.mode,
+        "status": iv.status,
+        "status_detail": iv.status_detail,
+        "scheduled_at": _iso(iv.scheduled_at),
+        "duration_minutes": iv.duration_minutes,
+        "interviewer_email": iv.interviewer_email if contact_visible else None,
+        "meet_link": iv.meet_link,
+        "calendar_event_id": iv.calendar_event_id,
+        "calendar_html_link": iv.calendar_html_link,
+        "candidate_link": link,
+        "screening_session_id": iv.screening_session_id,
+        "call_record_id": iv.call_record_id,
+        "completed_at": _iso(iv.completed_at),
+        "created_at": _iso(iv.created_at),
+        "has_report": iv.status == "completed",
+    }
 
 
 @router.post("/applications/{application_id}/interviews")
@@ -1163,60 +1169,263 @@ def schedule_interview(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """Schedule an interview for a candidate application and generate a meeting link."""
+    """Schedule an AI interview, a telephonic interview or a panel interview.
+
+    Each external step (Google Calendar, invite email, phone call) is
+    reported back exactly as it went — created / sent / placed / queued, or
+    failed with the provider's reason, or skipped. Nothing is invented: a
+    Meet link exists only if Google Calendar created one."""
+    from ..services import interview_scheduling as sched
+    from ..services.email_service import send_invite_email
+
     app = rs.get_application_for_user(db, user, application_id, rs.ACTION_DECIDE)
     cand = db.get(Candidate, app.candidate_id)
-    if not cand:
-        raise HTTPException(status_code=404, detail="Candidate not found.")
+    job = db.get(Role, app.job_id)
+    if not cand or not job:
+        raise HTTPException(status_code=404, detail="Candidate or job not found.")
 
-    interview_id = str(uuid.uuid4())
-    code1 = uuid.uuid4().hex[:3]
-    code2 = uuid.uuid4().hex[:4]
-    code3 = uuid.uuid4().hex[:3]
-    meet_link = f"https://meet.google.com/{code1}-{code2}-{code3}"
+    scheduled_at = body.scheduled_at if body.scheduled_at.tzinfo else body.scheduled_at.replace(tzinfo=timezone.utc)
+    now = datetime.now(timezone.utc)
+    if scheduled_at < now - timedelta(minutes=5):
+        raise HTTPException(status_code=400, detail="The interview time is in the past.")
+    if body.mode == "telephonic" and not cand.phone:
+        raise HTTPException(status_code=400, detail="This candidate has no phone number on file, so a telephonic interview can't be scheduled.")
+    if body.mode == "ai_screening" and body.send_invite_email and not cand.email:
+        raise HTTPException(status_code=400, detail="This candidate has no email on file. Turn off the invite email and share the link yourself.")
 
+    interviewer_email = (body.interviewer_email or user.email or "").strip() or None
     iv = models.Interview(
-        id=interview_id,
+        id=str(uuid.uuid4()),
         application_id=app.id,
         candidate_id=cand.id,
         job_id=app.job_id,
         mode=body.mode,
-        scheduled_at=body.scheduled_at,
-        interviewer_email=body.interviewer_email or user.email,
-        meet_link=meet_link,
+        scheduled_at=scheduled_at,
+        duration_minutes=body.duration_minutes,
+        interviewer_email=interviewer_email,
         status="scheduled",
     )
-    db.add(iv)
 
-    # Move application to INTERVIEW if in SHORTLISTED
-    if app.stage == "SHORTLISTED":
+    link = None
+    if body.mode == "ai_screening":
+        session = models.ScreeningSession(
+            id=str(uuid.uuid4()),
+            email=cand.email or "",
+            role_title=job.title,
+            jd_text=job.jd_text or job.description,
+            status="invited",
+        )
+        db.add(session)
+        db.flush()
+        iv.screening_session_id = session.id
+        app.screening_session_id = session.id
+        link = sched.interview_link(settings.FRONTEND_BASE_URL, session.id)
+
+    db.add(iv)
+    db.commit()
+
+    when_text = scheduled_at.strftime("%Y-%m-%d %H:%M UTC")
+    steps: Dict[str, Any] = {}
+
+    # ── Google Calendar ──
+    if body.add_to_calendar:
+        mode_label = {"ai_screening": "AI interview", "telephonic": "Telephonic interview", "human": "Interview"}[body.mode]
+        lines = [f"{mode_label} for {job.title} with {cand.name or cand.email or 'the candidate'}."]
+        if link:
+            lines.append(f"Candidate interview link: {link}")
+        if body.mode == "telephonic":
+            lines.append("The AI interviewer will call the candidate's phone at the scheduled time.")
+        if body.notes:
+            lines.append(body.notes)
+        attendees = [interviewer_email] if interviewer_email else []
+        if cand.email:
+            attendees.append(cand.email)
+        cal = sched.create_calendar_event(
+            summary=f"{mode_label}: {cand.name or 'Candidate'} — {job.title}",
+            description="\n\n".join(lines),
+            start=scheduled_at,
+            duration_minutes=body.duration_minutes,
+            attendee_emails=attendees,
+            add_meet=body.mode == "human",
+        )
+        steps["calendar"] = cal
+        if cal["status"] == "created":
+            iv.calendar_event_id = cal["event_id"]
+            iv.calendar_html_link = cal.get("html_link")
+            iv.meet_link = cal.get("meet_url")
+    else:
+        steps["calendar"] = {"status": "skipped"}
+
+    # ── Invite email (AI interview) ──
+    if body.mode == "ai_screening":
+        if body.send_invite_email:
+            sent = send_invite_email(cand.email, job.title, link, when=when_text)
+            steps["email"] = {"status": "sent"} if sent else {
+                "status": "failed", "error": "The email provider didn't accept the message. Share the link manually."}
+        else:
+            steps["email"] = {"status": "skipped"}
+
+    db.commit()
+
+    # ── Telephonic call: now, or queued for the scheduled time ──
+    if body.mode == "telephonic":
+        if scheduled_at <= now + sched.DIAL_NOW_WINDOW:
+            steps["call"] = sched.dial_interview(db, iv.id)
+        else:
+            err = sched.queue_telephonic(iv.id, scheduled_at)
+            if err:
+                iv.status = "failed"
+                iv.status_detail = err
+                steps["call"] = {"status": "failed", "detail": err}
+            else:
+                iv.status_detail = f"Call queued for {when_text}."
+                steps["call"] = {"status": "queued", "eta": _iso(scheduled_at)}
+            db.commit()
+        db.refresh(iv)
+
+    if body.mode == "human" and not iv.meet_link:
+        iv.status_detail = "No meeting link was created. Add one manually or retry with Google Calendar."
+        db.commit()
+
+    if app.stage == "SHORTLISTED" and iv.status != "failed":
         try:
             rs.transition_stage(db, app, "INTERVIEW", actor_type=rs.ACTOR_HR, actor_user=user, reason="Interview scheduled")
         except Exception:
-            pass
+            logger.info("[recruitment] stage move to INTERVIEW skipped for %s", app.id)
 
     rs.record_activity(
         db, candidate_id=cand.id, application_id=app.id, job_id=app.job_id,
         event_type="candidate.interview_scheduled", actor_type=rs.ACTOR_HR,
         actor_user_id=user.id,
-        summary=f"Interview scheduled for {body.scheduled_at.strftime('%Y-%m-%d %H:%M UTC')} ({body.mode})",
-        payload={"interview_id": interview_id, "mode": body.mode, "meet_link": meet_link, "interviewer_email": body.interviewer_email or user.email},
-        dedupe_key=f"interview_sched:{interview_id}",
+        summary=f"{body.mode.replace('_', ' ').title()} interview scheduled for {when_text}",
+        payload={"interview_id": iv.id, "mode": body.mode, "steps": {k: v.get("status") for k, v in steps.items()}},
+        dedupe_key=f"interview_sched:{iv.id}",
     )
     db.commit()
     db.refresh(iv)
+    return {"interview": _serialize_interview(iv), "steps": steps}
 
-    return {
-        "id": iv.id,
-        "application_id": iv.application_id,
-        "candidate_id": iv.candidate_id,
-        "mode": iv.mode,
-        "status": iv.status,
-        "scheduled_at": _iso(iv.scheduled_at),
-        "interviewer_email": iv.interviewer_email,
-        "meet_link": iv.meet_link,
-        "created_at": _iso(iv.created_at),
+
+@router.get("/applications/{application_id}/interviews/{interview_id}/report")
+def interview_report(
+    application_id: str,
+    interview_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Structured report for one interview, built only from what was
+    recorded: the transcript, the stored evaluation, and timing from the
+    server's own timestamps. Missing pieces come back null, not filled in."""
+    app = rs.get_application_for_user(db, user, application_id, rs.ACTION_VIEW)
+    iv = db.get(models.Interview, interview_id)
+    if not iv or iv.application_id != app.id:
+        raise HTTPException(status_code=404, detail="Interview not found.")
+    cand = db.get(Candidate, iv.candidate_id)
+    job = db.get(Role, iv.job_id)
+
+    report: Dict[str, Any] = {
+        "interview": _serialize_interview(iv),
+        "candidate": {"id": cand.id, "name": cand.name, "email": cand.email} if cand else None,
+        "job": {"id": job.id, "title": job.title, "department": job.department} if job else None,
+        "report_available": False,
+        "evaluation": None,
+        "transcript": [],
+        "transcript_verified": None,
+        "session": None,
+        "client_reported": None,
     }
+
+    if iv.mode == "ai_screening" and iv.screening_session_id:
+        session = db.get(models.ScreeningSession, iv.screening_session_id)
+        result = (
+            db.query(models.ScreeningResult)
+            .filter(models.ScreeningResult.session_id == iv.screening_session_id,
+                    models.ScreeningResult.source == "interview")
+            .order_by(models.ScreeningResult.created_at.desc())
+            .first()
+        )
+        started = session.started_at if session else None
+        completed = session.completed_at if session else None
+        report["session"] = {
+            "status": session.status if session else None,
+            "started_at": _iso(started),
+            "completed_at": _iso(completed),
+            "duration_sec": int((completed - started).total_seconds()) if started and completed else None,
+            "error": None,
+        }
+        if result:
+            d = result.details or {}
+            report["report_available"] = True
+            report["evaluation"] = {
+                "summary": result.summary,
+                "recommendation": result.verdict,
+                "overall_score": result.jd_match_score,
+                "communication_score": d.get("communication_score"),
+                "relevance_score": d.get("relevance_score"),
+                "confidence_score": d.get("confidence_score"),
+                "strengths": result.strengths or [],
+                "areas_for_improvement": result.gaps or [],
+                "matched_skills": d.get("matched_skills") or [],
+                "missing_skills": d.get("missing_skills") or [],
+                "key_takeaway": d.get("key_takeaway"),
+                "suggested_next_step": d.get("suggested_next_step"),
+                "generated_at": _iso(result.created_at),
+            }
+            report["transcript"] = d.get("transcript") or (session.transcript if session else None) or []
+            report["transcript_verified"] = d.get("transcript_verified")
+            # Reported by the candidate's browser, not measured server-side.
+            report["client_reported"] = {
+                "integrity_score": d.get("integrity_score"),
+                "proctor_flags_count": d.get("proctor_flags_count"),
+                "time_taken_sec": d.get("time_taken_sec"),
+            }
+        elif session and session.transcript:
+            report["transcript"] = session.transcript
+            report["transcript_verified"] = True
+
+    elif iv.mode == "telephonic" and iv.call_record_id:
+        call = db.get(CallRecord, iv.call_record_id)
+        if call:
+            report["session"] = {
+                "status": call.status,
+                "started_at": _iso(call.created_at),
+                "completed_at": _iso(call.updated_at) if call.status == "completed" else None,
+                "duration_sec": call.duration_sec,
+                "error": call.error_message,
+            }
+            report["transcript"] = [
+                {"role": "interviewer" if t.get("role") == "agent" else "candidate", "text": t.get("text", "")}
+                for t in (call.transcript or [])
+            ]
+            report["transcript_verified"] = True  # delivered by the provider's webhook
+            if call.evaluation_summary or call.communication_score is not None:
+                report["report_available"] = True
+                report["evaluation"] = {
+                    "summary": call.evaluation_summary,
+                    "recommendation": None,
+                    "overall_score": None,
+                    "communication_score": call.communication_score,
+                    "relevance_score": call.relevance_score,
+                    "confidence_score": call.confidence_score,
+                    "strengths": [], "areas_for_improvement": [],
+                    "matched_skills": [], "missing_skills": [],
+                    "key_takeaway": None, "suggested_next_step": None,
+                    "generated_at": _iso(call.updated_at),
+                }
+                sr = (
+                    db.query(models.ScreeningResult)
+                    .filter(models.ScreeningResult.call_id == call.id)
+                    .order_by(models.ScreeningResult.created_at.desc())
+                    .first()
+                )
+                if sr:
+                    report["evaluation"].update({
+                        "recommendation": sr.verdict,
+                        "overall_score": sr.jd_match_score,
+                        "strengths": sr.strengths or [],
+                        "areas_for_improvement": sr.gaps or [],
+                    })
+    return report
 
 
 # ── Offers ───────────────────────────────────────────────────────────────

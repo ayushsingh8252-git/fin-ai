@@ -1,5 +1,6 @@
 import uuid
 from contextlib import ExitStack
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -8,9 +9,11 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from .. import models
-from ..database import get_db
+from ..database import SessionLocal, get_db
 from ..memory import orchestrator
 from ..rate_limit import limiter
+from .deps import get_current_user
+from ..services import interview_transcript
 from ..services.interview_service import generate_evaluation, generate_next_turn
 from ..services.guardrails import check_input, check_output
 from ..services.llmops import llmops_context
@@ -58,6 +61,7 @@ class InterviewTurnRequest(BaseModel):
     jd_text: Optional[str] = None
     resume_context: Optional[str] = None
     max_turns: int = 5
+    session_id: Optional[str] = None
 
 
 class InterviewEvaluationRequest(BaseModel):
@@ -106,13 +110,24 @@ def _serialize_interview_report(result: models.ScreeningResult) -> dict:
 
 @router.post("/interview/turn")
 @limiter.limit("30/minute")
-async def interview_turn(request: Request, payload: InterviewTurnRequest):
+async def interview_turn(request: Request, payload: InterviewTurnRequest, db: Session = Depends(get_db)):
     """
     Given the conversation so far, returns the AI interviewer's next line
-    (or a closing line + is_final=true once max_turns is reached).
+    (or a closing line + is_final=true once max_turns is reached). For an
+    invite-link session, the server's own transcript is validated and
+    extended (services/interview_transcript.py).
     """
+    history = _sanitize_history([t.model_dump() for t in payload.history])
+    if payload.session_id:
+        session = db.get(models.ScreeningSession, payload.session_id)
+        if session and session.status == "completed":
+            raise HTTPException(status_code=409, detail="This interview has already been completed.")
+        if session and session.transcript is not None:
+            try:
+                interview_transcript._merge(list(session.transcript), history)
+            except interview_transcript.TranscriptMismatch as e:
+                raise HTTPException(status_code=409, detail=str(e))
     try:
-        history = _sanitize_history([t.model_dump() for t in payload.history])
         # generate_next_turn() makes a blocking network call to the LLM
         # provider (urllib, not httpx) — running it inline in this async def
         # would stall the whole event loop, delaying every other in-flight
@@ -123,6 +138,7 @@ async def interview_turn(request: Request, payload: InterviewTurnRequest):
         )
         if result.get("question"):
             result["question"] = check_output(result["question"]).text
+        interview_transcript.record_turn(db, payload.session_id, history, result.get("question"))
         return result
     except Exception as e:
         print(f"[Interview Turn API Error] {e}")
@@ -149,9 +165,26 @@ async def interview_evaluate(
     )
     try:
         history = _sanitize_history([t.model_dump() for t in payload.history])
+        transcript_verified = False
+        if payload.session_id:
+            existing = db.get(models.ScreeningSession, payload.session_id)
+            if existing and existing.status == "completed":
+                raise HTTPException(status_code=409, detail="This interview has already been evaluated.")
+            try:
+                history, transcript_verified = interview_transcript.transcript_for_evaluation(db, payload.session_id, history)
+            except interview_transcript.TranscriptMismatch as e:
+                raise HTTPException(status_code=409, detail=str(e))
         evaluation = await run_in_threadpool(
             generate_evaluation, history, payload.role_title, payload.jd_text, payload.resume_skills or None,
         )
+        if payload.session_id and evaluation.pop("evaluation_unavailable", False):
+            # Don't close an invite-link interview on a non-evaluation: the
+            # transcript stays on the session and the candidate can resubmit.
+            raise HTTPException(
+                status_code=503,
+                detail="The evaluation service is temporarily unavailable. Your answers are saved — please retry the submission.",
+            )
+        evaluation.pop("evaluation_unavailable", None)
 
         if evaluation.get("summary"):
             evaluation["summary"] = check_output(evaluation["summary"]).text
@@ -217,16 +250,32 @@ async def interview_evaluate(
                     "proctor_flags_count": payload.proctor_flags_count,
                     "integrity_score": payload.integrity_score,
                     "email": payload.email or (session.email if session else None),
+                    # The conversation this report was scored on, and whether
+                    # it's the server's own record (see interview_transcript).
+                    "transcript": history,
+                    "transcript_verified": transcript_verified,
+                    "started_at": session.started_at.isoformat() if session and session.started_at else None,
                 },
             )
             db.add(result)
+            now = datetime.now(timezone.utc)
             if session:
                 session.status = "completed"
+                session.completed_at = now
+                session.transcript = history
+            # A Recruitment interview scheduled against this session is now
+            # genuinely complete — the only place Interview.status leaves
+            # "scheduled" for an AI interview.
+            for iv in db.query(models.Interview).filter(models.Interview.screening_session_id == payload.session_id):
+                iv.status = "completed"
+                iv.completed_at = now
             db.commit()
             db.refresh(result)
             evaluation["report_id"] = result.id
 
         return evaluation
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"[Interview Evaluate API Error] {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -235,11 +284,13 @@ async def interview_evaluate(
 
 
 @router.get("/interview/report/{session_id}")
-def get_interview_report(session_id: str, db: Session = Depends(get_db)):
-    """Fetches the persisted detailed report for a completed invite-link
-    interview — lets a candidate reload their interview link, or HR review a
-    finished interview, without needing the transcript to still be sitting
-    in the browser's React state."""
+def get_interview_report(session_id: str, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    """Persisted report for a completed invite-link interview — for HR.
+    Requires sign-in: the scores and hire recommendation are an internal
+    evaluation, not something the candidate's interview link should expose.
+    (Recruitment's own report view is /recruitment/.../interviews/{id}/report.)"""
+    from ..services import recruitment_service as rs
+    rs.require_permission(user, rs.ACTION_VIEW)
     result = (
         db.query(models.ScreeningResult)
         .filter(models.ScreeningResult.session_id == session_id, models.ScreeningResult.source == "interview")
@@ -291,6 +342,23 @@ async def interview_websocket_endpoint(websocket: WebSocket, session_id: str):
                 max_turns = data.get("max_turns", 6)
                 resume_context = data.get("resume_context")
 
+                # 0. Invite-link sessions: the server's own transcript must
+                # agree with the client's history before a new question is
+                # issued (services/interview_transcript.py).
+                db = SessionLocal()
+                try:
+                    session = db.get(models.ScreeningSession, session_id)
+                    if session and session.status == "completed":
+                        await websocket.send_json({"type": "error", "message": "This interview has already been completed."})
+                        continue
+                    if session and session.transcript is not None:
+                        interview_transcript._merge(list(session.transcript), history)
+                except interview_transcript.TranscriptMismatch as e:
+                    await websocket.send_json({"type": "error", "message": str(e)})
+                    continue
+                finally:
+                    db.close()
+
                 # 1. Generate text
                 turn_result = await run_in_threadpool(
                     generate_next_turn, history, role_title, jd_text, max_turns, resume_context
@@ -298,6 +366,12 @@ async def interview_websocket_endpoint(websocket: WebSocket, session_id: str):
                 question = turn_result.get("question", "")
                 if question:
                     question = check_output(question).text
+
+                db = SessionLocal()
+                try:
+                    interview_transcript.record_turn(db, session_id, history, question)
+                finally:
+                    db.close()
 
                 # 2. Immediately synthesize Neural TTS audio asynchronously
                 audio_bytes = await generate_tts_audio_async(question)

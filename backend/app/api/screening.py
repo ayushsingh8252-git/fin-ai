@@ -11,6 +11,7 @@ from .deps import get_current_user
 from ..config import settings
 from ..database import get_db
 from ..memory import global_memory, orchestrator
+from ..services import interview_transcript
 from ..services.email_service import send_invite_email
 from ..services.screening_service import (
     _serialize_screening_result,
@@ -54,11 +55,12 @@ async def start_screening(
     # needing to be seeded by hand.
     global_memory.upsert_role(role_title.strip(), jd_text=jd_text or "")
 
+    session = None
     if session_id:
         session = db.query(models.ScreeningSession).filter(models.ScreeningSession.id == session_id).first()
+        if session and session.status == "completed":
+            raise HTTPException(status_code=409, detail="This interview has already been completed.")
         if session:
-            session.status = "in_progress"
-            db.commit()
             # Orchestration layer: opens this interview's working-memory
             # session (Redis) keyed by the candidate's email, and registers
             # candidate<->role in graph memory — mirrors the Telephonic Agent's
@@ -66,7 +68,12 @@ async def start_screening(
             # the same memory tiers.
             orchestrator.start_session("screening", session.email, session.role_title, session_id=session_id)
 
-    return parse_resume_and_generate_questions(content, role_title.strip(), jd_text or None)
+    result = parse_resume_and_generate_questions(content, role_title.strip(), jd_text or None)
+    if session:
+        questions = result.get("questions") or []
+        greeting = questions[0].get("text") if questions and isinstance(questions[0], dict) else None
+        interview_transcript.record_start(db, session.id, greeting)
+    return result
 
 
 class InviteRequest(BaseModel):
