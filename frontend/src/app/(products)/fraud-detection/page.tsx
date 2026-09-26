@@ -12,6 +12,7 @@ import { getLlmopsHeaders, getLlmopsSessionId, getLlmopsUserId } from "@/lib/llm
 import { getAuthHeaders, loadStoredSession } from "@/lib/auth";
 import FeedbackButtons from "@/components/FeedbackButtons";
 import { getApiBaseUrl } from "@/lib/apiConfig";
+import { useAuthedBlobUrl } from "@/lib/useAuthedBlobUrl";
 
 const API_URL = getApiBaseUrl();
 const ACCEPTED_EXTENSIONS = [".pdf", ".jpg", ".jpeg", ".png"];
@@ -24,7 +25,10 @@ type UploadMode = "document" | "photo";
    Metadata → OCR Quality → Arithmetic → ELA → Fonts → AI Reasoning
    ═══════════════════════════════════════════════════════════ */
 
-type StepStatus = "pass" | "warn" | "fail" | "na" | "error";
+// The backend's checks don't share one vocabulary: some report
+// pass/warn/fail, others passed/flagged, and bundle triangulation uses
+// single_doc/complete. fraud_reasoning.py treats "flagged" like "fail".
+type StepStatus = "pass" | "warn" | "fail" | "na" | "error" | "passed" | "flagged" | "single_doc" | "complete";
 
 interface StepResult {
   key: string;
@@ -124,7 +128,18 @@ const STATUS_STYLES: Record<StepStatus, { icon: typeof CheckCircle2; text: strin
   fail: { icon: XCircle, text: "text-red-700", bg: "bg-red-50", border: "border-red-200", bar: "bg-red-500", label: "Fail" },
   na: { icon: MinusCircle, text: "text-zinc-500", bg: "bg-zinc-50", border: "border-zinc-200", bar: "bg-zinc-300", label: "N/A" },
   error: { icon: XCircle, text: "text-red-700", bg: "bg-red-50", border: "border-red-200", bar: "bg-red-500", label: "Error" },
+  passed: { icon: CheckCircle2, text: "text-emerald-700", bg: "bg-emerald-50", border: "border-emerald-200", bar: "bg-emerald-500", label: "Pass" },
+  flagged: { icon: XCircle, text: "text-red-700", bg: "bg-red-50", border: "border-red-200", bar: "bg-red-500", label: "Flagged" },
+  single_doc: { icon: MinusCircle, text: "text-zinc-500", bg: "bg-zinc-50", border: "border-zinc-200", bar: "bg-zinc-300", label: "N/A" },
+  complete: { icon: CheckCircle2, text: "text-emerald-700", bg: "bg-emerald-50", border: "border-emerald-200", bar: "bg-emerald-500", label: "Complete" },
 };
+
+/** Never crash the page on a status the backend adds later. */
+function statusStyle(status: string) {
+  return STATUS_STYLES[status as StepStatus] ?? {
+    icon: MinusCircle, text: "text-zinc-600", bg: "bg-zinc-50", border: "border-zinc-200", bar: "bg-zinc-300", label: status || "Unknown",
+  };
+}
 
 const VERDICT_STYLES: Record<string, { text: string; chip: string; gradient: string; glow: string; label: string }> = {
   likely_genuine: {
@@ -617,12 +632,14 @@ function DocPreview({
   filename: string; contentType: "pdf" | "image"; previewImageUrl: string | null; scanning: boolean;
   activeStepTitle?: string;
 }) {
+  // /uploads is login-protected, and a plain <img> can't send the auth header.
+  const { src: previewSrc } = useAuthedBlobUrl(previewImageUrl ? `${API_URL}${previewImageUrl}` : null);
   return (
     <div className="flex flex-col">
       <div className="relative rounded-xl overflow-hidden border border-zinc-200 bg-zinc-50 flex-1 min-h-[220px] flex items-center justify-center">
-        {previewImageUrl ? (
+        {previewSrc ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={`${API_URL}${previewImageUrl}`} alt={filename} className="w-full h-full object-contain" />
+          <img src={previewSrc} alt={filename} className="w-full h-full object-contain" />
         ) : (
           <div className="flex flex-col items-center gap-2 text-zinc-400 py-14">
             <FileText className="w-11 h-11 text-blue-300" />
@@ -695,7 +712,7 @@ function StepChecklist({ stepsByKey, scanning }: { stepsByKey: Record<string, St
         const result = stepsByKey[m.key];
         const isActive = scanning && i === nextIdx;
         const Icon = m.icon;
-        const style = result ? STATUS_STYLES[result.status] : null;
+        const style = result ? statusStyle(result.status) : null;
         const StatusIcon = style?.icon;
 
         return (
@@ -854,7 +871,7 @@ function ResultSummary({ overall, onReset, scanId }: { overall: Overall; onReset
         <div className="text-xs font-bold text-zinc-900 uppercase tracking-wide mb-3">Marks per step</div>
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {overall.steps.map((s) => {
-            const style = STATUS_STYLES[s.status];
+            const style = statusStyle(s.status);
             const StatusIcon = style.icon;
             return (
               <div key={s.key} className="rounded-2xl bg-white border border-zinc-200 p-5">

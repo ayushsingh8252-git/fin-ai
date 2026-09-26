@@ -667,28 +667,6 @@ export const extractEmploymentHistory = (applicationId: string) =>
     90_000
   );
 
-export interface GeneratedAssignment {
-  title: string;
-  duration: string;
-  requirements: string[];
-  submission: string;
-}
-
-export const generateTakeHomeAssignment = async (
-  requirement: string,
-  roleTitle = "the open role"
-): Promise<GeneratedAssignment> => {
-  const res = await fetch("/api/v1/hiring/assignment", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ requirement, role_title: roleTitle }),
-  });
-  if (!res.ok) throw new Error(`Assignment generation failed (${res.status})`);
-  return res.json();
-};
-
-
-
 export const getBatch = (batchId: string) => request<BatchStatus>(`/batches/${batchId}`);
 export const retryUpload = (uploadId: string) => request<UploadRow>(`/uploads/${uploadId}/retry`, { method: "POST" });
 

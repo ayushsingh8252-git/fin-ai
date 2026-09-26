@@ -124,7 +124,8 @@ function StagePill({
   expanded: boolean;
   onToggle: () => void;
 }) {
-  const meta = STAGE_META[name];
+  // A stage the backend adds later must not crash the trace.
+  const meta = STAGE_META[name] ?? { label: name, icon: Search };
   const Icon = meta.icon;
   const lines = stageDetailLines(name, info.data);
   const canExpand = info.status !== "pending" && (lines.length > 0);
@@ -211,7 +212,7 @@ export default function RagExecutionTrace({
 
   const pillRow = (
     <div className="flex flex-wrap gap-1.5">
-      {snapshot.stage_order.map((name) => (
+      {snapshot.stage_order.filter((name) => snapshot.stages[name]).map((name) => (
         <StagePill
           key={name}
           name={name}

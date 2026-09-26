@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { FileText, Crosshair, AlertTriangle, ExternalLink, ZoomIn, ZoomOut, Maximize2 } from "lucide-react";
 import { getApiBaseUrl } from "@/lib/apiConfig";
+import { useAuthedBlobUrl } from "@/lib/useAuthedBlobUrl";
 
 type Source = {
   document_id?: string;
@@ -22,6 +23,9 @@ export default function PdfViewer({
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState<number>(450);
+  // /uploads is login-protected, and an <iframe> can't send the auth header.
+  const fileUrl = fileName && source?.document_id ? `${getApiBaseUrl()}/uploads/${fileName}` : null;
+  const { src: pdfUrl, loading: pdfLoading } = useAuthedBlobUrl(fileUrl);
 
   useEffect(() => {
     if (containerRef.current) {
@@ -49,8 +53,6 @@ export default function PdfViewer({
     );
   }
 
-  const apiUrl = getApiBaseUrl();
-  const pdfUrl = fileName ? `${apiUrl}/uploads/${fileName}` : null;
 
   const bboxText = source.bbox ? `[${source.bbox.map(n => Math.round(n)).join(", ")}]` : null;
 
@@ -115,7 +117,9 @@ export default function PdfViewer({
 
       {/* Main Viewer Body */}
       <div className="flex-1 overflow-hidden relative flex flex-col" ref={containerRef}>
-        {pdfUrl ? (
+        {pdfLoading ? (
+          <div className="flex h-full items-center justify-center font-mono text-xs text-zinc-400">Loading PDF…</div>
+        ) : pdfUrl ? (
           <div className="w-full h-full relative">
             {/* Native Embedded PDF Container */}
             <iframe
