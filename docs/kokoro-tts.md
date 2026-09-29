@@ -136,11 +136,88 @@ overlay under the site header.
   (checksum-verified, ~336 MB, cached until the script changes); nothing is
   downloaded at container start.
 
+## Update 2026-09-30: LLM → Kokoro streaming
+
+The interviewer's reply is now streamed token-by-token from the LLM into
+Kokoro, so the first sentence is spoken while the model is still writing the
+rest. Opt-in per WS message (`next_turn.stream_llm: true`, which the
+interview room sends); clients without the flag get the old contract.
+
+```
+answer -> /transcribe -> WS next_turn{stream_llm}
+  -> stream_next_turn (Groq SSE / Gemini stream, plain text + [[END]] marker)
+  -> SentenceChunker (. ! ? ; — skips Mr./Dr./e.g./i.e./initials, 3.14)
+  -> check_output (per sentence) -> format_for_speech
+  -> asyncio.Queue -> ONE Kokoro worker (strict order)
+  -> turn_start, tts_chunk{seq,text,audio}*, turn_result (when the LLM ends), tts_end
+```
+
+- **Provider audit:** raw `urllib` to Groq's OpenAI-compatible API, JSON
+  mode, `openai/gpt-oss-120b` → `gpt-oss-20b` → `qwen/qwen3.8-27b`, then
+  Gemini (`gemini-2.5-flash`, `gemini-3.6-flash`) — not LangChain. The new
+  `services/llm_stream.py` uses the same keys/rotation/cooldowns with native
+  streaming (`stream: true` SSE via pooled `httpx`; Gemini
+  `aio.models.generate_content_stream`); failover only before the first
+  token. The JSON path used by everything else is unchanged.
+- **Barge-in:** cancels the turn task → the queue is dropped, the Kokoro
+  worker stops after its current sentence, and the LLM HTTP stream is closed
+  (verified by test). The transcript records exactly the text generated
+  before the interruption, and `turn_result{interrupted:true}` carries the
+  same text so client and server histories stay in step.
+- **Instrumentation:** `[VOICE_LATENCY]` server lines (`llm_ttft_ms`,
+  `first_sentence_ms`, `kokoro_first_audio_ms`, `llm_done_ms`,
+  `full_response_ms`, client-reported `stt_ms`) and browser lines
+  (`candidate_stop_to_first_audio_ms`, measured when the first sample is due
+  at the speakers). Timings only, never text.
+
+### Measured in a real browser (Playwright, 3 answers per run, same backend)
+
+Run with an in-memory Redis stand-in so conditions match the Docker deploy
+(see the Redis finding below).
+
+| Candidate stops → first interviewer audio | turn 1 | turn 2 | turn 3 |
+|---|---|---|---|
+| Before (blocking JSON LLM → whole-question TTS) | 10.6 s | 16.1 s | 8.9 s |
+| **After (streaming)** | **6.4 s** | **9.2 s** | **7.4 s** |
+
+After, per turn: STT 2.7 / 4.0 / 2.8 s (+1.3 s VAD silence wait) · LLM first
+token 0.61 / 1.00 / 0.78 s · first sentence +1–8 ms after that · Kokoro
+first audio 1.6 / 2.6 / 2.1 s after the first sentence · LLM finished
+0.63–1.08 s (before audio even started) · next_turn → browser first audio
+2.3–3.9 s · full response played 9.7–10.6 s.
+
+### Findings from the audit (not fixed — outside this change's scope)
+
+- **Redis down = +2–4 s per LLM call.** `key_manager.get_next_key` checks
+  Redis synchronously; when unreachable, `cache.get_redis_client()` retries
+  every 30 s with a 2 s connect timeout (4.0 s measured on Windows) — i.e.
+  every interview turn. Harmless in the Docker deploy (Redis runs); the
+  streaming path now calls it off the event loop so it can't freeze other
+  sockets, but the delay itself remains wherever Redis is absent.
+- **`/screening/start` is 35–48 s** on this box: two sequential structured
+  LLM calls at 17–19 s each, including a 2–5 s Langfuse prompt lookup that
+  404s (`screening-resume-profile`/`screening-question-set` don't exist in
+  the Langfuse project) and is refetched every call. It exceeded the
+  frontend's 30 s timeout, so interviews couldn't start; timeout raised to
+  60 s. Creating those prompts in Langfuse (or caching the miss) would cut
+  ~4–10 s.
+- **STT:** faster-whisper `base` beam 5 took 1.6–2.8 s standalone for 7–13 s
+  answers; beam 1 measured 1.5–1.6 s with identical text on these samples —
+  left unchanged (STT was out of scope), an easy option to revisit.
+- **Model choice:** standalone TTFT p50 — gpt-oss-120b 671 ms, gpt-oss-20b
+  555 ms, qwen3.8-27b 243 ms. Kept gpt-oss-120b (quality decision).
+- **Laptop contention:** in these runs headless Chromium (camera +
+  MediaPipe proctoring on software WebGL) shared the CPU with Kokoro and
+  Whisper; standalone Kokoro first audio for a short opener is ~0.7 s, not
+  1.6–2.6 s. On a server the browser isn't on the same CPU.
+
+Realistic floor on this architecture: VAD 1.3 s + STT ~1.6 s + LLM ~0.7 s +
+Kokoro opener ~0.7 s ≈ 4.3 s. Getting to 2–4 s needs streaming STT (or a
+shorter silence wait) — a redesign, not attempted here.
+
 ## Remaining limitations
 
-- The LLM turn is one non-streamed JSON call, so TTS starts only after the
-  whole question is generated. `SentenceChunker.feed()` accepts token deltas
-  already; wiring a streaming LLM call is the next latency win.
+- STT still starts only after the candidate's answer ends (see above).
 - Docker image **build was not run** (Docker Desktop not running; ~1.4 GB free
   RAM on the dev box). Verified instead: every Linux/py3.11 wheel resolves
   (`kokoro-onnx 0.6.1`, `espeakng-loader` manylinux, `onnxruntime 1.30`,

@@ -25,6 +25,7 @@ export class StreamingSpeechPlayer {
   private finished = false;
   private resolveDone: ((o: SpeechOutcome) => void) | null = null;
   private safetyTimer: number | null = null;
+  private onFirstAudio: (() => void) | null = null;
 
   /** Create/resume the AudioContext. Call from a user gesture (e.g. the
    * Start Interview click) so the browser's autoplay policy allows audio. */
@@ -43,8 +44,9 @@ export class StreamingSpeechPlayer {
 
   /** Starts a new utterance; resolves once every chunk has played after
    * finish() (or immediately with "interrupted" on stop()). */
-  begin(maxDurationMs = 120000): Promise<SpeechOutcome> {
+  begin(maxDurationMs = 120000, onFirstAudio?: () => void): Promise<SpeechOutcome> {
     this.stop();
+    this.onFirstAudio = onFirstAudio ?? null;
     const ctx = this.context();
     if (ctx.state === "suspended") void ctx.resume().catch(() => {});
     this.finished = false;
@@ -78,6 +80,15 @@ export class StreamingSpeechPlayer {
         };
         this.sources.add(src);
         src.start(startAt);
+        const notify = this.onFirstAudio;
+        if (notify) {
+          // Fires when the first sample is actually due at the speakers, not
+          // when the chunk arrived — the number latency metrics should use.
+          this.onFirstAudio = null;
+          window.setTimeout(() => {
+            if (gen === this.generation) notify();
+          }, Math.max(0, (startAt - ctx.currentTime) * 1000));
+        }
       })
       .catch(() => {
         // An undecodable chunk is skipped, not fatal to the utterance.
@@ -93,6 +104,7 @@ export class StreamingSpeechPlayer {
 
   stop(): void {
     this.generation += 1;
+    this.onFirstAudio = null;
     for (const src of this.sources) {
       src.onended = null;
       try {

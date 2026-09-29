@@ -253,6 +253,13 @@ export default function InterviewRoom({
   const endedRef = useRef(false);
   const [confirmEndOpen, setConfirmEndOpen] = useState(false);
   const [speechAnalyser, setSpeechAnalyser] = useState<AnalyserNode | null>(null);
+  // Voice latency bookkeeping (Date.now() ms): when the candidate stopped
+  // speaking, and how long /transcribe took for that answer.
+  const speechEndAtRef = useRef<number | null>(null);
+  const lastSttMsRef = useRef<number | null>(null);
+  // Sentences of the interviewer line currently being streamed, shown as a
+  // live caption before the full text (turn_result) exists.
+  const [liveCaption, setLiveCaption] = useState("");
   // The report renders in-page (the full-screen call closes); bring it into
   // view instead of leaving the user wherever the page was scrolled.
   const reportRef = useRef<HTMLDivElement | null>(null);
@@ -417,6 +424,9 @@ export default function InterviewRoom({
       } else if (hasSpokenRef.current) {
         if (silenceSinceRef.current === null) silenceSinceRef.current = now;
         else if (now - silenceSinceRef.current > VAD_SILENCE_STOP_MS) {
+          // The candidate actually stopped talking when the silence began,
+          // not now — latency is measured from that moment.
+          speechEndAtRef.current = silenceSinceRef.current;
           mediaRecorderRef.current?.stop();
           return;
         }
@@ -480,29 +490,56 @@ export default function InterviewRoom({
   /** Starts playing a WS-streamed utterance. Must be called synchronously
    * from the turn_result handler: the server sends the tts_chunk messages
    * right behind it, and a listener attached any later could miss one. */
-  const startWsSpeech = useCallback((ws: WebSocket, turnId: string): Promise<SpeechOutcome> => {
+  const startWsSpeech = useCallback((ws: WebSocket, turnId: string, streamedLlm = false): Promise<SpeechOutcome> => {
     const player = getPlayer();
-    const done = player.begin();
+    const requestedAt = Date.now();
+    const speechEndAt = speechEndAtRef.current;
+    const sttMs = lastSttMsRef.current;
+    const done = player.begin(120000, () => {
+      // Real first sound at the speakers -> report to the server log.
+      if (ws.readyState !== WebSocket.OPEN) return;
+      const now = Date.now();
+      ws.send(JSON.stringify({
+        type: "voice_metrics",
+        turn_id: turnId,
+        candidate_stop_to_first_audio_ms: speechEndAt ? now - speechEndAt : null,
+        next_turn_to_first_audio_ms: now - requestedAt,
+        stt_ms: sttMs,
+      }));
+    });
     currentTurnIdRef.current = turnId;
-    setPhase("speaking");
+    // Streamed LLM: stay in "thinking" until the first sentence's audio
+    // arrives — the model may still be composing it.
+    if (streamedLlm) setLiveCaption("");
+    else setPhase("speaking");
     const onMessage = (evt: MessageEvent) => {
       if (typeof evt.data !== "string") return;
-      let msg: { type?: string; turn_id?: string; audio_base64?: string };
+      let msg: { type?: string; turn_id?: string; audio_base64?: string; text?: string };
       try {
         msg = JSON.parse(evt.data);
       } catch {
         return;
       }
       if (msg.turn_id !== turnId) return;
-      if (msg.type === "tts_chunk" && msg.audio_base64) player.push(base64ToArrayBuffer(msg.audio_base64));
-      else if (msg.type === "tts_end") player.finish();
+      if (msg.type === "tts_chunk" && msg.audio_base64) {
+        if (streamedLlm) {
+          setPhase("speaking");
+          if (msg.text) setLiveCaption((c) => (c ? `${c} ${msg.text}` : msg.text!));
+        }
+        player.push(base64ToArrayBuffer(msg.audio_base64));
+      } else if (msg.type === "tts_end") {
+        player.finish();
+      }
     };
     const onClose = () => player.finish();
     ws.addEventListener("message", onMessage);
     ws.addEventListener("close", onClose);
-    void done.then(() => {
+    void done.then((outcome) => {
       ws.removeEventListener("message", onMessage);
       ws.removeEventListener("close", onClose);
+      if (outcome === "completed" && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "voice_metrics", turn_id: turnId, full_response_ms: Date.now() - requestedAt }));
+      }
       if (currentTurnIdRef.current === turnId) currentTurnIdRef.current = null;
     });
     return done;
@@ -582,10 +619,15 @@ export default function InterviewRoom({
                 if (typeof evt.data !== "string") return;
                 try {
                   const msg = JSON.parse(evt.data);
-                  if (msg.type === "turn_result") {
+                  // Streamed LLM: audio starts on turn_start, before the
+                  // full text exists. Attached synchronously here so no
+                  // tts_chunk that follows can be missed.
+                  if (msg.type === "turn_start" && msg.turn_id && !endedRef.current) {
+                    wsSpeechRef.current = startWsSpeech(ws, msg.turn_id, true);
+                  } else if (msg.type === "turn_result") {
                     clearTimeout(timer);
                     ws.removeEventListener("message", handler);
-                    if (msg.audio_stream && msg.turn_id && !endedRef.current) {
+                    if (!msg.streamed && msg.audio_stream && msg.turn_id && !endedRef.current) {
                       wsSpeechRef.current = startWsSpeech(ws, msg.turn_id);
                     }
                     resolve(msg);
@@ -600,10 +642,21 @@ export default function InterviewRoom({
                 jd_text: jdText || undefined,
                 resume_context: resumeContextRef.current || undefined,
                 max_turns: MAX_CANDIDATE_TURNS,
+                stream_llm: true,
+                client_timing: {
+                  stt_ms: lastSttMsRef.current,
+                  since_speech_end_ms: speechEndAtRef.current ? Date.now() - speechEndAtRef.current : null,
+                },
               }));
             });
           } catch (wsErr) {
             console.warn("[WebSocket Turn Fallback to HTTP]", wsErr);
+            // A streamed reply may already be playing — stop it so the HTTP
+            // fallback's line can't overlap it.
+            if (wsSpeechRef.current) {
+              interruptSpeech();
+              wsSpeechRef.current = null;
+            }
           }
         }
 
@@ -634,14 +687,17 @@ export default function InterviewRoom({
           return;
         }
 
-        const turn = addTurn("interviewer", data.question);
+        // Interrupted before the model wrote anything: nothing was said, and
+        // the server recorded no question — keep histories in step.
+        const turn = data.question ? addTurn("interviewer", data.question) : null;
         const streamed = wsSpeechRef.current;
         wsSpeechRef.current = null;
         if (streamed) await streamed;
-        else await speak(data.question);
+        else if (data.question) await speak(data.question);
+        setLiveCaption("");
         if (endedRef.current) return;
 
-        if (data.is_final) {
+        if (data.is_final && turn) {
           await runEvaluation([...history, turn]);
         } else {
           setPhase("listening");
@@ -653,7 +709,7 @@ export default function InterviewRoom({
         setPhase("listening");
       }
     },
-    [roleTitle, jdText, sessionId, addTurn, speak, startWsSpeech, runEvaluation],
+    [roleTitle, jdText, sessionId, addTurn, speak, startWsSpeech, interruptSpeech, runEvaluation],
   );
 
   /** Opt-in screen recording — a separate getDisplayMedia() stream alongside
@@ -901,7 +957,11 @@ export default function InterviewRoom({
       formData.append("jd_text", jdText || "");
       if (sessionId) formData.append("session_id", sessionId);
 
-      const res = await fetchWithRetry(`${API_URL}/api/v1/screening/start`, { method: "POST", headers: getAuthHeaders(), body: formData }, 1, 30000);
+      // 60 s: this call makes two sequential LLM calls (resume profile +
+      // question set); measured 17-19 s EACH on 2026-09-30 (incl. a 2-5 s
+      // Langfuse prompt lookup that 404s and is refetched every time), so
+      // 30 s aborted it and the interview could not start at all.
+      const res = await fetchWithRetry(`${API_URL}/api/v1/screening/start`, { method: "POST", headers: getAuthHeaders(), body: formData }, 1, 60000);
       if (!res.ok) throw new Error(`Screening start failed (${res.status})`);
       const data = (await res.json()) as ScreeningStartResponse;
 
@@ -946,6 +1006,8 @@ export default function InterviewRoom({
       };
 
       recorder.onstop = async () => {
+        // Silence-triggered stops set this already; timeouts end "now".
+        speechEndAtRef.current ??= Date.now();
         stream.getTracks().forEach((t) => t.stop());
         stopVadLoop();
         setPhase("transcribing");
@@ -953,9 +1015,11 @@ export default function InterviewRoom({
           const blob = new Blob(audioChunksRef.current, { type: "audio/webm" });
           const formData = new FormData();
           formData.append("file", blob, "answer.webm");
+          const sttStartedAt = Date.now();
           const res = await fetchWithRetry(`${API_URL}/api/v1/transcribe`, { method: "POST", body: formData }, 1, 25000);
           if (!res.ok) throw new Error(`Transcription failed (${res.status})`);
           const data = await res.json();
+          lastSttMsRef.current = Date.now() - sttStartedAt;
           if (endedRef.current) return;
           const candidateText: string = (data.transcript || "").trim();
 
@@ -987,6 +1051,8 @@ export default function InterviewRoom({
         }
       };
 
+      speechEndAtRef.current = null;
+      lastSttMsRef.current = null;
       recorder.start();
       setPhase("recording");
       startVadLoop(stream);
@@ -1626,7 +1692,7 @@ export default function InterviewRoom({
               {INTERVIEWER_NAME} asked
             </div>
             <p className="line-clamp-3 text-sm leading-relaxed text-zinc-100 sm:text-[15px]">
-              {lastQuestion?.text || "Your interviewer will greet you in a moment…"}
+              {liveCaption || lastQuestion?.text || "Your interviewer will greet you in a moment…"}
             </p>
           </div>
 

@@ -1,4 +1,5 @@
 import os
+import time
 import uuid
 from contextlib import ExitStack
 from datetime import datetime, timezone
@@ -15,7 +16,7 @@ from ..memory import orchestrator
 from ..rate_limit import limiter
 from .deps import get_current_user
 from ..services import interview_transcript
-from ..services.interview_service import generate_evaluation, generate_next_turn
+from ..services.interview_service import generate_evaluation, generate_next_turn, stream_next_turn
 from ..services.guardrails import check_input, check_output
 from ..services.llmops import llmops_context
 from ..services.llmops_identity import LLMOpsIdentity, get_llmops_identity
@@ -368,6 +369,15 @@ async def interview_websocket_endpoint(websocket: WebSocket, session_id: str):
         finally:
             db.close()
 
+        if data.get("stream_llm"):
+            turn_id = uuid.uuid4().hex[:12]
+            task = asyncio.create_task(_streamed_turn(data, history, turn_id))
+            tts_state["task"] = task
+            # asyncio.wait, not await: barge-in cancels `task`, and that
+            # must not propagate into (and kill) this turn task.
+            await asyncio.wait({task})
+            return
+
         # 1. Generate text
         turn_result = await run_in_threadpool(
             generate_next_turn, history, role_title, jd_text, max_turns, resume_context
@@ -405,6 +415,95 @@ async def interview_websocket_endpoint(websocket: WebSocket, session_id: str):
         # asyncio.wait, not await: a barge-in cancels tts_task, and that
         # cancellation must not propagate into (and kill) this turn task.
         await asyncio.wait({tts_task})
+
+    async def _streamed_turn(data: dict, history: list, turn_id: str) -> None:
+        """LLM tokens -> sentences -> Kokoro -> WS, overlapped: the first
+        sentence is spoken while the model is still writing the rest.
+
+        Messages: turn_start -> tts_chunk{text,...}* -> turn_result (as soon
+        as the LLM finishes, or with the partial text if interrupted first)
+        -> tts_end. Barge-in cancels this task: the LLM stream is closed,
+        queued sentences are dropped, and the transcript records exactly the
+        text that was generated before the interruption (so the client's
+        history — built from turn_result — still matches the server's)."""
+        timings: dict = {"llm_start": time.perf_counter()}
+        result: dict = {}
+        state = {"finalized": False, "seq": -1}
+        client_timing = data.get("client_timing") or {}
+
+        async def finalize(texts: list, interrupted: bool) -> None:
+            if state["finalized"]:
+                return
+            state["finalized"] = True
+            question = " ".join(texts).strip()
+            db = SessionLocal()
+            try:
+                interview_transcript.record_turn(db, session_id, history, question or None)
+            except Exception as e:
+                print(f"[Interview WebSocket] transcript record failed session={session_id}: {type(e).__name__}")
+            finally:
+                db.close()
+            await websocket.send_json({
+                "type": "turn_result",
+                "question": question,
+                "is_final": bool(result.get("is_final")) and not interrupted,
+                "audio_base64": None,
+                "audio_stream": True,
+                "streamed": True,
+                "interrupted": interrupted,
+                "turn_id": turn_id,
+                "audio_context": streams.audio_context(session_id),
+            })
+
+        await websocket.send_json({"type": "turn_start", "turn_id": turn_id})
+        deltas = stream_next_turn(
+            history, data.get("role_title", "the open role"), data.get("jd_text"),
+            data.get("max_turns", 6), data.get("resume_context"), result=result, timings=timings,
+        )
+        outcome = "completed"
+        try:
+            async for spoken in tts_service.stream_speech_incremental(
+                deltas, request_id=turn_id, timings=timings,
+                sentence_filter=lambda s: check_output(s).text,
+                on_text_complete=lambda texts: finalize(texts, interrupted=False),
+            ):
+                state["seq"] = spoken.chunk.seq
+                await websocket.send_json({
+                    "type": "tts_chunk",
+                    "turn_id": turn_id,
+                    "seq": spoken.chunk.seq,
+                    "text": spoken.text,
+                    "mime": spoken.chunk.media_type,
+                    "duration_ms": spoken.chunk.duration_ms,
+                    "audio_base64": base64.b64encode(spoken.chunk.audio).decode("ascii"),
+                })
+        except asyncio.CancelledError:
+            outcome = "interrupted"
+        except Exception as e:
+            outcome = "error"
+            print(f"[Interview WebSocket] streamed turn failed session={session_id} error={type(e).__name__}")
+        try:
+            await finalize(timings.get("texts", []), interrupted=outcome == "interrupted")
+            end = {"type": "tts_end", "turn_id": turn_id, "chunks": state["seq"] + 1,
+                   "interrupted": outcome == "interrupted"}
+            if outcome == "error":
+                end["error"] = "tts_unavailable"
+            await websocket.send_json(end)
+        except Exception:
+            pass  # socket already gone
+
+        def ms(key: str):
+            v = timings.get(key)
+            return round((v - timings["llm_start"]) * 1000) if v else None
+
+        print(
+            "[VOICE_LATENCY] "
+            f"turn={turn_id} outcome={outcome} provider={timings.get('provider')} model={timings.get('model')} "
+            f"stt_ms={client_timing.get('stt_ms')} since_speech_end_at_send_ms={client_timing.get('since_speech_end_ms')} "
+            f"llm_ttft_ms={ms('llm_first_token')} first_sentence_ms={ms('first_sentence')} "
+            f"kokoro_start_ms={ms('tts_start')} kokoro_first_audio_ms={ms('tts_first_audio')} "
+            f"llm_done_ms={ms('llm_done')} full_response_ms={ms('tts_done')} sentences={len(timings.get('texts', []))}"
+        )
 
     async def _stream_tts(text: str, turn_id: str) -> None:
         seq = -1
@@ -485,6 +584,20 @@ async def interview_websocket_endpoint(websocket: WebSocket, session_id: str):
             if msg_type == "audio_stream_stop":
                 if streams.owns(session_id, websocket):
                     await streams.stop(session_id)
+                continue
+
+            if msg_type == "voice_metrics":
+                # Browser-side measurements (it alone knows when audio really
+                # started playing). Numbers only — no transcript content.
+                def _num(k):
+                    v = data.get(k)
+                    return round(v) if isinstance(v, (int, float)) else None
+                print(
+                    f"[VOICE_LATENCY] browser turn={str(data.get('turn_id'))[:12]} "
+                    f"candidate_stop_to_first_audio_ms={_num('candidate_stop_to_first_audio_ms')} "
+                    f"stt_ms={_num('stt_ms')} next_turn_to_first_audio_ms={_num('next_turn_to_first_audio_ms')} "
+                    f"full_response_ms={_num('full_response_ms')}"
+                )
                 continue
 
             if msg_type == "ping":

@@ -69,8 +69,16 @@ _TERMS = {
     r"\bUI/UX\b": "U I and U X",
 }
 
-# Sentence end: . ! ? (optionally followed by closing quotes/brackets) + space.
-_SENTENCE_END = re.compile(r"(?<=[.!?])[\"')\]]*\s+")
+# Sentence end: . ! ? ; (optionally followed by closing quotes/brackets) +
+# whitespace. Requiring the whitespace is what keeps "3.14" / "Python 3.11"
+# whole, including mid-stream when "3." and "14" arrive as separate tokens.
+_SENTENCE_END = re.compile(r"(?<=[.!?;])[\"')\]]*\s+")
+# A period after one of these (or after a single-letter initial) is not a
+# sentence end. Checked against the raw word, before speech expansion.
+_NON_TERMINAL = {
+    "mr", "mrs", "ms", "dr", "prof", "sr", "jr", "st", "vs", "etc", "e.g", "i.e",
+    "approx", "no", "inc", "ltd", "co", "corp", "dept", "est", "fig", "u.s", "a.m", "p.m",
+}
 # Soft split points for over-long sentences.
 _CLAUSE_BREAK = re.compile(r"(?<=[,;:—])\s+")
 
@@ -186,12 +194,17 @@ class SentenceChunker:
 
     def feed(self, delta: str) -> Iterator[str]:
         self._buffer += delta
+        pos = 0
         while True:
-            m = _SENTENCE_END.search(self._buffer)
+            m = _SENTENCE_END.search(self._buffer, pos)
             if not m:
                 return
+            if _is_false_boundary(self._buffer[: m.start()]):
+                pos = m.end()
+                continue
             sentence = self._buffer[: m.start()].strip()
             self._buffer = self._buffer[m.end():]
+            pos = 0
             yield from self._emit(sentence)
 
     def flush(self) -> Iterator[str]:
@@ -211,6 +224,15 @@ class SentenceChunker:
             return
         self._held = ""
         yield from self._pieces(combined)
+
+
+def _is_false_boundary(before: str) -> bool:
+    """True when the '.' ending `before` belongs to an abbreviation or an
+    initial ("Dr.", "e.g.", "J. Smith") rather than ending a sentence."""
+    if not before.endswith("."):
+        return False
+    word = before.rsplit(None, 1)[-1].lstrip("(\"'").rstrip(".").lower()
+    return word in _NON_TERMINAL or (len(word) == 1 and word.isalpha() and word not in ("i", "a"))
 
 
 def _split_first(sentence: str) -> List[str]:

@@ -179,6 +179,24 @@ async def lifespan(app: FastAPI):
                 print(f"[Lifespan Startup Warning] Kokoro TTS preload failed (fallback TTS will be used): {e}")
         asyncio.get_running_loop().run_in_executor(None, _preload_tts)
 
+    # 5d. Load faster-whisper too. It was lazy, so the FIRST candidate answer
+    #     of every process paid the model load inside /transcribe — measured
+    #     ~6 s of the 15-18 s "candidate stops -> interviewer speaks" gap in a
+    #     live browser run. Same non-blocking, non-fatal pattern as 5c.
+    def _preload_whisper():
+        try:
+            from .services.audio_service import _get_whisper_model
+            _get_whisper_model()
+            print("[Lifespan Startup] Faster-Whisper pre-warmed!")
+        except Exception as e:
+            print(f"[Lifespan Startup Warning] Faster-Whisper warmup failed (will load lazily): {e}")
+    asyncio.get_running_loop().run_in_executor(None, _preload_whisper)
+
+    # 5e. Open the streaming LLM connection early (see llm_stream.warm_up):
+    #     the first request on a cold connection measured ~5.6 s to first token.
+    from .services.llm_stream import warm_up as _warm_llm_stream
+    asyncio.create_task(_warm_llm_stream())
+
     # 6. Verify Langfuse (LLMOps observability) connectivity, if configured.
     #    Non-fatal either way — get_langfuse() already treats missing keys as
     #    "tracing off", and a failed auth_check just means traces silently

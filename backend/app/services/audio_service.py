@@ -22,12 +22,19 @@ _whisper_model = None
 _whisper_lock = threading.Lock()
 
 
+_whisper_load_lock = threading.Lock()
+
+
 def _get_whisper_model():
     global _whisper_model
     if _whisper_model is None:
-        from faster_whisper import WhisperModel
-        print("[Audio Pipeline] Loading Faster-Whisper model (base, CPU) — one-time process load...")
-        _whisper_model = WhisperModel("base", device="cpu", compute_type="int8")
+        # Locked: the startup pre-warm (main.py) and an early /transcribe can
+        # race here, and two loads would mean two resident model copies.
+        with _whisper_load_lock:
+            if _whisper_model is None:
+                from faster_whisper import WhisperModel
+                print("[Audio Pipeline] Loading Faster-Whisper model (base, CPU) — one-time process load...")
+                _whisper_model = WhisperModel("base", device="cpu", compute_type="int8")
     return _whisper_model
 
 def validate_audio_format(file_path: str) -> Dict[str, Any]:

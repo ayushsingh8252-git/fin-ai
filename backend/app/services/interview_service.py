@@ -155,6 +155,103 @@ def generate_next_turn(
     return result
 
 
+# Streaming variant: same persona/rules as TURN_SYSTEM_INSTRUCTION, but the
+# reply is the spoken line itself as plain text (a JSON object can't be
+# spoken until it's complete). The wrap-up decision rides on a marker at the
+# very start, so it's known before the first sentence goes to TTS.
+FINAL_MARKER = "[[END]]"
+STREAM_TURN_SYSTEM_INSTRUCTION = """You are {name}, the AI interviewer for AgenticFlow's Screening Agent, conducting a first-round screening interview for the role of "{role_title}". Everything you write is spoken aloud to the candidate by a text-to-speech voice.
+
+Conduct a natural, adaptive interview:
+- Ask ONE question at a time.
+- Probe technical depth, past experience, and problem solving based on what the candidate actually said — follow up on specifics instead of reading a fixed script.
+- Keep each line concise (1-3 sentences), conversational, and professional.
+- Open with a short spoken reaction to what they said as its own sentence of a few words (for example "That makes sense." or "Got it, thanks."), then ask your question. A short first sentence lets your voice start sooner.
+- Plain spoken English only: no markdown, lists, emojis, headings, JSON, or stage directions.
+- After the candidate has answered {max_turns} questions, wrap up instead of asking a new question: begin your reply with {marker} and then thank them for their time in one or two sentences.
+
+{resume_context}{jd_context}
+Reply with ONLY the words you say to the candidate."""
+
+
+def _turn_contexts(history, role_title, jd_text, max_turns, resume_context):
+    candidate_turns = sum(1 for t in history if t.get("role") == "candidate")
+    jd_context = f"The role's job description:\n{jd_text.strip()}\n" if jd_text else ""
+    resume_ctx = f"The candidate's resume summary:\n{resume_context.strip()}\n" if resume_context else ""
+    if not history:
+        prompt = "The interview is just starting. Greet the candidate briefly and ask them to introduce themselves."
+    else:
+        prompt = (
+            f"Conversation so far (candidate has answered {candidate_turns} question(s)):\n"
+            f"{_format_history(history)}\n\n"
+            "Given what the candidate just said, say your next line."
+        )
+    return candidate_turns, jd_context, resume_ctx, prompt
+
+
+async def stream_next_turn(
+    history: List[Dict[str, str]],
+    role_title: str = "the open role",
+    jd_text: Optional[str] = None,
+    max_turns: int = 5,
+    resume_context: Optional[str] = None,
+    result: Optional[Dict[str, Any]] = None,
+    timings: Optional[Dict[str, Any]] = None,
+):
+    """Async generator of the interviewer's next line as text deltas, straight
+    from the provider's token stream. `result` is filled with
+    {"is_final": bool, "fallback": bool}: is_final is known as soon as the
+    marker prefix is resolved (before the first delta is yielded)."""
+    from .llm_stream import stream_text
+
+    result = result if result is not None else {}
+    candidate_turns, jd_context, resume_ctx, prompt = _turn_contexts(
+        history, role_title, jd_text, max_turns, resume_context)
+    system_instruction = STREAM_TURN_SYSTEM_INSTRUCTION.format(
+        name=INTERVIEWER_NAME, role_title=role_title, max_turns=max_turns, marker=FINAL_MARKER,
+        jd_context=jd_context, resume_context=resume_ctx,
+    )
+    forced_final = candidate_turns >= max_turns
+    result.update({"is_final": forced_final, "fallback": False})
+
+    head = ""        # held until we know whether the reply starts with the marker
+    resolved = False
+    produced = False
+    try:
+        async for delta in stream_text(prompt, system_instruction, timings=timings):
+            if resolved:
+                produced = True
+                yield delta
+                continue
+            head += delta
+            stripped = head.lstrip()
+            if len(stripped) < len(FINAL_MARKER) and FINAL_MARKER.startswith(stripped):
+                continue  # could still be the marker — wait for more
+            resolved = True
+            if stripped.startswith(FINAL_MARKER):
+                result["is_final"] = True
+                stripped = stripped[len(FINAL_MARKER):].lstrip()
+            if stripped:
+                produced = True
+                yield stripped
+        if not resolved and head.strip() and head.strip() != FINAL_MARKER:
+            produced = True
+            yield head.strip()
+    except Exception as e:
+        # Same contract as generate_next_turn: never leave the candidate
+        # without a next line. Only reachable before anything was spoken
+        # (llm_stream never raises after the first delta).
+        print(f"[Interview Service Error] streaming turn failed: {type(e).__name__}")
+        if produced:
+            return
+        result["fallback"] = True
+        yield FALLBACK_QUESTION
+        return
+    if not produced:
+        result["fallback"] = True
+        yield FALLBACK_QUESTION
+
+
 def generate_evaluation(
     history: List[Dict[str, str]],
     role_title: str = "the open role",
