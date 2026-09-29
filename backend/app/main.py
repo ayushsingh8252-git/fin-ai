@@ -154,6 +154,18 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"[Lifespan Startup Warning] ECAPA-TDNN warmup failed (will load lazily): {e}")
 
+    # 5b. Pre-warm Silero VAD too: the interview speaker monitor calls it on
+    #     every audio window, and a lazy first load (torch.hub) stalled the
+    #     first live interview's analysis by ~25 s during E2E testing.
+    if settings.SPEAKER_MONITOR_ENABLED:
+        try:
+            from .services.voice_identification import get_vad_model
+            print("[Lifespan Startup] Pre-warming Silero VAD...")
+            get_vad_model()
+            print("[Lifespan Startup] Silero VAD pre-warmed!")
+        except Exception as e:
+            print(f"[Lifespan Startup Warning] Silero VAD warmup failed (will load lazily): {e}")
+
     # 6. Verify Langfuse (LLMOps observability) connectivity, if configured.
     #    Non-fatal either way — get_langfuse() already treats missing keys as
     #    "tracing off", and a failed auth_check just means traces silently

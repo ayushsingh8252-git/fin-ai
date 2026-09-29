@@ -1,9 +1,10 @@
+import os
 import uuid
 from contextlib import ExitStack
 from datetime import datetime, timezone
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -200,8 +201,23 @@ async def interview_evaluate(
         evaluation["proctor_flags_count"] = payload.proctor_flags_count
         evaluation["integrity_score"] = payload.integrity_score
 
+        audio_integrity = None
         if payload.session_id:
             session = db.query(models.ScreeningSession).filter(models.ScreeningSession.id == payload.session_id).first()
+
+            # Close the speaker-monitor stream first so its final events
+            # (e.g. an unknown speaker still active) land before the report
+            # snapshot. Deterministic audio facts only — never LLM input.
+            from ..services import speaker_monitor, speaker_stream
+
+            await speaker_stream.manager.stop(payload.session_id)
+            audio = speaker_monitor.summarize(db, payload.session_id, session_completed=True)
+            if audio["status"] != "not_enabled":
+                counts: dict = {}
+                for e in audio["events"]:
+                    counts[e["event_type"]] = counts.get(e["event_type"], 0) + 1
+                audio_integrity = {"status": audio["status"], "baseline_status": audio["baseline_status"],
+                                   "stats": audio["stats"], "audio_context": audio["audio_context"], "event_counts": counts}
 
             # Orchestration layer: fold the full transcript this endpoint
             # already received into episodic memory (Postgres) + semantic
@@ -255,6 +271,7 @@ async def interview_evaluate(
                     "transcript": history,
                     "transcript_verified": transcript_verified,
                     "started_at": session.started_at.isoformat() if session and session.started_at else None,
+                    "audio_integrity": audio_integrity,
                 },
             )
             db.add(result)
@@ -320,10 +337,114 @@ async def interview_websocket_endpoint(websocket: WebSocket, session_id: str):
     signed-in platform user, and the session_id itself is the access control.
     """
     await websocket.accept()
+    import asyncio
+    import json
+    from ..services import interview_live, speaker_stream
+
+    streams = speaker_stream.manager
+    async def _next_turn(data: dict) -> None:
+        """Runs as its own task so the receive loop keeps reading the
+        candidate's audio frames while the LLM + TTS work (5-15 s)."""
+        history = _sanitize_history(data.get("history", []))
+        role_title = data.get("role_title", "the open role")
+        jd_text = data.get("jd_text")
+        max_turns = data.get("max_turns", 6)
+        resume_context = data.get("resume_context")
+
+        # 0. Invite-link sessions: the server's own transcript must
+        # agree with the client's history before a new question is
+        # issued (services/interview_transcript.py).
+        db = SessionLocal()
+        try:
+            session = db.get(models.ScreeningSession, session_id)
+            if session and session.status == "completed":
+                await websocket.send_json({"type": "error", "message": "This interview has already been completed."})
+                return
+            if session and session.transcript is not None:
+                interview_transcript._merge(list(session.transcript), history)
+        except interview_transcript.TranscriptMismatch as e:
+            await websocket.send_json({"type": "error", "message": str(e)})
+            return
+        finally:
+            db.close()
+
+        # 1. Generate text
+        turn_result = await run_in_threadpool(
+            generate_next_turn, history, role_title, jd_text, max_turns, resume_context
+        )
+        question = turn_result.get("question", "")
+        if question:
+            question = check_output(question).text
+
+        db = SessionLocal()
+        try:
+            interview_transcript.record_turn(db, session_id, history, question)
+        finally:
+            db.close()
+
+        # 2. Immediately synthesize Neural TTS audio asynchronously
+        audio_bytes = await generate_tts_audio_async(question)
+        audio_b64 = base64.b64encode(audio_bytes).decode("utf-8") if audio_bytes else None
+
+        await websocket.send_json({
+            "type": "turn_result",
+            "question": question,
+            "is_final": turn_result.get("is_final", False),
+            "audio_base64": audio_b64,
+            # Deterministic speaker-monitor state at this turn (None if not monitored).
+            "audio_context": streams.audio_context(session_id),
+        })
+
+    turn_lock = asyncio.Lock()
+    turn_tasks: set = set()
+
+    async def _run_turn(data: dict) -> None:
+        async with turn_lock:  # turns stay strictly one at a time, in order
+            try:
+                await _next_turn(data)
+            except Exception as e:
+                print(f"[Interview WebSocket Error session={session_id}] {e}")
+                try:
+                    await websocket.send_json({"type": "error", "message": str(e)})
+                except Exception:
+                    pass
+
+    interview_live.register(session_id, websocket, asyncio.get_running_loop())
     try:
         while True:
-            data = await websocket.receive_json()
+            message = await websocket.receive()
+            if message.get("type") == "websocket.disconnect":
+                break
+            # Binary frames = the candidate's mic audio (16 kHz int16 mono),
+            # accepted only on the socket that started this session's stream.
+            if message.get("bytes") is not None:
+                if streams.owns(session_id, websocket):
+                    await streams.feed(session_id, message["bytes"])
+                continue
+            try:
+                data = json.loads(message.get("text") or "{}")
+            except ValueError:
+                continue
             msg_type = data.get("type", "")
+
+            if msg_type == "audio_stream_start":
+                if not data.get("consent"):
+                    await websocket.send_json({"type": "audio_stream_status", "status": "rejected", "reason": "consent_required"})
+                    continue
+                ok, info = await streams.start(session_id, websocket)
+                await websocket.send_json({"type": "audio_stream_status", "status": "started" if ok else "unavailable",
+                                           **({"audio_session_id": info} if ok else {"reason": info})})
+                continue
+
+            if msg_type == "audio_phase":
+                if streams.owns(session_id, websocket):
+                    streams.set_phase(session_id, data.get("phase"), data.get("turn_index"))
+                continue
+
+            if msg_type == "audio_stream_stop":
+                if streams.owns(session_id, websocket):
+                    await streams.stop(session_id)
+                continue
 
             if msg_type == "ping":
                 await websocket.send_json({"type": "pong", "timestamp": data.get("timestamp")})
@@ -336,53 +457,9 @@ async def interview_websocket_endpoint(websocket: WebSocket, session_id: str):
                 })
 
             elif msg_type == "next_turn":
-                history = _sanitize_history(data.get("history", []))
-                role_title = data.get("role_title", "the open role")
-                jd_text = data.get("jd_text")
-                max_turns = data.get("max_turns", 6)
-                resume_context = data.get("resume_context")
-
-                # 0. Invite-link sessions: the server's own transcript must
-                # agree with the client's history before a new question is
-                # issued (services/interview_transcript.py).
-                db = SessionLocal()
-                try:
-                    session = db.get(models.ScreeningSession, session_id)
-                    if session and session.status == "completed":
-                        await websocket.send_json({"type": "error", "message": "This interview has already been completed."})
-                        continue
-                    if session and session.transcript is not None:
-                        interview_transcript._merge(list(session.transcript), history)
-                except interview_transcript.TranscriptMismatch as e:
-                    await websocket.send_json({"type": "error", "message": str(e)})
-                    continue
-                finally:
-                    db.close()
-
-                # 1. Generate text
-                turn_result = await run_in_threadpool(
-                    generate_next_turn, history, role_title, jd_text, max_turns, resume_context
-                )
-                question = turn_result.get("question", "")
-                if question:
-                    question = check_output(question).text
-
-                db = SessionLocal()
-                try:
-                    interview_transcript.record_turn(db, session_id, history, question)
-                finally:
-                    db.close()
-
-                # 2. Immediately synthesize Neural TTS audio asynchronously
-                audio_bytes = await generate_tts_audio_async(question)
-                audio_b64 = base64.b64encode(audio_bytes).decode("utf-8") if audio_bytes else None
-
-                await websocket.send_json({
-                    "type": "turn_result",
-                    "question": question,
-                    "is_final": turn_result.get("is_final", False),
-                    "audio_base64": audio_b64,
-                })
+                task = asyncio.create_task(_run_turn(data))
+                turn_tasks.add(task)
+                task.add_done_callback(turn_tasks.discard)
 
     except WebSocketDisconnect:
         pass
@@ -392,4 +469,218 @@ async def interview_websocket_endpoint(websocket: WebSocket, session_id: str):
             await websocket.send_json({"type": "error", "message": str(e)})
         except Exception:
             pass
+    finally:
+        interview_live.unregister(session_id, websocket)
+        if streams.owns(session_id, websocket):
+            await streams.stop(session_id)
+
+
+@router.get("/interview/{session_id}/audio-events")
+def get_audio_events(session_id: str, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    """HR-only (same gate as the interview report): the speaker monitor's
+    measured stats and events for one interview. Returns status
+    "not_enabled" when the candidate didn't consent. Never returns the
+    candidate's voice embedding."""
+    from ..services import recruitment_service as rs
+    from ..services import speaker_monitor
+
+    rs.require_permission(user, rs.ACTION_VIEW)
+    session = db.get(models.ScreeningSession, session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Interview session not found.")
+    return speaker_monitor.summarize(db, session_id, session_completed=session.status == "completed")
+
+
+# ── OCEAN-AI behavioral analysis ─────────────────────────────────────────
+# Opt-in: the candidate must explicitly check "Allow behavioral analysis"
+# before InterviewRoom.tsx ever records or uploads anything here (see its
+# consentRecordingEnabled state) — this backend has no way to verify that
+# consent itself, same trust model as every other client-reported fact on
+# this session (proctor_flags_count, time_taken_sec, ...), but the recording
+# is never requested from the browser at all unless the box was checked.
+RECORDING_UPLOAD_DIR = os.path.join("uploads", "interview_recordings")
+os.makedirs(RECORDING_UPLOAD_DIR, exist_ok=True)
+MAX_RECORDING_BYTES = 300 * 1024 * 1024  # ~300MB — generous for a several-minute webm at modest bitrate
+ALLOWED_RECORDING_EXTENSIONS = {"video/webm": ".webm", "video/mp4": ".mp4", "video/x-matroska": ".mkv"}
+
+
+def _resolve_candidate_and_interview(db: Session, session_id: str):
+    """Best-effort: an AI interview taken via a bare invite link has no
+    Recruitment-side Interview row at all, so both can legitimately stay
+    None — mirrors the same optional join interview_evaluate already does
+    above at `models.Interview.screening_session_id == payload.session_id`."""
+    interview = (
+        db.query(models.Interview)
+        .filter(models.Interview.screening_session_id == session_id)
+        .first()
+    )
+    return (interview.candidate_id if interview else None, interview.id if interview else None)
+
+
+@router.post("/interview/{session_id}/recording")
+@limiter.limit("5/minute")
+async def upload_interview_recording(
+    request: Request, session_id: str, file: UploadFile = File(...), db: Session = Depends(get_db)
+):
+    """Receives the candidate's full-interview audio+video recording
+    (continuous MediaRecorder capture, camera+mic, from InterviewRoom.tsx's
+    opt-in consent flow) and queues OCEAN-AI behavioral analysis on it.
+
+    Deliberately its own endpoint, not folded into /interview/evaluate:
+    evaluate() must stay fast and must succeed even if the (much larger,
+    slower-to-upload) recording never arrives — the interview's own
+    completed/evaluated status never depends on this endpoint at all. Never
+    logs the file path's contents or any request body — only the session_id,
+    matching services/guardrails.py's no-PII-in-logs convention.
+    """
+    from ..config import settings
+
+    # No ocean-service on this deployment: refuse instead of storing a
+    # biometric recording that can never be analyzed.
+    if not settings.OCEAN_SERVICE_URL:
+        raise HTTPException(status_code=503, detail="Behavioral analysis is not enabled on this deployment.")
+
+    session = db.get(models.ScreeningSession, session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Interview session not found.")
+
+    ext = ALLOWED_RECORDING_EXTENSIONS.get(file.content_type)
+    if ext is None:
+        raise HTTPException(status_code=415, detail="Unsupported recording format — expected webm, mp4, or mkv.")
+
+    dest_path = os.path.join(RECORDING_UPLOAD_DIR, f"{session_id}{ext}")
+    size = 0
+    try:
+        with open(dest_path, "wb") as out:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > MAX_RECORDING_BYTES:
+                    raise HTTPException(status_code=413, detail="Recording exceeds the maximum allowed size.")
+                out.write(chunk)
+    except HTTPException:
+        if os.path.exists(dest_path):
+            os.remove(dest_path)
+        raise
+    if size == 0:
+        if os.path.exists(dest_path):
+            os.remove(dest_path)
+        raise HTTPException(status_code=400, detail="Empty recording upload.")
+
+    candidate_id, interview_id = _resolve_candidate_and_interview(db, session_id)
+
+    row = (
+        db.query(models.InterviewBehavioralAnalysis)
+        .filter(models.InterviewBehavioralAnalysis.session_id == session_id)
+        .first()
+    )
+    if not row:
+        row = models.InterviewBehavioralAnalysis(id=str(uuid.uuid4()), session_id=session_id)
+        db.add(row)
+    row.recording_path = dest_path
+    row.candidate_id = candidate_id
+    row.interview_id = interview_id
+    row.status = "pending"
+    row.error_message = None
+    row.audio_results = None
+    row.video_results = None
+    row.audio_video_results = None
+    db.commit()
+
+    try:
+        from ..worker import analyze_candidate_ocean_task
+
+        analyze_candidate_ocean_task.delay(session_id)
+    except Exception as e:
+        # Broker unreachable etc. — the recording itself is safely saved and
+        # the row stays "pending"; the retry endpoint below re-dispatches
+        # without needing another upload.
+        print(f"[Behavioral Analysis Dispatch Warning] session={session_id} could not queue analysis: {e}")
+        return {"status": "saved", "message": "Recording saved. Analysis could not be queued yet — it will be retried."}
+
+    return {"status": "queued", "message": "Recording saved. Behavioral analysis has been queued."}
+
+
+@router.get("/interview/{session_id}/behavioral-analysis")
+def get_behavioral_analysis(session_id: str, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    """HR-only (same gate as GET /interview/report/{session_id} above) —
+    OCEAN-AI's output is a supplementary behavioral/personality signal for
+    the hiring team, never shown to the candidate and never folded into
+    jd_match_score/verdict (see ScreeningResult — nothing here writes to it).
+    Returns status="not_requested" (not 404) when the candidate never opted
+    into recording, since that is a legitimate, common, non-error state."""
+    from ..services import recruitment_service as rs
+
+    rs.require_permission(user, rs.ACTION_VIEW)
+    row = (
+        db.query(models.InterviewBehavioralAnalysis)
+        .filter(models.InterviewBehavioralAnalysis.session_id == session_id)
+        .first()
+    )
+    if not row:
+        return {
+            "status": "not_requested",
+            "source": {"audio": False, "video": False, "fusion": False},
+            "model": None,
+            "results": None,
+            "error": None,
+            "processed_at": None,
+        }
+    return {
+        "status": row.status,
+        "source": {
+            "audio": row.audio_results is not None,
+            "video": row.video_results is not None,
+            "fusion": row.audio_video_results is not None,
+        },
+        "model": {"name": row.model_name, "version": row.model_version} if row.model_name else None,
+        # Never returned unless status is genuinely "completed" — no partial/
+        # fake scores for pending/processing/failed states.
+        "results": (
+            {"audio": row.audio_results, "video": row.video_results, "audio_video": row.audio_video_results}
+            if row.status == "completed"
+            else None
+        ),
+        "error": row.error_message if row.status == "failed" else None,
+        # SQLite drops tzinfo; the value was written as UTC, so say so —
+        # otherwise the browser parses it as local time.
+        "processed_at": (
+            (row.processing_completed_at if row.processing_completed_at.tzinfo else row.processing_completed_at.replace(tzinfo=timezone.utc)).isoformat()
+            if row.processing_completed_at
+            else None
+        ),
+    }
+
+
+@router.post("/interview/{session_id}/behavioral-analysis/retry")
+def retry_behavioral_analysis(session_id: str, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    """Re-runs a failed (or stuck) analysis without requiring the candidate
+    to re-upload anything — the recording file itself is untouched, only the
+    row's status is reset and the Celery task re-dispatched. Requires
+    ACTION_ANALYZE (not just ACTION_VIEW): triggering a multi-minute CPU job
+    is an action, not a read, and an interviewer role (view-only) should not
+    be able to kick it off."""
+    from ..services import recruitment_service as rs
+
+    rs.require_permission(user, rs.ACTION_ANALYZE)
+    row = (
+        db.query(models.InterviewBehavioralAnalysis)
+        .filter(models.InterviewBehavioralAnalysis.session_id == session_id)
+        .first()
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="No recording on file for this interview.")
+    if row.status == "processing":
+        raise HTTPException(status_code=409, detail="Analysis is already running.")
+
+    row.status = "pending"
+    row.error_message = None
+    db.commit()
+
+    from ..worker import analyze_candidate_ocean_task
+
+    analyze_candidate_ocean_task.delay(session_id)
+    return {"status": "queued"}
 

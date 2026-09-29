@@ -1,0 +1,55 @@
+# Pinned to match oceanai's own setup.py install_requires exactly (verified
+# against https://github.com/aimclub/OCEANAI/blob/master/setup.py — do not
+# loosen these without re-checking that file, transformers==4.45.1 in
+# particular is an EXACT pin the library itself requires, not a choice made
+# here).
+#
+# ipython/jupyterlab/gradio are NOT excludable, despite setup.py framing them
+# as its own notebook/demo-UI extras: verified live (real ModuleNotFoundError
+# on `from oceanai.modules.lab.build import Run` without them) that
+# oceanai/modules/core/core.py and every oceanai/modules/lab/*.py file
+# unconditionally `import gradio` / `import jupyterlab` / `from IPython...`
+# at module load time, not just inside notebook/demo-only code paths. A
+# headless service still needs all three installed for the import itself to
+# succeed, even though it never launches a notebook or a Gradio UI.
+#
+# mediapipe and gradio are EXACT-pinned below, overriding oceanai's own
+# looser setup.py ranges (`mediapipe>=0.10.14`, `gradio>=5.6.0`) — both
+# verified live to break the actual import with a too-new resolved version:
+#   - mediapipe>=0.10.14 alone resolves to 1.0.1 today, which removed the
+#     legacy `mp.solutions.face_mesh` API that oceanai/modules/lab/video.py
+#     calls directly (`mp.solutions.face_mesh.FaceMesh()`) -> AttributeError.
+#     0.10.14 (oceanai's own stated minimum) is the last line that still has it.
+#   - gradio>=5.6.0 alone resolves to a version whose own dependency on
+#     huggingface-hub>=1.16.0 directly conflicts with transformers==4.45.1's
+#     own requirement of huggingface-hub<1.0 -> ImportError at
+#     `import transformers`. 5.6.0 (oceanai's own stated minimum) does not
+#     have this conflict.
+numpy>=1.23.5
+scipy>=1.13.1
+pandas>=2.2.3
+requests>=2.32.3
+opensmile>=2.5.0
+librosa>=0.10.2.post1
+audioread>=3.0.1
+scikit-learn>=1.5.2
+opencv-contrib-python>=4.10.0.84
+mediapipe==0.10.14
+liwc>=0.5.0
+transformers==4.45.1
+huggingface-hub>=0.23.2,<1.0
+sentencepiece>=0.2.0
+torch>=2.2.2
+torchaudio>=2.2.2
+torchvision>=0.17.2
+sacremoses>=0.1.1
+ipython>=8.18.1
+jupyterlab==4.2.5
+gradio==5.6.0
+
+# Service layer (this repo's own code, not oceanai's).
+fastapi
+uvicorn[standard]
+pydantic-settings
+httpx
+python-multipart

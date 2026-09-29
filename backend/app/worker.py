@@ -1,6 +1,7 @@
 import logging
 import os
 import random
+from datetime import datetime, timezone
 from celery import Celery
 from .config import settings
 
@@ -526,3 +527,121 @@ def place_interview_call_task(interview_id: str):
         return result
     finally:
         db.close()
+
+
+# ── OCEAN-AI behavioral analysis ──────────────────────────────────────────
+# Runs in THIS existing worker (not a second Celery worker) — the heavy
+# torch/opencv/mediapipe/opensmile deps are never imported here at all; the
+# actual inference happens in the isolated ocean-service container, reached
+# over HTTP via services/ocean_client.py. This task just orchestrates:
+# claim the row, call the service, persist the result. See
+# docs/behavioral-analysis.md for why this stays out of the main image.
+OCEAN_MAX_RETRIES = 2
+
+
+def _ocean_retry_countdown(attempt: int) -> float:
+    # Slower than ingestion's own backoff (worker.py's _ingestion_retry_countdown)
+    # — a failed analysis attempt already spent real CPU minutes, so retrying
+    # sooner just repeats the cost without giving a transient condition
+    # (ocean-service mid-restart, briefly OOM) time to actually clear.
+    base = min(600.0, 120.0 * (2 ** (attempt - 1)))  # 120s, 240s, capped at 10min
+    return base + random.uniform(0, base * 0.25)
+
+
+def execute_analyze_candidate_ocean(session_id: str, task_id: str = None, attempt: int = 0) -> dict:
+    from .database import SessionLocal
+    from .models import InterviewBehavioralAnalysis
+    from .services.ocean_client import analyze_recording, OceanServiceError
+
+    task_id = task_id or "local"
+    logger.info("[ocean] task_id=%s session_id=%s analyze_candidate_ocean started (attempt %d)", task_id, session_id, attempt + 1)
+
+    db = SessionLocal()
+    try:
+        row = db.query(InterviewBehavioralAnalysis).filter(InterviewBehavioralAnalysis.session_id == session_id).first()
+        if not row:
+            raise NonRetryableIngestionError(f"No InterviewBehavioralAnalysis row for session {session_id!r} — recording was never uploaded.")
+
+        if row.status == "completed":
+            logger.info("[ocean] task_id=%s session_id=%s already completed — skipping duplicate run", task_id, session_id)
+            return {"status": "success", "skipped": "already_completed"}
+
+        if not os.path.exists(row.recording_path):
+            raise NonRetryableIngestionError(f"Recording file no longer exists on disk: {row.recording_path!r}")
+
+        row.status = "processing"
+        row.task_id = task_id
+        row.retry_count = attempt
+        row.processing_started_at = datetime.now(timezone.utc)
+        row.error_message = None
+        db.commit()
+
+        try:
+            result = analyze_recording(row.recording_path, session_id)
+        except OceanServiceError as e:
+            if not e.retryable:
+                raise NonRetryableIngestionError(str(e))
+            raise  # transient — let the outer task-level retry handle it
+
+        results = result.get("results", {})
+        row.audio_results = results.get("audio")
+        row.video_results = results.get("video")
+        row.audio_video_results = results.get("audio_video")
+        row.model_name = (result.get("model") or {}).get("name")
+        row.model_version = (result.get("model") or {}).get("version")
+        row.status = "completed"
+        row.processing_completed_at = datetime.now(timezone.utc)
+        row.error_message = None
+        db.commit()
+
+        logger.info(
+            "[ocean] task_id=%s session_id=%s analyze_candidate_ocean COMPLETED timing=%s",
+            task_id, session_id, result.get("timing"),
+        )
+        return {"status": "success"}
+    except NonRetryableIngestionError as e:
+        logger.error("[ocean] task_id=%s session_id=%s permanent failure, not retrying: %s", task_id, session_id, e)
+        db.rollback()
+        row = db.query(InterviewBehavioralAnalysis).filter(InterviewBehavioralAnalysis.session_id == session_id).first()
+        if row:
+            row.status = "failed"
+            row.error_message = str(e)
+            row.processing_completed_at = datetime.now(timezone.utc)
+            db.commit()
+        return {"status": "error", "message": str(e)}
+    except Exception as e:
+        db.rollback()
+        logger.error("[ocean] task_id=%s session_id=%s failed: %s", task_id, session_id, e)
+        row = db.query(InterviewBehavioralAnalysis).filter(InterviewBehavioralAnalysis.session_id == session_id).first()
+        if row:
+            row.status = "failed"
+            row.error_message = str(e)
+            row.processing_completed_at = datetime.now(timezone.utc)
+            db.commit()
+        # Transient ocean-service trouble: re-raise so the Celery wrapper
+        # re-queues with backoff. The row reads "failed" meanwhile, and flips
+        # to completed if a later attempt succeeds.
+        if isinstance(e, OceanServiceError):
+            raise
+        return {"status": "error", "message": str(e)}
+    finally:
+        db.close()
+
+
+@celery_app.task(name="analyze_candidate_ocean", bind=True, max_retries=OCEAN_MAX_RETRIES)
+def analyze_candidate_ocean_task(self, session_id: str):
+    """analyze_candidate_ocean.delay(session_id) — the interview's own
+    completion flow (api/interview.py's upload_interview_recording) is the
+    only caller. Never invoked synchronously inside a request: OCEAN-AI
+    inference (audio + video + fusion) is minutes of CPU work, and a failed
+    or slow analysis must never affect the interview's own
+    completed/evaluated status (see InterviewBehavioralAnalysis.status,
+    tracked entirely separately from ScreeningSession.status)."""
+    task_id = getattr(getattr(self, "request", None), "id", None) or "celery"
+    attempt = getattr(getattr(self, "request", None), "retries", 0)
+    try:
+        return execute_analyze_candidate_ocean(session_id, task_id=task_id, attempt=attempt)
+    except Exception as e:
+        if attempt >= self.max_retries:
+            raise
+        raise self.retry(exc=e, countdown=_ocean_retry_countdown(attempt + 1))

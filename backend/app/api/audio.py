@@ -1,6 +1,7 @@
 import os
 import tempfile
 from fastapi import APIRouter, UploadFile, File, HTTPException, Response, Request
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 from ..rate_limit import limiter
 from ..services.audio_service import transcribe_audio, generate_tts_audio_async, validate_audio_format
@@ -33,7 +34,9 @@ async def transcribe_audio_endpoint(request: Request, file: UploadFile = File(..
             temp_path = temp_file.name
 
         try:
-            segments = transcribe_audio(temp_path)
+            # faster-whisper is seconds of CPU work; off the event loop so it
+            # doesn't freeze every other request and live interview WebSocket.
+            segments = await run_in_threadpool(transcribe_audio, temp_path)
             full_transcript = " ".join([s["text"] for s in segments]).strip()
             return {
                 "status": "success",

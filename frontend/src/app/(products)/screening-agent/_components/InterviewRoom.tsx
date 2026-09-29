@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ShieldCheck, Mic, Loader2, AlertTriangle, Volume2, MessageSquare,
-  Send, LogOut, ScreenShare, Download, CheckCircle2,
+  Send, LogOut, ScreenShare, Download, CheckCircle2, Brain,
 } from "lucide-react";
 import { useProctoring, type FaceBox, type ProctoringState } from "@/hooks/useProctoring";
 import type {
@@ -77,6 +77,75 @@ async function fetchWithRetry(
   }
 }
 
+interface VoiceCheckEntry {
+  id: string;
+  label: string;
+  at: string;
+}
+
+interface VoiceCheckState {
+  status: "off" | "starting" | "enrolling" | "active" | "degraded" | "unavailable";
+  candidateVerified: boolean;
+  additionalSpeaker: boolean;
+  wasCleared: boolean;
+  timeline: VoiceCheckEntry[];
+}
+
+const INITIAL_VOICE_CHECK: VoiceCheckState = {
+  status: "off", candidateVerified: false, additionalSpeaker: false, wasCleared: false, timeline: [],
+};
+
+type SpeakerMessage = {
+  type: string;
+  event?: string;
+  status?: string;
+  timestamp?: string;
+  duration_ms?: number;
+  additional_speakers?: number;
+  audio_context?: { reference_status?: string; analysis_status?: string; additional_speaker_detected?: boolean };
+};
+
+const fmtMs = (ms?: number) => (ms == null ? "" : ` · ${(ms / 1000).toFixed(1)} sec`);
+
+/** Folds one speaker-monitor WebSocket message into the live state. Wording
+ * stays neutral: it reports what was heard, never a verdict. */
+function applySpeakerMessage(prev: VoiceCheckState, msg: SpeakerMessage): VoiceCheckState {
+  if (msg.type === "audio_stream_status") {
+    return { ...prev, status: msg.status === "started" ? "starting" : "unavailable" };
+  }
+  if (msg.type === "audio_speaker_state" && msg.audio_context) {
+    const c = msg.audio_context;
+    return {
+      ...prev,
+      status: c.analysis_status === "degraded" ? "degraded" : c.reference_status === "ready" ? "active" : "enrolling",
+      additionalSpeaker: Boolean(c.additional_speaker_detected),
+    };
+  }
+  if (msg.type !== "audio_speaker_event") return prev;
+  const at = msg.timestamp || new Date().toISOString();
+  const add = (label: string) => [{ id: `${msg.event}-${at}`, label, at }, ...prev.timeline].slice(0, 20);
+  switch (msg.event) {
+    case "CANDIDATE_SPEAKER_CONFIRMED":
+      return { ...prev, status: "active", candidateVerified: true, timeline: add("Candidate voice verified") };
+    case "MULTIPLE_SPEAKERS_DETECTED":
+      return {
+        ...prev, additionalSpeaker: true, wasCleared: false,
+        timeline: add(msg.additional_speakers && msg.additional_speakers > 1
+          ? `Additional speakers detected (${msg.additional_speakers})` : "Additional speaker detected"),
+      };
+    case "MULTIPLE_SPEAKERS_CLEARED":
+      return { ...prev, additionalSpeaker: false, wasCleared: true, timeline: add(`Audio monitoring normal${fmtMs(msg.duration_ms)}`) };
+    case "UNKNOWN_SPEAKER_STARTED":
+      return { ...prev, additionalSpeaker: true };
+    case "AUDIO_ANALYSIS_DEGRADED":
+      return { ...prev, status: "degraded", timeline: add("Audio analysis temporarily unavailable") };
+    case "AUDIO_ANALYSIS_RECOVERED":
+      return { ...prev, status: prev.candidateVerified ? "active" : "enrolling", timeline: add("Audio analysis recovered") };
+    default:
+      return prev;
+  }
+}
+
 function isValidEmail(email: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
@@ -136,6 +205,26 @@ export default function InterviewRoom({
   const screenStreamRef = useRef<MediaStream | null>(null);
   const screenChunksRef = useRef<Blob[]>([]);
 
+  // Opt-in behavioral-analysis recording — camera + mic, continuous for the
+  // whole interview, uploaded to the backend on completion so OCEAN-AI can
+  // analyze it (see api/interview.py's upload_interview_recording). Off by
+  // default and a SEPARATE getUserMedia call from useProctoring's own
+  // video-only stream, deliberately: this is the one recording path in the
+  // product that actually leaves the browser, so it stays its own isolated
+  // opt-in rather than silently piggy-backing on proctoring's stream.
+  const [behavioralRecordingConsent, setBehavioralRecordingConsent] = useState(false);
+  // Opt-in voice check: each answer clip already sent to /transcribe is also
+  // checked server-side for voices that don't match the candidate's own
+  // (services/speaker_monitor.py). Results arrive over the interview WS.
+  const [speakerMonitorConsent, setSpeakerMonitorConsent] = useState(false);
+  const [voiceCheck, setVoiceCheck] = useState<VoiceCheckState>(INITIAL_VOICE_CHECK);
+  const speakerConsentRef = useRef(false);
+  const speakerAudioRef = useRef<{ ctx: AudioContext; stream: MediaStream; node: AudioWorkletNode } | null>(null);
+  const avRecorderRef = useRef<MediaRecorder | null>(null);
+  const avStreamRef = useRef<MediaStream | null>(null);
+  const avChunksRef = useRef<Blob[]>([]);
+  const avMimeTypeRef = useRef<string>("video/webm");
+
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const micStreamRef = useRef<MediaStream | null>(null);
@@ -178,11 +267,22 @@ export default function InterviewRoom({
 
         ws.onopen = () => {
           ws.send(JSON.stringify({ type: "ping", timestamp: Date.now() }));
+          // (Re)start the speaker-monitor stream on every (re)connect.
+          if (speakerConsentRef.current) ws.send(JSON.stringify({ type: "audio_stream_start", consent: true }));
         };
 
         ws.onerror = (e) => {
           console.warn("[Interview WebSocket Warning]", e);
         };
+
+        ws.addEventListener("message", (evt) => {
+          try {
+            const msg = JSON.parse(evt.data) as SpeakerMessage;
+            if (msg.type.startsWith("audio_speaker_") || msg.type === "audio_stream_status") {
+              setVoiceCheck((prev) => applySpeakerMessage(prev, msg));
+            }
+          } catch {}
+        });
       } catch (err) {
         console.warn("[Interview WebSocket Connect Failed]", err);
       }
@@ -205,6 +305,21 @@ export default function InterviewRoom({
   useEffect(() => {
     notifyInterviewPhase(phase === "speaking" ? "speaking" : "other");
   }, [phase, notifyInterviewPhase]);
+
+  // Tag the speaker-monitor stream with who should be talking: a voice that
+  // doesn't match the candidate while the AI speaks may be the interviewer's
+  // own audio leaking into the mic, so the server treats it as unresolved.
+  useEffect(() => {
+    const ws = wsRef.current;
+    if (!speakerConsentRef.current || !ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({
+      type: "audio_phase",
+      phase: phase === "speaking" ? "ai_speaking" : "candidate",
+      turn_index: transcript.filter((t) => t.role === "candidate").length,
+    }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase]);
+
 
   useEffect(() => {
     if (phase === "setup" || phase === "complete" || phase === "error") return;
@@ -307,6 +422,9 @@ export default function InterviewRoom({
       stopVadLoop();
       micStreamRef.current?.getTracks().forEach((t) => t.stop());
       screenStreamRef.current?.getTracks().forEach((t) => t.stop());
+      avStreamRef.current?.getTracks().forEach((t) => t.stop());
+      speakerAudioRef.current?.stream.getTracks().forEach((t) => t.stop());
+      speakerAudioRef.current?.ctx.close().catch(() => {});
       audioElRef.current?.pause();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -557,6 +675,147 @@ export default function InterviewRoom({
     if (phase === "complete") stopScreenRecording();
   }, [phase, stopScreenRecording]);
 
+  /** Opt-in behavioral-analysis recording. Only meaningful when sessionId is
+   * set (a bare local demo with no ScreeningSession row has nowhere to
+   * upload to) — startInterview() below only calls this when both
+   * behavioralRecordingConsent and sessionId are true. Non-fatal on
+   * failure, matching startScreenRecording's own pattern: a declined/
+   * unsupported camera+mic request degrades to "no behavioral analysis this
+   * session," never to a blocked interview. */
+  const startBehavioralRecording = useCallback(async () => {
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") return;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "user", width: 640, height: 480 },
+        audio: true,
+      });
+      avStreamRef.current = stream;
+      avChunksRef.current = [];
+
+      const mimeType = ["video/webm;codecs=vp8,opus", "video/webm"].find(
+        (t) => typeof MediaRecorder.isTypeSupported === "function" && MediaRecorder.isTypeSupported(t),
+      ) || "video/webm";
+      avMimeTypeRef.current = mimeType;
+
+      const recorder = new MediaRecorder(stream, { mimeType });
+      avRecorderRef.current = recorder;
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) avChunksRef.current.push(e.data);
+      };
+      // 2s timeslices: without one, some browsers only fire ondataavailable
+      // on stop(), so a tab crash mid-interview would lose the entire
+      // recording instead of just the last couple of seconds.
+      recorder.start(2000);
+    } catch (err) {
+      console.warn("[Behavioral recording] could not start", err);
+    }
+  }, []);
+
+  /** Stops the recorder, waits for the final chunk, and uploads the whole
+   * interview recording for OCEAN-AI analysis. Fire-and-forget with respect
+   * to the interview flow itself — the evaluation report above already
+   * rendered by the time this resolves either way (see
+   * handleEndInterviewAndEvaluate), matching this feature's core rule: a
+   * failed/slow upload must never block or fail the interview. */
+  const stopBehavioralRecordingAndUpload = useCallback(async () => {
+    const recorder = avRecorderRef.current;
+    const stream = avStreamRef.current;
+    if (!recorder || !sessionId) {
+      stream?.getTracks().forEach((t) => t.stop());
+      return;
+    }
+
+    if (recorder.state === "inactive") {
+      stream?.getTracks().forEach((t) => t.stop());
+      return;
+    }
+
+    const stopped = new Promise<void>((resolve) => {
+      recorder.onstop = () => resolve();
+    });
+    recorder.stop();
+    await stopped;
+    stream?.getTracks().forEach((t) => t.stop());
+    avStreamRef.current = null;
+
+    if (avChunksRef.current.length === 0) return;
+
+    try {
+      const blob = new Blob(avChunksRef.current, { type: avMimeTypeRef.current });
+      const formData = new FormData();
+      formData.append("file", blob, `${sessionId}.webm`);
+      const res = await fetchWithRetry(
+        `${API_URL}/api/v1/interview/${sessionId}/recording`,
+        { method: "POST", body: formData },
+        1,
+        120000,
+      );
+      if (!res.ok) console.error("[Behavioral recording] upload rejected", res.status);
+    } catch (err) {
+      console.error("[Behavioral recording] upload failed", err);
+    }
+  }, [sessionId]);
+
+  /** Speaker monitor capture: the candidate's mic as 16 kHz mono int16 PCM,
+   * sent as binary frames (~250 ms each) on the interview WebSocket. Its
+   * own getUserMedia stream (echo cancellation on), separate from the
+   * per-answer recorder and from proctoring. Non-fatal: if the browser
+   * refuses, the interview simply runs without audio monitoring. */
+  const startSpeakerCapture = useCallback(async () => {
+    if (speakerAudioRef.current || !navigator.mediaDevices?.getUserMedia || typeof AudioWorkletNode === "undefined") return;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 },
+      });
+      const ctx = new AudioContext({ sampleRate: 16000 });
+      const worklet = `class PcmCapture extends AudioWorkletProcessor {
+        process(inputs) { const ch = inputs[0] && inputs[0][0]; if (ch) this.port.postMessage(ch.slice(0)); return true; }
+      }
+      registerProcessor("pcm-capture", PcmCapture);`;
+      const url = URL.createObjectURL(new Blob([worklet], { type: "application/javascript" }));
+      await ctx.audioWorklet.addModule(url);
+      URL.revokeObjectURL(url);
+      const node = new AudioWorkletNode(ctx, "pcm-capture");
+      const FRAME = 4000; // 250 ms at 16 kHz
+      let pending = new Float32Array(0);
+      node.port.onmessage = (e: MessageEvent<Float32Array>) => {
+        const merged = new Float32Array(pending.length + e.data.length);
+        merged.set(pending);
+        merged.set(e.data, pending.length);
+        pending = merged;
+        while (pending.length >= FRAME) {
+          const chunk = pending.subarray(0, FRAME);
+          pending = pending.slice(FRAME);
+          const ws = wsRef.current;
+          if (!ws || ws.readyState !== WebSocket.OPEN) continue;
+          const pcm = new Int16Array(FRAME);
+          for (let i = 0; i < FRAME; i++) pcm[i] = Math.max(-1, Math.min(1, chunk[i])) * 0x7fff;
+          ws.send(pcm.buffer);
+        }
+      };
+      ctx.createMediaStreamSource(stream).connect(node);
+      speakerAudioRef.current = { ctx, stream, node };
+    } catch (err) {
+      console.warn("[Speaker monitor] capture unavailable", err);
+      setVoiceCheck((prev) => ({ ...prev, status: "unavailable" }));
+    }
+  }, []);
+
+  const stopSpeakerCapture = useCallback(() => {
+    const cap = speakerAudioRef.current;
+    speakerAudioRef.current = null;
+    if (!cap) return;
+    cap.node.port.onmessage = null;
+    cap.stream.getTracks().forEach((t) => t.stop());
+    cap.ctx.close().catch(() => {});
+    const ws = wsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "audio_stream_stop" }));
+  }, []);
+
+  useEffect(() => {
+    if (phase === "complete") stopSpeakerCapture();
+  }, [phase, stopSpeakerCapture]);
+
   const startInterview = useCallback(async () => {
     if (!resumeFile || !roleTitle.trim()) return;
     setPhase("starting");
@@ -567,8 +826,13 @@ export default function InterviewRoom({
     emptyAnswerStreakRef.current = 0;
     startedAtRef.current = Date.now();
     setScreenRecordingBlob(null);
+    const monitorVoice = Boolean(sessionId && speakerMonitorConsent);
+    speakerConsentRef.current = monitorVoice;
+    setVoiceCheck(monitorVoice ? { ...INITIAL_VOICE_CHECK, status: "starting" } : INITIAL_VOICE_CHECK);
     await startProctoring();
     if (screenRecordingEnabled) await startScreenRecording();
+    if (behavioralRecordingConsent && sessionId) await startBehavioralRecording();
+    if (monitorVoice) await startSpeakerCapture();
     try {
       const formData = new FormData();
       formData.append("resume", resumeFile);
@@ -596,7 +860,11 @@ export default function InterviewRoom({
       setErrorMessage("Could not reach the interview agent. Check that the backend is running.");
       setPhase("error");
     }
-  }, [resumeFile, roleTitle, jdText, sessionId, startProctoring, addTurn, speak, screenRecordingEnabled, startScreenRecording]);
+  }, [
+    resumeFile, roleTitle, jdText, sessionId, startProctoring, addTurn, speak,
+    screenRecordingEnabled, startScreenRecording, behavioralRecordingConsent, startBehavioralRecording,
+    speakerMonitorConsent, startSpeakerCapture,
+  ]);
 
   /** Hands-free turn: opens the mic the instant we're "listening" and lets
    * voice-activity detection decide when the answer is done. */
@@ -680,9 +948,17 @@ export default function InterviewRoom({
       mediaRecorderRef.current.stop();
     }
     micStreamRef.current?.getTracks().forEach((t) => t.stop());
+    // Abandoned interview (Exit, not End & Get Report) — nothing worth
+    // analyzing, so the behavioral recording is just discarded, not uploaded.
+    if (avRecorderRef.current && avRecorderRef.current.state !== "inactive") {
+      avRecorderRef.current.onstop = null;
+      avRecorderRef.current.stop();
+    }
+    avStreamRef.current?.getTracks().forEach((t) => t.stop());
+    stopSpeakerCapture();
     audioElRef.current?.pause();
     setPhase("setup");
-  }, [stopProctoring, stopVadLoop, stopScreenRecording]);
+  }, [stopProctoring, stopVadLoop, stopScreenRecording, stopSpeakerCapture]);
 
   const handleEndInterviewAndEvaluate = useCallback(async () => {
     stopProctoring();
@@ -695,8 +971,15 @@ export default function InterviewRoom({
     micStreamRef.current?.getTracks().forEach((t) => t.stop());
     audioElRef.current?.pause();
 
+    // Not awaited: the upload (and the analysis it queues) must never delay
+    // the evaluation report the candidate/HR is waiting on. A failed upload
+    // is silent to the candidate by design; HR then simply has no Behavioral
+    // Analysis section for this interview.
+    void stopBehavioralRecordingAndUpload();
+    stopSpeakerCapture();
+
     await runEvaluation(transcript);
-  }, [stopProctoring, stopVadLoop, stopScreenRecording, runEvaluation, transcript]);
+  }, [stopProctoring, stopVadLoop, stopScreenRecording, runEvaluation, transcript, stopBehavioralRecordingAndUpload, stopSpeakerCapture]);
 
   const handleResumeChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0] || null;
@@ -887,6 +1170,56 @@ export default function InterviewRoom({
             >
               <Download className="w-3.5 h-3.5" /> Save last recording
             </button>
+          )}
+          {sessionId && (
+            <div className="rounded-xl border border-indigo-100 bg-indigo-50/50 p-3">
+              <label className="flex items-start gap-2 text-xs font-medium text-zinc-600 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={behavioralRecordingConsent}
+                  onChange={(e) => setBehavioralRecordingConsent(e.target.checked)}
+                  className="mt-0.5 h-3.5 w-3.5 rounded border-zinc-300 text-indigo-600 focus:ring-indigo-400"
+                />
+                <span className="flex items-start gap-1.5">
+                  <Brain className="w-3.5 h-3.5 text-indigo-500 mt-0.5 shrink-0" />
+                  <span>
+                    <span className="block font-semibold text-zinc-700">
+                      Allow AI-based behavioral/personality analysis (optional)
+                    </span>
+                    <span className="block text-[11px] font-normal text-zinc-500 mt-0.5">
+                      Records your camera + microphone for the full interview and analyzes it with
+                      OCEAN-AI to produce supplementary behavioral signals (openness, conscientiousness,
+                      extraversion, agreeableness, non-neuroticism) for the hiring team. This is never
+                      used to automatically reject or hire you, and is only visible to authorized HR
+                      staff. Leave unchecked to skip this — it has no effect on your interview score.
+                    </span>
+                  </span>
+                </span>
+              </label>
+            </div>
+          )}
+          {sessionId && (
+            <div className="rounded-xl border border-zinc-200 bg-zinc-50/60 p-3">
+              <label className="flex items-start gap-2 text-xs font-medium text-zinc-600 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={speakerMonitorConsent}
+                  onChange={(e) => setSpeakerMonitorConsent(e.target.checked)}
+                  className="mt-0.5 h-3.5 w-3.5 rounded border-zinc-300 text-blue-600 focus:ring-blue-400"
+                />
+                <span className="flex items-start gap-1.5">
+                  <Mic className="w-3.5 h-3.5 text-zinc-400 mt-0.5 shrink-0" />
+                  <span>
+                    <span className="block font-semibold text-zinc-700">Allow a voice check during the interview (optional)</span>
+                    <span className="block text-[11px] font-normal text-zinc-500 mt-0.5">
+                      Your first answers are used to learn what your voice sounds like; later answers are checked for
+                      other voices on your microphone. Your voice profile is kept only for this interview and is never
+                      shown to anyone. The hiring team sees neutral notes such as &ldquo;additional speaker detected&rdquo;.
+                    </span>
+                  </span>
+                </span>
+              </label>
+            </div>
           )}
         </div>
 
@@ -1123,7 +1456,7 @@ export default function InterviewRoom({
             )}
           </div>
 
-          <BrewShieldPanel state={proctoring} />
+          <BrewShieldPanel state={proctoring} voiceCheck={voiceCheck} />
         </div>
       </div>
     </div>
@@ -1293,7 +1626,17 @@ function ReportGeneratingSkeleton() {
   );
 }
 
-function BrewShieldPanel({ state }: { state: ProctoringState }) {
+function voiceCheckLabel(v: VoiceCheckState): string {
+  if (v.status === "unavailable") return "Unavailable";
+  if (v.status === "degraded") return "Temporarily unavailable";
+  if (v.additionalSpeaker) return "Additional speaker detected";
+  if (v.wasCleared) return "Audio monitoring normal";
+  if (v.candidateVerified) return "Candidate voice verified";
+  if (v.status === "starting") return "Starting…";
+  return "Establishing voice reference…";
+}
+
+function BrewShieldPanel({ state, voiceCheck }: { state: ProctoringState; voiceCheck: VoiceCheckState }) {
   const isLive = state.status === "live";
   return (
     <div className="rounded-xl border border-white/10 bg-white/5 p-3 overflow-y-auto flex flex-col gap-2">
@@ -1317,7 +1660,18 @@ function BrewShieldPanel({ state }: { state: ProctoringState }) {
         <Row label="DevTools / Shortcuts" value={state.devtoolsCount > 0 ? `${state.devtoolsCount} Blocked` : "Active Guard"} />
         <Row label="Clipboard Guard" value={state.pasteCount > 0 ? `${state.pasteCount} Pastes Blocked` : "Active Guard"} />
         <Row label="Display Guard" value={state.isMultiScreen ? "Multi-Display Detected" : "Single Screen"} />
+        {voiceCheck.status !== "off" && <Row label="Voice check" value={voiceCheckLabel(voiceCheck)} />}
       </dl>
+      {voiceCheck.timeline.length > 0 && (
+        <ul className="space-y-1 border-t border-white/10 pt-2">
+          {voiceCheck.timeline.slice(0, 4).map((e) => (
+            <li key={e.id} className="flex items-center justify-between gap-2 text-[11px] text-zinc-300">
+              <span>{e.label}</span>
+              <span className="shrink-0 text-zinc-500">{new Date(e.at).toLocaleTimeString()}</span>
+            </li>
+          ))}
+        </ul>
+      )}
       {state.flags.length === 0 ? (
         <p className="text-[11px] text-zinc-500 mt-1">No violations detected. Session verified.</p>
       ) : (

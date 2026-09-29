@@ -3,6 +3,7 @@ import uuid
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 
@@ -68,7 +69,9 @@ async def start_screening(
             # the same memory tiers.
             orchestrator.start_session("screening", session.email, session.role_title, session_id=session_id)
 
-    result = parse_resume_and_generate_questions(content, role_title.strip(), jd_text or None)
+    # Resume parsing + LLM calls take seconds; off the event loop so they
+    # don't stall every other request and live interview WebSocket.
+    result = await run_in_threadpool(parse_resume_and_generate_questions, content, role_title.strip(), jd_text or None)
     if session:
         questions = result.get("questions") or []
         greeting = questions[0].get("text") if questions and isinstance(questions[0], dict) else None

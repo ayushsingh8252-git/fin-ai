@@ -13,6 +13,8 @@ import {
   type ScheduleStep,
 } from "@/lib/recruitmentApi";
 import { cn } from "@/lib/utils";
+import AudioIntegrity from "@/app/(products)/screening-agent/_components/AudioIntegrity";
+import BehavioralAnalysis from "@/app/(products)/screening-agent/_components/BehavioralAnalysis";
 import { EmptyNote, InfoRow, Panel, StatusDot, Tag, btnPrimary, btnSecondary, inputCls, labelCls, type Tone } from "./_ui";
 
 const MODES: { id: InterviewMode; label: string; icon: React.ComponentType<{ className?: string }>; hint: string }[] = [
@@ -453,6 +455,12 @@ function ReportView({ report }: { report: InterviewReport }) {
           <InfoRow label="Interview ID"><span className="font-mono text-xs">{interview.id.slice(0, 8)}</span></InfoRow>
         </dl>
       </section>
+      {interview.mode === "ai_screening" && interview.screening_session_id && (
+        <>
+          <AudioIntegrity sessionId={interview.screening_session_id} />
+          <BehavioralAnalysis sessionId={interview.screening_session_id} />
+        </>
+      )}
     </div>
   );
 }

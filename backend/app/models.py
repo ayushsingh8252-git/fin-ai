@@ -204,6 +204,131 @@ class ScreeningResult(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
+class InterviewBehavioralAnalysis(Base):
+    """OCEAN-AI (aimclub/OCEANAI) personality/behavioral-signal analysis of a
+    candidate's AAI-interview recording. One row per session, re-run in
+    place (not history) — a re-analysis overwrites the previous result rather
+    than accumulating rows, since only the latest analysis of a given
+    recording is ever meaningful.
+
+    Created the moment the candidate's interview recording finishes
+    uploading (see interview.py's upload_interview_recording), status
+    "pending", BEFORE the Celery task is even dispatched — so "no row" and
+    "row with status=pending" are distinguishable (no row = candidate never
+    consented to recording; pending = consented and queued).
+
+    candidate_id/interview_id are nullable and resolved best-effort from any
+    Interview row scheduled against this session (mirrors the join
+    api/interview.py's interview_evaluate already does at
+    `models.Interview.screening_session_id == payload.session_id`) — a
+    candidate can take this interview via a bare invite link with no
+    Recruitment-side Interview row at all, and the analysis must still work.
+
+    Deliberately NOT added as columns on ScreeningSession: recordings are
+    opt-in and most sessions will never have one, and keeping this as its
+    own table means the sensitive recording_path/results never appear in a
+    ScreeningSession query that has nothing to do with behavioral analysis.
+    """
+
+    __tablename__ = "interview_behavioral_analyses"
+
+    id = Column(String, primary_key=True, index=True)
+    session_id = Column(String, ForeignKey("screening_sessions.id"), nullable=False, unique=True, index=True)
+    candidate_id = Column(String, ForeignKey("candidates.id"), nullable=True, index=True)
+    interview_id = Column(String, ForeignKey("interviews.id"), nullable=True, index=True)
+
+    recording_path = Column(String, nullable=False)
+    # pending -> processing -> completed | failed. Never silently downgraded
+    # to a fake "completed" — see services/ocean_client.py.
+    status = Column(String, nullable=False, default="pending", server_default="pending", index=True)
+
+    # Per-modality OCEAN-AI output, kept exactly as the library names it
+    # (Non-Neuroticism, not Neuroticism — see docs/behavioral-analysis.md).
+    # {"openness": float, "conscientiousness": float, "extraversion": float,
+    #  "agreeableness": float, "non_neuroticism": float}
+    audio_results = Column(JSON, nullable=True)
+    video_results = Column(JSON, nullable=True)
+    audio_video_results = Column(JSON, nullable=True)
+
+    model_name = Column(String, nullable=True)     # "OCEAN-AI"
+    model_version = Column(String, nullable=True)  # oceanai.__release__ at analysis time
+
+    error_message = Column(Text, nullable=True)
+    task_id = Column(String, nullable=True)
+    retry_count = Column(Integer, nullable=False, default=0, server_default="0")
+
+    processing_started_at = Column(DateTime(timezone=True), nullable=True)
+    processing_completed_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class InterviewSpeakerBaseline(Base):
+    """Per-interview speaker-monitor state (services/speaker_monitor.py).
+    A row exists only if the candidate ticked the voice-monitoring consent
+    box — no row means the feature never ran for that session.
+
+    The candidate's ECAPA voice embedding lives here and is never serialized
+    by any API (GET /interview/{id}/audio-events returns stats and events
+    only). Stored as plain JSON, the same as the existing VoicePrint table;
+    delete_speaker_baseline() in the service drops it on request."""
+
+    __tablename__ = "interview_speaker_baselines"
+
+    session_id = Column(String, ForeignKey("screening_sessions.id"), primary_key=True)
+    # enrolling -> ready | insufficient_baseline
+    status = Column(String, nullable=False, default="enrolling", server_default="enrolling")
+    status_reason = Column(Text, nullable=True)
+    # "voiceprint" (existing VoicePrint for this email) | "interview_enrollment"
+    reference_source = Column(String, nullable=True)
+    # In-interview enrollment only; a VoicePrint reference is never copied here.
+    embedding_sum = Column(JSON, nullable=True)
+    enrolled_windows = Column(Integer, nullable=False, default=0, server_default="0")
+    enrolled_seconds = Column(Float, nullable=False, default=0.0, server_default="0")
+    unknown_centroids = Column(JSON, nullable=True)  # one centroid per extra speaker seen so far
+    # Measured seconds, attributed per analysis hop (no double counting of overlaps).
+    stats = Column(JSON, nullable=True)
+    # Latest deterministic audio state (candidate_verified, additional_speaker_detected, ...).
+    audio_context = Column(JSON, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class InterviewAudioEvent(Base):
+    """One observed audio event from the speaker monitor. Neutral by design:
+    it records that a voice not matching the candidate's baseline was heard,
+    never an interpretation of it. Only the audio pipeline writes here — no
+    LLM ever creates these rows."""
+
+    __tablename__ = "interview_audio_events"
+    __table_args__ = (
+        UniqueConstraint("dedupe_key", name="uq_interview_audio_event_dedupe"),
+        Index("ix_interview_audio_events_session_turn", "session_id", "turn_index"),
+    )
+
+    id = Column(String, primary_key=True, index=True)
+    session_id = Column(String, ForeignKey("screening_sessions.id"), nullable=False, index=True)
+    candidate_id = Column(String, ForeignKey("candidates.id"), nullable=True, index=True)
+    interview_id = Column(String, ForeignKey("interviews.id"), nullable=True, index=True)
+    audio_session_id = Column(String, nullable=True, index=True)  # one per streaming connection
+    # AUDIO_STREAM_STARTED | UNKNOWN_SPEAKER_STARTED | MULTIPLE_SPEAKERS_DETECTED | ... (speaker_stream.py)
+    event_type = Column(String, nullable=False, index=True)
+    source = Column(String, nullable=False, default="audio_speaker_verification",
+                    server_default="audio_speaker_verification")
+    speaker_label = Column(String, nullable=True)   # speaker_1 = candidate, speaker_2.. = others (per session)
+    turn_index = Column(Integer, nullable=True)     # candidate answer (0-based) the event started in, if known
+    start_seconds = Column(Float, nullable=True)    # seconds since the audio stream started
+    end_seconds = Column(Float, nullable=True)
+    duration_seconds = Column(Float, nullable=True)
+    candidate_similarity = Column(Float, nullable=True)
+    confidence = Column(Float, nullable=True)
+    details = Column(JSON, nullable=True)           # speakers_detected, additional_speakers, reason, ...
+    transcript_excerpt = Column(Text, nullable=True)
+    occurred_at = Column(DateTime(timezone=True), nullable=True)
+    dedupe_key = Column(String, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
 class CandidateScoreCard(Base):
     """Enterprise Orchestration Layer's per-candidate scorecard — one row per
     candidate scheduled for interviews, backing the compact scores table on

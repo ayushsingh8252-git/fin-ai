@@ -3,6 +3,8 @@
 import { Award, AlertTriangle, Check, X, ShieldAlert } from "lucide-react";
 import type { EvaluationResult } from "./types";
 import FeedbackButtons from "@/components/FeedbackButtons";
+import AudioIntegrity from "./AudioIntegrity";
+import BehavioralAnalysis from "./BehavioralAnalysis";
 
 const RECOMMENDATION_STYLES: Record<string, { bg: string; text: string }> = {
   "Strong Hire": { bg: "bg-emerald-50 border-emerald-200", text: "text-emerald-700" },
@@ -187,6 +189,9 @@ export default function InterviewReport({
           <span className="font-semibold text-zinc-600">{evaluation.integrity_score}/100</span>
         </div>
       )}
+
+      <AudioIntegrity sessionId={sessionId} />
+      <BehavioralAnalysis sessionId={sessionId} />
     </div>
   );
 }

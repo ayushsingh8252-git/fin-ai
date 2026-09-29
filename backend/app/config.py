@@ -134,6 +134,21 @@ class Settings(BaseSettings):
     CELERY_BROKER_URL: str = "redis://localhost:6379/0"
     CELERY_RESULT_BACKEND: str = "redis://localhost:6379/0"
 
+    # OCEAN-AI behavioral analysis — a deliberately separate service (its own
+    # container, its own pinned heavy deps: torch/opencv/mediapipe/opensmile)
+    # rather than merged into this backend's requirements.txt. See
+    # ocean-service/ and docs/behavioral-analysis.md. Empty string (not a
+    # bogus default host) so an unconfigured deployment fails fast and
+    # honestly instead of silently trying to reach "localhost".
+    OCEAN_SERVICE_URL: str = ""
+    OCEAN_SERVICE_TIMEOUT_SECONDS: int = 600
+
+    # Recruitment "Active Users Now" presence (services/presence.py) — how
+    # many seconds since a heartbeat before that user drops out of the live
+    # count. Not "session length"; just the staleness tolerance for a
+    # heartbeat sent roughly every 30s from the frontend.
+    RECRUITMENT_PRESENCE_WINDOW_SECONDS: int = 90
+
     # --- Agent memory architecture (app/memory/) ---
     # Episodic memory (one row per finished agent session: screening interview,
     # telephonic call, ...). Separate Postgres database, not the primary SQLite
@@ -299,6 +314,34 @@ class Settings(BaseSettings):
     VOICE_MIN_SPEECH_SECONDS: float = 1.5
     VOICE_CALIBRATION_FILE: str = "models/voice_calibration.json"
     VOICE_MODEL_VERSION: str = "ecapa-voxceleb-v1"
+
+    # Interview speaker monitor (services/speaker_stream.py): the candidate's
+    # mic streamed over the interview WebSocket -> Silero VAD per 1.5s window
+    # -> ECAPA embedding -> similarity to the candidate reference -> hysteresis
+    # state machine -> events. Separate from VOICE_ID_SIMILARITY_THRESHOLD
+    # above, which is calibrated for full enrollment clips; short windows
+    # score lower and noisier.
+    SPEAKER_MONITOR_ENABLED: bool = True
+    SPEAKER_WINDOW_SECONDS: float = 1.5
+    SPEAKER_WINDOW_HOP_SECONDS: float = 0.75
+    SPEAKER_WINDOW_MIN_SPEECH_RATIO: float = 0.6
+    SPEAKER_VAD_THRESHOLD: float = 0.5          # Silero speech probability per 32ms frame
+    SPEAKER_MIN_SILENCE_SECONDS: float = 1.0    # silence before SPEECH_ENDED
+    SPEAKER_CLEAR_SECONDS: float = 2.0          # sustained candidate-only speech that ends an unknown speaker
+    SPEAKER_SILENCE_CLEAR_SECONDS: float = 3.0  # or sustained silence
+    SPEAKER_CANDIDATE_CONFIRM_SECONDS: float = 1.5
+    SPEAKER_CO_PRESENCE_SECONDS: float = 30.0   # candidate heard this recently -> "multiple speakers"
+    SPEAKER_MAX_BUFFER_SECONDS: float = 20.0    # per-session audio kept in memory; older audio is dropped
+    SPEAKER_MAX_FRAME_BYTES: int = 32000        # 1s of 16kHz int16 mono
+    SPEAKER_MAX_REALTIME_FACTOR: float = 2.0    # frames arriving faster than this are dropped
+    # Measured on real speech (2 speakers, held-out, 1.5s windows): same
+    # speaker mostly 0.35-0.71, different speaker never above 0.13. Recalibrate
+    # on a larger set before relying on the exact coverage percentage.
+    SPEAKER_CANDIDATE_THRESHOLD: float = 0.35   # similarity >= this -> CANDIDATE
+    SPEAKER_UNKNOWN_THRESHOLD: float = 0.25     # similarity <= this -> UNKNOWN_SPEAKER
+    SPEAKER_MIN_UNKNOWN_SECONDS: float = 2.0    # shorter unknown runs never become events
+    SPEAKER_BASELINE_MIN_SECONDS: float = 10.0  # clean candidate speech needed before classifying
+    SPEAKER_CLUSTER_THRESHOLD: float = 0.45     # unknown intervals this similar = same extra speaker
 
     model_config = SettingsConfigDict(
         env_file=("../.env", ".env"),
