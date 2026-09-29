@@ -62,11 +62,15 @@ def get_vad_model():
         with _vad_lock:
             if _vad_model is None:
                 import torch
+                # trust_repo=True: without it, a fresh cache (e.g. a new
+                # container) makes torch.hub prompt on stdin and the load
+                # fails with EOF — seen on the EC2 deploy.
                 _vad_model, _utils = torch.hub.load(
                     repo_or_dir='snakers4/silero-vad',
                     model='silero_vad',
                     force_reload=False,
                     onnx=False,
+                    trust_repo=True,
                 )
                 logger.info("Silero VAD loaded successfully.")
     return _vad_model
