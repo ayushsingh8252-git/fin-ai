@@ -166,6 +166,19 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             print(f"[Lifespan Startup Warning] Silero VAD warmup failed (will load lazily): {e}")
 
+    # 5c. Load Kokoro TTS once (and pre-render the static interview phrases)
+    #     on a worker thread: not awaited, so startup/health checks aren't
+    #     held up by it. A request arriving first simply waits on the same
+    #     one-time load. Failure is non-fatal — TTS falls back to Edge/gTTS.
+    if settings.KOKORO_PRELOAD:
+        def _preload_tts():
+            try:
+                from .services import tts_service
+                tts_service.preload()
+            except Exception as e:
+                print(f"[Lifespan Startup Warning] Kokoro TTS preload failed (fallback TTS will be used): {e}")
+        asyncio.get_running_loop().run_in_executor(None, _preload_tts)
+
     # 6. Verify Langfuse (LLMOps observability) connectivity, if configured.
     #    Non-fatal either way — get_langfuse() already treats missing keys as
     #    "tracing off", and a failed auth_check just means traces silently

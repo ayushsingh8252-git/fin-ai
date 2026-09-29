@@ -40,3 +40,8 @@ speechbrain
 torchaudio
 PyJWT
 slowapi
+# Self-hosted Kokoro-82M TTS on onnxruntime (see services/kokoro_tts.py for
+# why not the PyTorch `kokoro` package). Pinned: its model-file format and
+# session API have changed between minor versions. For NVIDIA GPUs install
+# kokoro-onnx[gpu] (onnxruntime-gpu) instead; CPU is the default.
+kokoro-onnx==0.6.1

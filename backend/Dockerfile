@@ -24,6 +24,13 @@ RUN pip install --no-cache-dir --default-timeout=100 --retries=5 \
     --extra-index-url https://download.pytorch.org/whl/cpu \
     -r requirements.txt
 
+# Kokoro TTS model (~336 MB) baked into its own layer: fetched once at build
+# (checksum-verified) and cached by Docker until the script changes, so a
+# container restart never re-downloads it. models/kokoro/ is dockerignored,
+# so a host copy can't also end up in the COPY below.
+COPY scripts/download_kokoro.py scripts/download_kokoro.py
+RUN python scripts/download_kokoro.py
+
 COPY . .
 
 RUN mkdir -p uploads data && chmod -R 777 /app

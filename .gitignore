@@ -283,3 +283,6 @@ id_ecdsa.*
 *secret*.json
 *secrets*.json
 *.secrets
+
+# Kokoro TTS model files (~340-430 MB) — run backend/scripts/download_kokoro.py
+backend/models/kokoro/

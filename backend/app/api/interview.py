@@ -321,7 +321,7 @@ def get_interview_report(session_id: str, db: Session = Depends(get_db), user: m
 
 from fastapi import WebSocket, WebSocketDisconnect
 import base64
-from ..services.audio_service import generate_tts_audio_async
+from ..services import tts_service
 
 
 @router.websocket("/interview/ws/{session_id}")
@@ -382,21 +382,62 @@ async def interview_websocket_endpoint(websocket: WebSocket, session_id: str):
         finally:
             db.close()
 
-        # 2. Immediately synthesize Neural TTS audio asynchronously
-        audio_bytes = await generate_tts_audio_async(question)
-        audio_b64 = base64.b64encode(audio_bytes).decode("utf-8") if audio_bytes else None
-
+        # 2. Send the text now, then stream the audio sentence by sentence
+        # (tts_chunk ... tts_end) so playback starts after the first
+        # sentence is synthesized rather than the whole question.
+        # audio_base64 stays in the message (always null now) for older
+        # clients, which then fetch POST /tts themselves.
+        turn_id = uuid.uuid4().hex[:12]
         await websocket.send_json({
             "type": "turn_result",
             "question": question,
             "is_final": turn_result.get("is_final", False),
-            "audio_base64": audio_b64,
+            "audio_base64": None,
+            "audio_stream": bool(question),
+            "turn_id": turn_id,
             # Deterministic speaker-monitor state at this turn (None if not monitored).
             "audio_context": streams.audio_context(session_id),
         })
+        if not question:
+            return
+        tts_task = asyncio.create_task(_stream_tts(question, turn_id))
+        tts_state["task"] = tts_task
+        # asyncio.wait, not await: a barge-in cancels tts_task, and that
+        # cancellation must not propagate into (and kill) this turn task.
+        await asyncio.wait({tts_task})
+
+    async def _stream_tts(text: str, turn_id: str) -> None:
+        seq = -1
+        try:
+            async for chunk in tts_service.stream_speech(text, request_id=turn_id):
+                seq = chunk.seq
+                await websocket.send_json({
+                    "type": "tts_chunk",
+                    "turn_id": turn_id,
+                    "seq": chunk.seq,
+                    "mime": chunk.media_type,
+                    "duration_ms": chunk.duration_ms,
+                    "audio_base64": base64.b64encode(chunk.audio).decode("ascii"),
+                })
+            await websocket.send_json({"type": "tts_end", "turn_id": turn_id, "chunks": seq + 1, "interrupted": False})
+        except asyncio.CancelledError:
+            print(f"[TTS] interrupted id={turn_id} after_chunk={seq}")
+            try:
+                await websocket.send_json({"type": "tts_end", "turn_id": turn_id, "chunks": seq + 1, "interrupted": True})
+            except Exception:
+                pass
+        except Exception as e:
+            # Never surface provider internals to the candidate: the client
+            # just sees the stream end and moves on to listening.
+            print(f"[TTS] stream failed id={turn_id} error={type(e).__name__}: {e}")
+            try:
+                await websocket.send_json({"type": "tts_end", "turn_id": turn_id, "chunks": seq + 1, "error": "tts_unavailable"})
+            except Exception:
+                pass
 
     turn_lock = asyncio.Lock()
     turn_tasks: set = set()
+    tts_state: dict = {"task": None}
 
     async def _run_turn(data: dict) -> None:
         async with turn_lock:  # turns stay strictly one at a time, in order
@@ -450,10 +491,17 @@ async def interview_websocket_endpoint(websocket: WebSocket, session_id: str):
                 await websocket.send_json({"type": "pong", "timestamp": data.get("timestamp")})
 
             elif msg_type == "barge_in":
-                # Candidate spoke while AI audio was streaming/playing — acknowledge interruption
+                # Candidate spoke while the interviewer was talking: stop
+                # synthesizing the rest of the current question (the client
+                # has already stopped playback and dropped queued chunks).
+                task = tts_state["task"]
+                cancelled = bool(task and not task.done())
+                if cancelled:
+                    task.cancel()
                 await websocket.send_json({
                     "type": "barge_in_ack",
                     "interrupted_at": data.get("timestamp"),
+                    "tts_cancelled": cancelled,
                 })
 
             elif msg_type == "next_turn":

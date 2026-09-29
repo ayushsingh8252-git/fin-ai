@@ -315,6 +315,34 @@ class Settings(BaseSettings):
     VOICE_CALIBRATION_FILE: str = "models/voice_calibration.json"
     VOICE_MODEL_VERSION: str = "ecapa-voxceleb-v1"
 
+    # --- Text-to-speech (services/tts_service.py) ---
+    # "kokoro" = self-hosted Kokoro-82M via kokoro-onnx (services/kokoro_tts.py);
+    # "edge" = the previous Edge-TTS -> gTTS chain, which is also the fallback
+    # when Kokoro fails to load or synthesize (TTS_FALLBACK_ENABLED).
+    TTS_PROVIDER: str = "kokoro"
+    TTS_FALLBACK_ENABLED: bool = True
+    # Voice for the "edge" provider / fallback only.
+    TTS_EDGE_VOICE: str = "en-US-AndrewMultilingualNeural"
+    KOKORO_VOICE: str = "am_michael"
+    KOKORO_LANG: str = "en-us"          # espeak-ng language code (en-us / en-gb)
+    KOKORO_SPEED: float = 1.0           # 0.5 - 2.0
+    KOKORO_DEVICE: str = "auto"         # auto | cpu | cuda
+    # fp32 by default: measured on this project's dev CPU, the int8 export ran
+    # ~3x SLOWER (RTF 2.5 vs 0.8) — dynamic-quant kernels aren't faster on
+    # every CPU. Re-measure before switching on new hardware.
+    KOKORO_MODEL_PATH: str = "models/kokoro/kokoro-v1.0.onnx"
+    KOKORO_VOICES_PATH: str = "models/kokoro/voices-v1.0.bin"
+    KOKORO_THREADS: int = 0             # 0 = min(cpu_count, 8)
+    # Syntheses run at once. Each one already uses KOKORO_THREADS cores, so >1
+    # mostly just splits the CPU between interviews rather than adding speed.
+    KOKORO_MAX_CONCURRENCY: int = 1
+    KOKORO_PRELOAD: bool = True         # load at startup instead of on first request
+    # onnxruntime's CPU arena keeps every buffer it ever allocated (measured:
+    # RSS 433 MB after load -> ~770 MB after a few replies). Off = allocate per
+    # run and give memory back; see docs/kokoro-tts.md for the measured cost.
+    KOKORO_CPU_MEM_ARENA: bool = False
+    TTS_CACHE_MAX_ITEMS: int = 64       # static-phrase audio cache (0 disables)
+
     # Interview speaker monitor (services/speaker_stream.py): the candidate's
     # mic streamed over the interview WebSocket -> Silero VAD per 1.5s window
     # -> ECAPA embedding -> similarity to the candidate reference -> hysteresis

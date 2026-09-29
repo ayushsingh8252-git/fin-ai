@@ -4,7 +4,8 @@ from fastapi import APIRouter, UploadFile, File, HTTPException, Response, Reques
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 from ..rate_limit import limiter
-from ..services.audio_service import transcribe_audio, generate_tts_audio_async, validate_audio_format
+from ..services.audio_service import transcribe_audio, validate_audio_format
+from ..services import tts_service
 from ..services.upload_safety import enforce_upload_size
 
 router = APIRouter()
@@ -55,13 +56,20 @@ async def transcribe_audio_endpoint(request: Request, file: UploadFile = File(..
 @limiter.limit("20/minute")
 async def text_to_speech_endpoint(request: Request, payload: TTSRequest):
     """
-    Converts text to speech MP3 audio stream for playback using neural voice.
+    Converts text to speech for playback. Kokoro (self-hosted) returns
+    audio/wav; the Edge/gTTS fallback returns audio/mpeg — clients should
+    honor Content-Type (browsers' <audio>/decodeAudioData handle both).
+    `voice`/`language` are kept for API compatibility; the Kokoro voice is
+    server-configured (KOKORO_VOICE).
     """
     if not payload.text.strip():
         raise HTTPException(status_code=400, detail="Text cannot be empty")
+    if len(payload.text) > 5000:
+        raise HTTPException(status_code=413, detail="Text too long for speech synthesis")
 
-    audio_bytes = await generate_tts_audio_async(payload.text, voice=payload.voice, lang=payload.language)
-    if not audio_bytes:
+    result = await tts_service.synthesize(payload.text)
+    if not result:
         raise HTTPException(status_code=500, detail="Failed to synthesize speech audio")
-        
-    return Response(content=audio_bytes, media_type="audio/mpeg")
+
+    return Response(content=result.audio, media_type=result.media_type,
+                    headers={"X-TTS-Provider": result.provider})

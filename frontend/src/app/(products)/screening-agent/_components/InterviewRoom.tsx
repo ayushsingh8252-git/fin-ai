@@ -1,12 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ShieldCheck, Mic, Loader2, AlertTriangle, Volume2, MessageSquare,
-  Send, LogOut, ScreenShare, Download, CheckCircle2, Brain,
+  Send, LogOut, ScreenShare, Download, CheckCircle2, Brain, PhoneOff, Sparkles, RotateCcw,
 } from "lucide-react";
 import { useProctoring, type FaceBox, type ProctoringState } from "@/hooks/useProctoring";
+import { StreamingSpeechPlayer, base64ToArrayBuffer, type SpeechOutcome } from "@/lib/streamingSpeechPlayer";
 import type {
   EvaluationResult, InterviewPhase, ResumeProfileOut, ScreeningStartResponse, TranscriptTurn,
 } from "./types";
@@ -26,6 +28,18 @@ const VAD_SPEECH_RMS_THRESHOLD = 0.025;
 const VAD_SILENCE_STOP_MS = 1300;
 const VAD_NO_SPEECH_TIMEOUT_MS = 12000;
 const VAD_MAX_RECORD_MS = 45000;
+
+// Barge-in: the candidate talking over the interviewer stops its speech.
+// Stricter than the answer VAD (louder + sustained) because the mic can
+// still pick up some of the interviewer's own voice from the speakers even
+// with the browser's echo cancellation on.
+// Loud time accumulates and quiet time drains it at half rate, rather than
+// requiring unbroken loudness: measured on real speech, only ~55% of 10 ms
+// windows clear this level (dips between syllables), so a "continuously
+// loud for N ms" rule fired ~3 s late in live testing.
+const BARGE_IN_ENABLED = true;
+const BARGE_IN_RMS_THRESHOLD = 0.05;
+const BARGE_IN_TRIGGER_MS = 300;
 
 // How many candidate answers the adaptive interview loop (POST
 // /interview/turn) asks for before wrapping up — mirrors the backend's
@@ -228,7 +242,24 @@ export default function InterviewRoom({
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const micStreamRef = useRef<MediaStream | null>(null);
-  const audioElRef = useRef<HTMLAudioElement | null>(null);
+  // One player for every interviewer line (streamed WS chunks and /tts
+  // bodies alike), so two utterances can never overlap.
+  const playerRef = useRef<StreamingSpeechPlayer | null>(null);
+  const getPlayer = useCallback(() => (playerRef.current ??= new StreamingSpeechPlayer()), []);
+  const currentTurnIdRef = useRef<string | null>(null);
+  const wsSpeechRef = useRef<Promise<SpeechOutcome> | null>(null);
+  // Set once the candidate ends the call — any turn still in flight
+  // (LLM reply, transcription) must not speak or advance afterwards.
+  const endedRef = useRef(false);
+  const [confirmEndOpen, setConfirmEndOpen] = useState(false);
+  const [speechAnalyser, setSpeechAnalyser] = useState<AnalyserNode | null>(null);
+  // The report renders in-page (the full-screen call closes); bring it into
+  // view instead of leaving the user wherever the page was scrolled.
+  const reportRef = useRef<HTMLDivElement | null>(null);
+  const reportReady = phase === "complete" && evaluation !== null;
+  useEffect(() => {
+    if (reportReady) reportRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [reportReady]);
   const transcriptEndRef = useRef<HTMLDivElement | null>(null);
   const emptyAnswerStreakRef = useRef(0);
 
@@ -242,7 +273,6 @@ export default function InterviewRoom({
 
   const startedAtRef = useRef<number>(0);
   const [elapsedMs, setElapsedMs] = useState(0);
-  const [ttsAudioEl, setTtsAudioEl] = useState<HTMLAudioElement | null>(null);
 
   // Initialize WebSocket for ultra-low latency turns
   useEffect(() => {
@@ -379,17 +409,6 @@ export default function InterviewRoom({
       }
 
       if (rms > VAD_SPEECH_RMS_THRESHOLD) {
-        // Barge-In: if interviewer audio is currently playing and candidate speaks, halt playback
-        if (audioElRef.current && !audioElRef.current.paused) {
-          try {
-            audioElRef.current.pause();
-            if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-              wsRef.current.send(JSON.stringify({ type: "barge_in", timestamp: now }));
-            }
-            setPhase("recording");
-          } catch {}
-        }
-
         if (!hasSpokenRef.current) {
           hasSpokenRef.current = true;
           setHasHeardSpeech(true);
@@ -425,7 +444,7 @@ export default function InterviewRoom({
       avStreamRef.current?.getTracks().forEach((t) => t.stop());
       speakerAudioRef.current?.stream.getTracks().forEach((t) => t.stop());
       speakerAudioRef.current?.ctx.close().catch(() => {});
-      audioElRef.current?.pause();
+      playerRef.current?.close();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -436,50 +455,68 @@ export default function InterviewRoom({
     return turn;
   }, []);
 
-  const speak = useCallback(async (text: string, directAudioB64?: string | null) => {
+  /** Speaks a line via POST /tts (greeting, fixed prompts, and the HTTP
+   * fallback path). The body is WAV from Kokoro or MP3 from the fallback. */
+  const speak = useCallback(async (text: string): Promise<SpeechOutcome> => {
+    if (endedRef.current) return "interrupted";
     setPhase("speaking");
+    const player = getPlayer();
+    const done = player.begin();
     try {
-      let audio: HTMLAudioElement;
-      if (directAudioB64) {
-        audio = new Audio(`data:audio/mp3;base64,${directAudioB64}`);
-      } else {
-        const res = await fetchWithRetry(`${API_URL}/api/v1/tts`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text, language: "en", voice: "en-US-AndrewMultilingualNeural" }),
-        });
-        if (!res.ok) throw new Error("TTS request failed");
-        const blob = await res.blob();
-        const url = URL.createObjectURL(blob);
-        audio = new Audio(url);
-      }
-
-      audioElRef.current = audio;
-      setTtsAudioEl(audio);
-      await new Promise<void>((resolve) => {
-        let settled = false;
-        const finish = () => {
-          if (settled) return;
-          settled = true;
-          resolve();
-        };
-        const safetyTimer = window.setTimeout(finish, 20000);
-        audio.onended = () => {
-          window.clearTimeout(safetyTimer);
-          finish();
-        };
-        audio.onerror = () => {
-          window.clearTimeout(safetyTimer);
-          finish();
-        };
-        audio.play().catch(() => {
-          window.clearTimeout(safetyTimer);
-          finish();
-        });
+      const res = await fetchWithRetry(`${API_URL}/api/v1/tts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text, language: "en" }),
       });
+      if (!res.ok) throw new Error("TTS request failed");
+      player.push(await res.arrayBuffer());
     } catch (err) {
       console.error("TTS playback failed", err);
     }
+    player.finish();
+    return done;
+  }, [getPlayer]);
+
+  /** Starts playing a WS-streamed utterance. Must be called synchronously
+   * from the turn_result handler: the server sends the tts_chunk messages
+   * right behind it, and a listener attached any later could miss one. */
+  const startWsSpeech = useCallback((ws: WebSocket, turnId: string): Promise<SpeechOutcome> => {
+    const player = getPlayer();
+    const done = player.begin();
+    currentTurnIdRef.current = turnId;
+    setPhase("speaking");
+    const onMessage = (evt: MessageEvent) => {
+      if (typeof evt.data !== "string") return;
+      let msg: { type?: string; turn_id?: string; audio_base64?: string };
+      try {
+        msg = JSON.parse(evt.data);
+      } catch {
+        return;
+      }
+      if (msg.turn_id !== turnId) return;
+      if (msg.type === "tts_chunk" && msg.audio_base64) player.push(base64ToArrayBuffer(msg.audio_base64));
+      else if (msg.type === "tts_end") player.finish();
+    };
+    const onClose = () => player.finish();
+    ws.addEventListener("message", onMessage);
+    ws.addEventListener("close", onClose);
+    void done.then(() => {
+      ws.removeEventListener("message", onMessage);
+      ws.removeEventListener("close", onClose);
+      if (currentTurnIdRef.current === turnId) currentTurnIdRef.current = null;
+    });
+    return done;
+  }, [getPlayer]);
+
+  /** Stops the interviewer mid-sentence: local playback now, and the server
+   * stops synthesizing the rest of the current line. */
+  const interruptSpeech = useCallback(() => {
+    playerRef.current?.stop();
+    const ws = wsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN && currentTurnIdRef.current) {
+      ws.send(JSON.stringify({ type: "barge_in", timestamp: Date.now(), turn_id: currentTurnIdRef.current }));
+    }
+    currentTurnIdRef.current = null;
   }, []);
 
   const runEvaluation = useCallback(
@@ -526,22 +563,31 @@ export default function InterviewRoom({
   /** Asks the LLM for the interviewer's next line with WebSocket streaming acceleration */
   const advanceToNextQuestion = useCallback(
     async (history: TranscriptTurn[]) => {
+      if (endedRef.current) return;
       setPhase("thinking");
       try {
-        let data: { question: string; is_final: boolean; audio_base64?: string | null } | null = null;
+        let data: { question: string; is_final: boolean } | null = null;
+        wsSpeechRef.current = null;
 
         // 1. Try ultra-low latency WebSocket pipeline
         if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
           try {
             data = await new Promise((resolve, reject) => {
               const ws = wsRef.current!;
-              const timer = setTimeout(() => reject(new Error("WebSocket timeout")), 14000);
+              const timer = setTimeout(() => {
+                ws.removeEventListener("message", handler);
+                reject(new Error("WebSocket timeout"));
+              }, 14000);
               const handler = (evt: MessageEvent) => {
+                if (typeof evt.data !== "string") return;
                 try {
                   const msg = JSON.parse(evt.data);
                   if (msg.type === "turn_result") {
                     clearTimeout(timer);
                     ws.removeEventListener("message", handler);
+                    if (msg.audio_stream && msg.turn_id && !endedRef.current) {
+                      wsSpeechRef.current = startWsSpeech(ws, msg.turn_id);
+                    }
                     resolve(msg);
                   }
                 } catch {}
@@ -583,10 +629,17 @@ export default function InterviewRoom({
           if (!res.ok) throw new Error(`Interview turn request failed (${res.status})`);
           data = (await res.json()) as { question: string; is_final: boolean };
         }
+        if (endedRef.current) {
+          playerRef.current?.stop();
+          return;
+        }
 
         const turn = addTurn("interviewer", data.question);
-        await speak(data.question, data.audio_base64);
-        void turn;
+        const streamed = wsSpeechRef.current;
+        wsSpeechRef.current = null;
+        if (streamed) await streamed;
+        else await speak(data.question);
+        if (endedRef.current) return;
 
         if (data.is_final) {
           await runEvaluation([...history, turn]);
@@ -594,12 +647,13 @@ export default function InterviewRoom({
           setPhase("listening");
         }
       } catch (err) {
+        if (endedRef.current) return;
         console.error("Failed to get next interview turn", err);
         setErrorMessage("Could not reach the interview agent for the next question — please try answering again.");
         setPhase("listening");
       }
     },
-    [roleTitle, jdText, sessionId, addTurn, speak, runEvaluation],
+    [roleTitle, jdText, sessionId, addTurn, speak, startWsSpeech, runEvaluation],
   );
 
   /** Opt-in screen recording — a separate getDisplayMedia() stream alongside
@@ -818,6 +872,13 @@ export default function InterviewRoom({
 
   const startInterview = useCallback(async () => {
     if (!resumeFile || !roleTitle.trim()) return;
+    // Still inside the Start click's user gesture: browsers only let audio
+    // start from one, and everything after this point is behind an await.
+    const player = getPlayer();
+    player.unlock();
+    setSpeechAnalyser(player.analyser);
+    endedRef.current = false;
+    setConfirmEndOpen(false);
     setPhase("starting");
     setErrorMessage(null);
     setTranscript([]);
@@ -850,18 +911,20 @@ export default function InterviewRoom({
       resumeContextRef.current = data.resume_profile ? buildResumeContext(data.resume_profile) : "";
       resumeSkillsRef.current = data.resume_profile?.skills || [];
 
+      if (endedRef.current) return;
       const greeting = data.questions[0];
-      const turn = addTurn("interviewer", greeting.text);
+      addTurn("interviewer", greeting.text);
       await speak(greeting.text);
+      if (endedRef.current) return;
       setPhase("listening");
-      void turn;
     } catch (err) {
+      if (endedRef.current) return;
       console.error("Failed to start interview", err);
       setErrorMessage("Could not reach the interview agent. Check that the backend is running.");
       setPhase("error");
     }
   }, [
-    resumeFile, roleTitle, jdText, sessionId, startProctoring, addTurn, speak,
+    resumeFile, roleTitle, jdText, sessionId, startProctoring, addTurn, speak, getPlayer,
     screenRecordingEnabled, startScreenRecording, behavioralRecordingConsent, startBehavioralRecording,
     speakerMonitorConsent, startSpeakerCapture,
   ]);
@@ -893,6 +956,7 @@ export default function InterviewRoom({
           const res = await fetchWithRetry(`${API_URL}/api/v1/transcribe`, { method: "POST", body: formData }, 1, 25000);
           if (!res.ok) throw new Error(`Transcription failed (${res.status})`);
           const data = await res.json();
+          if (endedRef.current) return;
           const candidateText: string = (data.transcript || "").trim();
 
           if (!candidateText) {
@@ -906,7 +970,7 @@ export default function InterviewRoom({
             } else {
               setPhase("thinking");
               await speak("Sorry, I didn't catch that — could you please repeat your answer?");
-              setPhase("listening");
+              if (!endedRef.current) setPhase("listening");
             }
             return;
           }
@@ -916,6 +980,7 @@ export default function InterviewRoom({
           setPhase("thinking");
           await advanceToNextQuestion(nextHistory);
         } catch (err) {
+          if (endedRef.current) return;
           console.error("Answer processing failed", err);
           setErrorMessage("Something went wrong processing that answer — listening again…");
           setPhase("listening");
@@ -956,11 +1021,20 @@ export default function InterviewRoom({
     }
     avStreamRef.current?.getTracks().forEach((t) => t.stop());
     stopSpeakerCapture();
-    audioElRef.current?.pause();
+    endedRef.current = true;
+    interruptSpeech();
+    setConfirmEndOpen(false);
     setPhase("setup");
-  }, [stopProctoring, stopVadLoop, stopScreenRecording, stopSpeakerCapture]);
+  }, [stopProctoring, stopVadLoop, stopScreenRecording, stopSpeakerCapture, interruptSpeech]);
 
+  /** End the call and go straight to the report. Anything still in flight
+   * (a question being generated or spoken, an answer being transcribed) is
+   * abandoned via endedRef rather than awaited. */
   const handleEndInterviewAndEvaluate = useCallback(async () => {
+    if (endedRef.current) return;
+    endedRef.current = true;
+    setConfirmEndOpen(false);
+    interruptSpeech();
     stopProctoring();
     stopVadLoop();
     stopScreenRecording();
@@ -969,7 +1043,6 @@ export default function InterviewRoom({
       mediaRecorderRef.current.stop();
     }
     micStreamRef.current?.getTracks().forEach((t) => t.stop());
-    audioElRef.current?.pause();
 
     // Not awaited: the upload (and the analysis it queues) must never delay
     // the evaluation report the candidate/HR is waiting on. A failed upload
@@ -979,7 +1052,63 @@ export default function InterviewRoom({
     stopSpeakerCapture();
 
     await runEvaluation(transcript);
-  }, [stopProctoring, stopVadLoop, stopScreenRecording, runEvaluation, transcript, stopBehavioralRecordingAndUpload, stopSpeakerCapture]);
+  }, [
+    stopProctoring, stopVadLoop, stopScreenRecording, runEvaluation, transcript,
+    stopBehavioralRecordingAndUpload, stopSpeakerCapture, interruptSpeech,
+  ]);
+
+  // Barge-in monitor: only while the interviewer is speaking. Its own mic
+  // stream (echo cancellation on) — the answer recorder isn't open yet then.
+  useEffect(() => {
+    if (!BARGE_IN_ENABLED || phase !== "speaking" || !navigator.mediaDevices?.getUserMedia) return;
+    let cancelled = false;
+    let raf: number | null = null;
+    let stream: MediaStream | null = null;
+    let ctx: AudioContext | null = null;
+    void (async () => {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: false },
+        });
+        if (cancelled) return;
+        ctx = new AudioContext();
+        const analyser = ctx.createAnalyser();
+        analyser.fftSize = 512;
+        ctx.createMediaStreamSource(stream).connect(analyser);
+        const data = new Uint8Array(analyser.fftSize);
+        let loudMs = 0;
+        let last = performance.now();
+        const tick = () => {
+          analyser.getByteTimeDomainData(data);
+          let sum = 0;
+          for (let i = 0; i < data.length; i++) {
+            const v = (data[i] - 128) / 128;
+            sum += v * v;
+          }
+          const now = performance.now();
+          const dt = Math.min(100, now - last);
+          last = now;
+          loudMs = Math.sqrt(sum / data.length) > BARGE_IN_RMS_THRESHOLD ? loudMs + dt : Math.max(0, loudMs - dt / 2);
+          if (loudMs >= BARGE_IN_TRIGGER_MS) {
+            // Stopping playback resolves the pending speak(); the flow
+            // then moves to "listening" and records the candidate.
+            interruptSpeech();
+            return;
+          }
+          raf = requestAnimationFrame(tick);
+        };
+        raf = requestAnimationFrame(tick);
+      } catch {
+        // No mic permission here just means no barge-in; never fatal.
+      }
+    })();
+    return () => {
+      cancelled = true;
+      if (raf !== null) cancelAnimationFrame(raf);
+      stream?.getTracks().forEach((t) => t.stop());
+      void ctx?.close().catch(() => {});
+    };
+  }, [phase, interruptSpeech]);
 
   const handleResumeChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0] || null;
@@ -1228,6 +1357,10 @@ export default function InterviewRoom({
     );
   }
 
+  if (phase === "evaluating") {
+    return <EvaluatingScreen candidateView={candidateView} />;
+  }
+
   if (candidateView && phase === "complete") {
     return (
       <div className="mx-auto w-full max-w-xl py-16 px-4">
@@ -1258,10 +1391,38 @@ export default function InterviewRoom({
     );
   }
 
+  if (phase === "complete" && !evaluation) {
+    return (
+      <div className="mx-auto w-full max-w-xl py-16 px-4">
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-8 text-center">
+          <AlertTriangle className="mx-auto mb-3 h-8 w-8 text-amber-600" />
+          <h1 className="text-lg font-semibold text-amber-900">The report couldn&rsquo;t be generated</h1>
+          <p className="mt-2 text-sm text-amber-800">
+            {errorMessage || "The evaluation request failed."} The interview transcript is kept, so you can retry.
+          </p>
+          <div className="mt-5 flex items-center justify-center gap-2">
+            <button
+              onClick={() => { setErrorMessage(null); void runEvaluation(transcript); }}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-zinc-900 px-4 py-2 text-sm font-semibold text-white hover:bg-zinc-800"
+            >
+              <RotateCcw className="h-4 w-4" /> Retry report
+            </button>
+            <button
+              onClick={() => setPhase("setup")}
+              className="rounded-xl border border-amber-300 bg-white px-4 py-2 text-sm font-semibold text-amber-900 hover:bg-amber-100"
+            >
+              Start new screen
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (phase === "complete" && evaluation) {
     return (
-      <div className="mx-auto w-full max-w-4xl py-10 px-4 space-y-6">
-        <div className="flex items-center justify-between border-b border-zinc-200 pb-5">
+      <div ref={reportRef} className="mx-auto w-full max-w-4xl scroll-mt-20 py-10 px-4 space-y-6">
+        <div className="flex items-center justify-between border-b border-zinc-200 pb-5 flex-wrap gap-3">
           <div>
             <div className="flex items-center gap-2 text-xs font-mono font-bold text-emerald-700 uppercase">
               <CheckCircle2 className="w-4 h-4 text-emerald-600" />
@@ -1271,7 +1432,8 @@ export default function InterviewRoom({
               Evaluation for {candidateName || "candidate"}
             </h1>
             <p className="text-xs text-zinc-500 mt-0.5">
-              Role: {roleTitle || DEFAULT_ROLE} · Generated at {new Date().toLocaleTimeString()}
+              Role: {roleTitle || DEFAULT_ROLE} · Duration {formatClock(elapsedMs)} · {candidateTurnsSoFar} answer
+              {candidateTurnsSoFar === 1 ? "" : "s"} · Generated at {new Date().toLocaleTimeString()}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -1297,126 +1459,205 @@ export default function InterviewRoom({
     );
   }
 
-  return (
-    <div className="fixed inset-0 z-[100] bg-zinc-950 flex flex-col">
-      <div className="flex items-center justify-between px-4 sm:px-6 py-3 border-b border-white/10 text-white">
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-blue-600 text-xs font-bold">A</span>
+  const aiSpeaking = phase === "speaking";
+  const candidateSpeaking = phase === "recording";
+  const lastQuestion = [...transcript].reverse().find((t) => t.role === "interviewer");
+  const questionNumber = Math.min(candidateTurnsSoFar + 1, MAX_CANDIDATE_TURNS);
+  const aiStatus =
+    phase === "speaking" ? "Speaking"
+    : phase === "thinking" || phase === "transcribing" ? "Thinking"
+    : phase === "listening" || phase === "recording" ? "Listening"
+    : phase === "starting" ? "Joining"
+    : "Idle";
+
+  // Portaled to <body>: an ancestor in the product layout creates a
+  // containing block, which pinned this "fixed" overlay below the site header
+  // (seen in live E2E screenshots) instead of covering the viewport.
+  return createPortal(
+    <div className="fixed inset-0 z-[1000] flex flex-col bg-[#0a0c11] text-white">
+      {/* Top bar */}
+      <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-white/[0.06] px-4 sm:px-6">
+        <div className="flex min-w-0 items-center gap-3">
+          <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 text-xs font-bold">
+            A
+          </span>
           <div className="min-w-0">
-            <div className="text-sm font-bold truncate">{roleTitle || DEFAULT_ROLE}</div>
-            <div className="text-[11px] text-zinc-400 font-mono">
-              {transcript.length > 0
-                ? `Question ${Math.min(candidateTurnsSoFar + 1, MAX_CANDIDATE_TURNS)} of ${MAX_CANDIDATE_TURNS}`
-                : "Connecting…"}
+            <div className="truncate text-sm font-semibold">{roleTitle || DEFAULT_ROLE} · AI Interview</div>
+            <div className="flex items-center gap-2 text-[11px] text-zinc-400">
+              {transcript.length > 0 ? (
+                <>
+                  <span>Question {questionNumber} of {MAX_CANDIDATE_TURNS}</span>
+                  <span className="hidden sm:flex h-1 w-24 overflow-hidden rounded-full bg-white/10">
+                    <span
+                      className="h-full rounded-full bg-blue-400 transition-all duration-500"
+                      style={{ width: `${(candidateTurnsSoFar / MAX_CANDIDATE_TURNS) * 100}%` }}
+                    />
+                  </span>
+                </>
+              ) : (
+                <span>Connecting…</span>
+              )}
             </div>
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <span className="text-xs font-mono text-zinc-400 hidden sm:inline">{formatClock(elapsedMs)}</span>
-          <button
-            onClick={handleEndInterviewAndEvaluate}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-400/30 bg-emerald-500/10 px-3.5 py-1.5 text-xs font-semibold text-emerald-300 transition hover:bg-emerald-500/20"
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-white/[0.06] px-3 py-1 font-mono text-xs text-zinc-300">
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-red-500" />
+            {formatClock(elapsedMs)}
+          </span>
+          <span
+            className={`hidden sm:inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-medium ${
+              isLive ? "bg-emerald-500/10 text-emerald-300" : "bg-white/[0.06] text-zinc-400"
+            }`}
           >
-            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> End & Get Report
-          </button>
-          <button
-            onClick={stopEverything}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-zinc-400 transition hover:bg-white/10 hover:text-white"
-          >
-            <LogOut className="w-3.5 h-3.5" /> Exit
-          </button>
+            <ShieldCheck className="h-3.5 w-3.5" /> {isLive ? "Proctored" : "Proctoring off"}
+          </span>
         </div>
-      </div>
+      </header>
 
       {errorMessage && (
-        <div className="mx-4 sm:mx-6 mt-3 rounded-xl border border-red-400/30 bg-red-500/10 px-4 py-3 text-sm text-red-200 flex items-center gap-2">
-          <AlertTriangle className="w-4 h-4 shrink-0" /> {errorMessage}
+        <div className="mx-4 mt-3 flex items-center gap-2 rounded-xl border border-red-400/30 bg-red-500/10 px-4 py-2.5 text-sm text-red-200 sm:mx-6">
+          <AlertTriangle className="h-4 w-4 shrink-0" /> {errorMessage}
         </div>
       )}
 
-      <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-4 p-4 sm:p-6 overflow-hidden min-h-0">
-        {/* Candidate camera panel */}
-        <div ref={videoContainerRef} className="relative rounded-2xl overflow-hidden bg-zinc-900 min-h-[260px]">
-          <video ref={videoRef} muted playsInline className="h-full w-full object-cover [transform:scaleX(-1)]" />
-          {proctoring.status === "error" && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-zinc-900/95 text-center text-amber-300 px-6">
-              <AlertTriangle className="w-9 h-9 opacity-80" />
-              <p className="text-xs max-w-[240px] font-medium">{proctoring.errorMessage}</p>
-              <p className="text-[11px] text-zinc-400 max-w-[240px]">
-                BrewShield proctoring couldn&rsquo;t start, but the interview itself will continue normally.
-              </p>
-            </div>
-          )}
-          {proctoring.status === "starting" && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-zinc-900/90 text-center text-zinc-300 px-6">
-              <Loader2 className="w-8 h-8 animate-spin opacity-70" />
-              <p className="text-xs">Requesting camera access…</p>
-            </div>
-          )}
-          {isLive && <FaceOverlayCanvas containerRef={videoContainerRef} boxes={faceBoxes} />}
-          {isLive && (
-            <span className="absolute left-3 top-3 flex items-center gap-1 rounded-md bg-red-600 px-2 py-0.5 text-[11px] font-semibold text-white">
-              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-white" /> LIVE
-            </span>
-          )}
-          {isRecordingScreen && (
-            <span className="absolute left-3 top-9 flex items-center gap-1 rounded-md bg-blue-600 px-2 py-0.5 text-[11px] font-semibold text-white">
-              <ScreenShare className="w-3 h-3" /> Recording screen
-            </span>
-          )}
-          {isLive && proctoring.activeAlert && (
-            <div className="absolute inset-x-0 top-1/2 mx-auto flex w-fit -translate-y-1/2 items-center gap-1.5 animate-pulse rounded-lg bg-red-600/95 px-4 py-2 text-center text-sm font-semibold text-white shadow-lg">
-              <AlertTriangle className="w-4 h-4 shrink-0" /> {proctoring.activeAlert}
-            </div>
-          )}
-          <div className="absolute inset-x-0 bottom-0 flex items-center justify-between bg-gradient-to-t from-black/70 to-transparent px-3 py-2 text-xs font-medium text-white">
-            <span>{candidateName || "You (candidate)"}</span>
-          </div>
-        </div>
+      <div className="grid min-h-0 flex-1 grid-cols-1 overflow-y-auto lg:grid-cols-[minmax(0,1fr)_360px] lg:overflow-hidden">
+        <main className="flex flex-col gap-3 p-3 sm:gap-4 sm:p-5 lg:min-h-0">
+          {/* Stage: AI on the left, candidate on the right */}
+          <div className="grid grid-cols-1 gap-3 sm:gap-4 md:grid-cols-2 lg:min-h-0 lg:flex-1">
+            <section
+              className={`relative flex min-h-[220px] flex-col items-center justify-center overflow-hidden rounded-3xl bg-gradient-to-br from-indigo-950 via-slate-900 to-slate-950 transition-shadow duration-300 ${
+                aiSpeaking ? "ring-2 ring-sky-400/70 shadow-[0_0_48px_-10px_rgba(56,189,248,0.55)]" : "ring-1 ring-white/10"
+              }`}
+            >
+              <div className="pointer-events-none absolute -left-16 -top-16 h-56 w-56 rounded-full bg-blue-500/20 blur-3xl" />
+              <div className="pointer-events-none absolute -bottom-20 -right-10 h-56 w-56 rounded-full bg-indigo-500/20 blur-3xl" />
+              <span className="absolute left-3 top-3 inline-flex items-center gap-1.5 rounded-full bg-black/40 px-2.5 py-1 text-[11px] font-medium text-zinc-200 backdrop-blur">
+                {aiStatus === "Thinking" || aiStatus === "Joining" ? (
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                ) : aiStatus === "Speaking" ? (
+                  <Volume2 className="h-3 w-3" />
+                ) : (
+                  <span className={`h-1.5 w-1.5 rounded-full ${aiStatus === "Listening" ? "bg-emerald-400" : "bg-zinc-400"}`} />
+                )}
+                {aiStatus}
+              </span>
 
-        {/* Agent avatar + waveform panel */}
-        <div className="relative rounded-2xl overflow-hidden bg-gradient-to-br from-blue-600 via-blue-600 to-sky-500 flex flex-col items-center justify-center gap-6 p-6 min-h-[260px]">
-          <div className="absolute -top-10 -right-10 w-40 h-40 bg-white/10 rounded-full blur-3xl pointer-events-none" />
-          <div className="relative w-24 h-24 shrink-0 rounded-full bg-white/95 border-4 border-white/40 flex items-center justify-center text-blue-700 font-extrabold text-3xl shadow-lg">
-            AS
-            {phase === "speaking" && <span className="absolute inset-0 rounded-full ring-4 ring-white/60 animate-ping" />}
-          </div>
-          <div className="text-center">
-            <div className="text-white font-bold text-lg">{INTERVIEWER_NAME}</div>
-            <div className="text-blue-100 text-xs font-mono">AI Interviewer · Screening Agent</div>
-          </div>
-          <AgentWaveform audioEl={ttsAudioEl} phase={phase} />
-          <div className="flex items-center gap-1.5 text-[12px] font-mono text-white">
-            {phase === "speaking" ? (
-              <>
-                <Volume2 className="w-3.5 h-3.5" /> Speaking…
-              </>
-            ) : phase === "listening" || phase === "recording" ? (
-              <>
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-300 animate-pulse" /> Listening
-              </>
-            ) : phase === "transcribing" || phase === "thinking" || phase === "evaluating" ? (
-              <>
-                <Loader2 className="w-3.5 h-3.5 animate-spin" /> Processing
-              </>
-            ) : (
-              <>
-                <span className="w-1.5 h-1.5 rounded-full bg-white/70" /> Idle
-              </>
-            )}
-          </div>
-        </div>
-      </div>
+              <div className="relative">
+                {aiSpeaking && (
+                  <>
+                    <span className="absolute inset-0 animate-ping rounded-full bg-sky-400/20" />
+                    <span className="absolute -inset-3 rounded-full ring-2 ring-sky-400/30" />
+                  </>
+                )}
+                <div className="relative flex h-28 w-28 items-center justify-center rounded-full bg-gradient-to-br from-sky-400 via-blue-500 to-indigo-600 shadow-xl shadow-blue-900/50 sm:h-32 sm:w-32">
+                  <Sparkles className="h-10 w-10 text-white/95 sm:h-12 sm:w-12" />
+                </div>
+              </div>
+              <div className="mt-5 h-10">
+                <AgentWaveform analyser={speechAnalyser} active={aiSpeaking} />
+              </div>
 
-      <div className="border-t border-white/10 px-4 sm:px-6 py-3 flex flex-col gap-3">
-        <MicStatusIndicator phase={phase} micLevel={micLevel} hasHeardSpeech={hasHeardSpeech} />
+              <div className="absolute bottom-3 left-3 rounded-lg bg-black/40 px-2.5 py-1 text-xs font-medium backdrop-blur">
+                {INTERVIEWER_NAME} <span className="text-zinc-400">· AI Interviewer</span>
+              </div>
+            </section>
 
-        <div className="grid grid-cols-1 lg:grid-cols-[1.4fr_1fr] gap-3 max-h-[220px]">
-          <div className="rounded-xl border border-white/10 bg-white/5 p-3 overflow-y-auto">
-            <div className="flex items-center gap-2 mb-2 text-[11px] font-mono font-bold uppercase tracking-wider text-zinc-400">
-              <MessageSquare className="w-3.5 h-3.5" /> Live Transcript
+            <section
+              ref={videoContainerRef}
+              className={`relative h-[260px] overflow-hidden rounded-3xl bg-zinc-900 md:h-auto md:min-h-[240px] transition-shadow duration-300 ${
+                candidateSpeaking ? "ring-2 ring-emerald-400/70 shadow-[0_0_48px_-10px_rgba(52,211,153,0.5)]" : "ring-1 ring-white/10"
+              }`}
+            >
+              <video ref={videoRef} muted playsInline className="h-full w-full object-cover [transform:scaleX(-1)]" />
+              {proctoring.status === "error" && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-zinc-900/95 px-6 text-center text-amber-300">
+                  <AlertTriangle className="h-9 w-9 opacity-80" />
+                  <p className="max-w-[240px] text-xs font-medium">{proctoring.errorMessage}</p>
+                  <p className="max-w-[240px] text-[11px] text-zinc-400">
+                    BrewShield proctoring couldn&rsquo;t start, but the interview itself will continue normally.
+                  </p>
+                </div>
+              )}
+              {proctoring.status === "starting" && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-zinc-900/90 px-6 text-center text-zinc-300">
+                  <Loader2 className="h-8 w-8 animate-spin opacity-70" />
+                  <p className="text-xs">Requesting camera access…</p>
+                </div>
+              )}
+              {isLive && <FaceOverlayCanvas containerRef={videoContainerRef} boxes={faceBoxes} />}
+              <div className="absolute left-3 top-3 flex flex-col items-start gap-1.5">
+                {isLive && (
+                  <span className="flex items-center gap-1 rounded-full bg-red-600/90 px-2.5 py-1 text-[11px] font-semibold">
+                    <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-white" /> LIVE
+                  </span>
+                )}
+                {isRecordingScreen && (
+                  <span className="flex items-center gap-1 rounded-full bg-blue-600/90 px-2.5 py-1 text-[11px] font-semibold">
+                    <ScreenShare className="h-3 w-3" /> Recording screen
+                  </span>
+                )}
+              </div>
+              {isLive && proctoring.activeAlert && (
+                <div className="absolute inset-x-0 top-1/2 mx-auto flex w-fit -translate-y-1/2 animate-pulse items-center gap-1.5 rounded-lg bg-red-600/95 px-4 py-2 text-center text-sm font-semibold shadow-lg">
+                  <AlertTriangle className="h-4 w-4 shrink-0" /> {proctoring.activeAlert}
+                </div>
+              )}
+              <div className="absolute bottom-3 left-3 flex items-center gap-2 rounded-lg bg-black/40 px-2.5 py-1 text-xs font-medium backdrop-blur">
+                {candidateName || "You"}
+                {candidateSpeaking && (
+                  <span className="flex h-3 items-end gap-0.5" aria-hidden>
+                    {[0, 1, 2].map((i) => (
+                      <span
+                        key={i}
+                        className="w-0.5 rounded-full bg-emerald-400 transition-all duration-100"
+                        style={{ height: `${3 + Math.min(1, micLevel * (0.7 + i * 0.2)) * 9}px` }}
+                      />
+                    ))}
+                  </span>
+                )}
+              </div>
+            </section>
+          </div>
+
+          {/* Live caption of the current question */}
+          <div className="shrink-0 rounded-2xl bg-white/[0.04] px-4 py-3 ring-1 ring-white/[0.08]">
+            <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-sky-300/80">
+              {INTERVIEWER_NAME} asked
             </div>
-            <div className="space-y-2 text-left text-xs">
+            <p className="line-clamp-3 text-sm leading-relaxed text-zinc-100 sm:text-[15px]">
+              {lastQuestion?.text || "Your interviewer will greet you in a moment…"}
+            </p>
+          </div>
+
+          {/* Controls */}
+          <div className="flex shrink-0 flex-col items-center gap-3 sm:flex-row sm:justify-between">
+            <MicStatusIndicator phase={phase} micLevel={micLevel} hasHeardSpeech={hasHeardSpeech} />
+            <div className="flex items-center gap-2">
+              <button
+                onClick={stopEverything}
+                title="Leave without a report"
+                className="inline-flex h-11 items-center gap-1.5 rounded-full bg-white/[0.06] px-4 text-xs font-semibold text-zinc-300 ring-1 ring-white/10 transition hover:bg-white/10 hover:text-white"
+              >
+                <LogOut className="h-4 w-4" /> Leave
+              </button>
+              <button
+                onClick={() => setConfirmEndOpen(true)}
+                className="inline-flex h-11 items-center gap-2 rounded-full bg-red-600 px-5 text-sm font-semibold shadow-lg shadow-red-900/40 transition hover:bg-red-500"
+              >
+                <PhoneOff className="h-4 w-4" /> End interview
+              </button>
+            </div>
+          </div>
+        </main>
+
+        {/* Sidebar: transcript + integrity */}
+        <aside className="flex flex-col gap-3 border-t border-white/[0.06] p-3 sm:p-5 lg:min-h-0 lg:border-l lg:border-t-0">
+          <div className="flex h-[45vh] flex-col rounded-2xl bg-white/[0.03] ring-1 ring-white/[0.08] lg:h-auto lg:min-h-0 lg:flex-1">
+            <div className="flex items-center gap-2 border-b border-white/[0.06] px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
+              <MessageSquare className="h-3.5 w-3.5" /> Transcript
+            </div>
+            <div className="flex-1 space-y-3 overflow-y-auto px-4 py-3 text-left text-[13px]">
               <AnimatePresence initial={false}>
                 {transcript.map((turn) => (
                   <motion.div
@@ -1425,12 +1666,14 @@ export default function InterviewRoom({
                     animate={{ opacity: 1, y: 0 }}
                     className={`flex flex-col ${turn.role === "candidate" ? "items-end" : "items-start"}`}
                   >
-                    <span className={`mb-0.5 text-[10px] font-semibold ${turn.role === "candidate" ? "text-orange-300" : "text-blue-300"}`}>
+                    <span className={`mb-0.5 text-[10px] font-semibold ${turn.role === "candidate" ? "text-emerald-300" : "text-sky-300"}`}>
                       {turn.role === "candidate" ? "You" : INTERVIEWER_NAME}
                     </span>
                     <div
-                      className={`max-w-[90%] rounded-lg px-2.5 py-1.5 leading-relaxed ${
-                        turn.role === "candidate" ? "bg-orange-500/10 text-orange-50" : "bg-blue-500/10 text-blue-50"
+                      className={`max-w-[92%] rounded-2xl px-3 py-2 leading-relaxed ${
+                        turn.role === "candidate"
+                          ? "rounded-tr-sm bg-emerald-500/10 text-emerald-50"
+                          : "rounded-tl-sm bg-sky-500/10 text-sky-50"
                       }`}
                     >
                       {turn.text}
@@ -1440,26 +1683,94 @@ export default function InterviewRoom({
               </AnimatePresence>
               <div ref={transcriptEndRef} />
             </div>
-            {phase === "evaluating" && <ReportGeneratingSkeleton />}
-            {phase === "complete" && evaluation && (
-              <div className="mt-3">
-                <InterviewReport evaluation={evaluation} sessionId={sessionId} />
-              </div>
-            )}
-            {phase === "complete" && screenRecordingBlob && (
-              <button
-                onClick={saveScreenRecording}
-                className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-blue-400/30 bg-blue-500/10 px-3 py-1.5 text-xs font-semibold text-blue-200 transition hover:bg-blue-500/20"
-              >
-                <Download className="w-3.5 h-3.5" /> Save screen recording
-              </button>
-            )}
           </div>
-
           <BrewShieldPanel state={proctoring} voiceCheck={voiceCheck} />
-        </div>
+        </aside>
       </div>
-    </div>
+
+      <AnimatePresence>
+        {confirmEndOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[1010] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+            onClick={() => setConfirmEndOpen(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.96, y: 8 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.96, y: 8 }}
+              onClick={(e) => e.stopPropagation()}
+              role="dialog"
+              aria-modal="true"
+              className="w-full max-w-sm rounded-2xl bg-zinc-900 p-6 text-center ring-1 ring-white/10"
+            >
+              <span className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-red-600/15">
+                <PhoneOff className="h-5 w-5 text-red-400" />
+              </span>
+              <h2 className="text-base font-semibold">End the interview?</h2>
+              <p className="mt-1.5 text-sm text-zinc-400">
+                {candidateView
+                  ? "Your answers so far will be submitted to the hiring team."
+                  : `The report will be generated from the ${candidateTurnsSoFar} answer${candidateTurnsSoFar === 1 ? "" : "s"} given so far.`}
+              </p>
+              <div className="mt-5 flex gap-2">
+                <button
+                  onClick={() => setConfirmEndOpen(false)}
+                  className="flex-1 rounded-xl bg-white/[0.06] py-2.5 text-sm font-semibold text-zinc-200 ring-1 ring-white/10 hover:bg-white/10"
+                >
+                  Keep going
+                </button>
+                <button
+                  onClick={() => void handleEndInterviewAndEvaluate()}
+                  className="flex-1 rounded-xl bg-red-600 py-2.5 text-sm font-semibold hover:bg-red-500"
+                >
+                  {candidateView ? "End & submit" : "End & get report"}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>,
+    document.body,
+  );
+}
+
+function EvaluatingScreen({ candidateView }: { candidateView: boolean }) {
+  const [messageIndex, setMessageIndex] = useState(0);
+  useEffect(() => {
+    const id = window.setInterval(() => setMessageIndex((i) => (i + 1) % REPORT_GENERATING_MESSAGES.length), 2500);
+    return () => window.clearInterval(id);
+  }, []);
+  return createPortal(
+    <div className="fixed inset-0 z-[1000] flex flex-col items-center justify-center gap-5 bg-[#0a0c11] px-6 text-center text-white">
+      <div className="relative flex h-20 w-20 items-center justify-center">
+        <span className="absolute inset-0 animate-ping rounded-full bg-blue-500/20" />
+        <span className="relative flex h-20 w-20 items-center justify-center rounded-full bg-gradient-to-br from-sky-400 via-blue-500 to-indigo-600">
+          <Loader2 className="h-8 w-8 animate-spin" />
+        </span>
+      </div>
+      <div>
+        <div className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Interview ended</div>
+        <h1 className="mt-1 text-xl font-semibold">
+          {candidateView ? "Submitting your interview…" : "Generating the interview report…"}
+        </h1>
+      </div>
+      <AnimatePresence mode="wait">
+        <motion.p
+          key={messageIndex}
+          initial={{ opacity: 0, y: 4 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -4 }}
+          className="text-sm text-zinc-400"
+        >
+          {REPORT_GENERATING_MESSAGES[messageIndex]}
+        </motion.p>
+      </AnimatePresence>
+    </div>,
+    document.body,
   );
 }
 
@@ -1470,72 +1781,40 @@ function formatClock(ms: number) {
   return `${m}:${s}`;
 }
 
-/** Real amplitude-driven bar graph, connected to the same &lt;audio&gt; element
- * `speak()` already creates for TTS playback — reuses that element instead
- * of a canned CSS pulse. */
-function AgentWaveform({ audioEl, phase }: { audioEl: HTMLAudioElement | null; phase: InterviewPhase }) {
-  const [levels, setLevels] = useState<number[]>(Array(9).fill(0.15));
-  const rafRef = useRef<number | null>(null);
-  const ctxRef = useRef<AudioContext | null>(null);
-  const sourceElRef = useRef<HTMLAudioElement | null>(null);
+const IDLE_LEVELS = Array(16).fill(0.12);
+
+/** Real amplitude bars from the speech player's AnalyserNode — every
+ * interviewer chunk (WAV or MP3) plays through it, so this tracks the
+ * actual voice rather than a canned CSS pulse. */
+function AgentWaveform({ analyser, active }: { analyser: AnalyserNode | null; active: boolean }) {
+  const [levels, setLevels] = useState<number[]>(IDLE_LEVELS);
 
   useEffect(() => {
-    // Resetting to idle bars belongs to the *previous* run's cleanup (fired
-    // when phase/audioEl changes away from "speaking"), not a synchronous
-    // setState here in the new run's body.
-    if (phase !== "speaking" || !audioEl) {
-      return;
-    }
-
-    // A given <audio> element can only ever be connected to one
-    // MediaElementSourceNode for its lifetime — guard against reconnecting.
-    if (sourceElRef.current === audioEl && ctxRef.current) {
-      // already wired up from a previous "speaking" phase on the same element
-    } else {
-      try {
-        const AudioCtxCtor =
-          window.AudioContext ||
-          (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-        const ctx = ctxRef.current || new AudioCtxCtor();
-        ctxRef.current = ctx;
-        const source = ctx.createMediaElementSource(audioEl);
-        const analyser = ctx.createAnalyser();
-        analyser.fftSize = 64;
-        source.connect(analyser);
-        analyser.connect(ctx.destination);
-        sourceElRef.current = audioEl;
-
-        const data = new Uint8Array(analyser.frequencyBinCount);
-        const tick = () => {
-          analyser.getByteFrequencyData(data);
-          const bars = Array.from({ length: 9 }, (_, i) => {
-            const idx = Math.floor((i / 9) * data.length);
-            return Math.max(0.15, Math.min(1, data[idx] / 255));
-          });
-          setLevels(bars);
-          rafRef.current = requestAnimationFrame(tick);
-        };
-        rafRef.current = requestAnimationFrame(tick);
-      } catch (err) {
-        // MediaElementSourceNode setup can fail cross-origin/CORS-tainted —
-        // the avatar still shows a speaking state via the pulse ring above.
-        console.error("Agent waveform audio graph failed", err);
-      }
-    }
-
-    return () => {
-      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
-      setLevels(Array(9).fill(0.15));
+    if (!active || !analyser) return;
+    const data = new Uint8Array(analyser.frequencyBinCount);
+    let raf = 0;
+    const tick = () => {
+      analyser.getByteFrequencyData(data);
+      setLevels(IDLE_LEVELS.map((_, i) => {
+        const idx = Math.floor((i / IDLE_LEVELS.length) * data.length * 0.8);
+        return Math.max(0.12, Math.min(1, data[idx] / 255));
+      }));
+      raf = requestAnimationFrame(tick);
     };
-  }, [phase, audioEl]);
+    raf = requestAnimationFrame(tick);
+    return () => {
+      cancelAnimationFrame(raf);
+      setLevels(IDLE_LEVELS);
+    };
+  }, [analyser, active]);
 
   return (
-    <div className="flex items-end gap-1 h-8" aria-hidden>
+    <div className="flex h-10 items-center gap-1" aria-hidden>
       {levels.map((lvl, i) => (
         <span
           key={i}
-          className="w-1.5 rounded-full bg-white/80 transition-all duration-100"
-          style={{ height: `${8 + lvl * 24}px` }}
+          className="w-1 rounded-full bg-sky-300/80 transition-all duration-100"
+          style={{ height: `${6 + lvl * 34}px` }}
         />
       ))}
     </div>
@@ -1562,7 +1841,7 @@ function MicStatusIndicator({
 
   return (
     <div
-      className={`flex items-center justify-center gap-2.5 rounded-2xl border py-2.5 text-sm font-bold transition-all ${
+      className={`flex h-11 items-center justify-center gap-2.5 rounded-full border px-4 text-xs font-semibold transition-all sm:text-sm ${
         recording
           ? "bg-red-500/10 border-red-400/30 text-red-200"
           : active
@@ -1600,31 +1879,6 @@ const REPORT_GENERATING_MESSAGES = [
   "Comparing skills against the role…",
   "Preparing your detailed report…",
 ];
-
-/** Shown in place of the report while /interview/evaluate is in flight — a
- * blank "Processing" spinner for up to 45s (the eval call's own timeout)
- * reads as broken; a rotating status at least shows real progress stages. */
-function ReportGeneratingSkeleton() {
-  const [messageIndex, setMessageIndex] = useState(0);
-
-  useEffect(() => {
-    const id = window.setInterval(() => {
-      setMessageIndex((i) => (i + 1) % REPORT_GENERATING_MESSAGES.length);
-    }, 2500);
-    return () => window.clearInterval(id);
-  }, []);
-
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      className="mt-3 rounded-xl border border-blue-400/20 bg-blue-400/10 p-4 flex items-center gap-3"
-    >
-      <Loader2 className="w-4 h-4 shrink-0 animate-spin text-blue-300" />
-      <span className="text-[12px] font-medium text-blue-100">{REPORT_GENERATING_MESSAGES[messageIndex]}</span>
-    </motion.div>
-  );
-}
 
 function voiceCheckLabel(v: VoiceCheckState): string {
   if (v.status === "unavailable") return "Unavailable";

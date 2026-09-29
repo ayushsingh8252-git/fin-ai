@@ -20,3 +20,8 @@ test_*.py
 check_db.py
 seed_project_docs.py
 verify_live_keys.py
+
+# Kokoro TTS model files (~340 MB) — fetched by scripts/download_kokoro.py
+# inside the image build, never copied from the host build context.
+models/kokoro/
+!scripts/download_kokoro.py

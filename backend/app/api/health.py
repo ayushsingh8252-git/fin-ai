@@ -114,3 +114,13 @@ def readiness():
 
     logger.info("[health] readiness=%s db=%s redis=%s (%.1fms)", body["status"], checks["database"], checks["redis"], elapsed_ms)
     return JSONResponse(status_code=200 if ready else 503, content=body)
+
+
+@router.get("/tts")
+def tts_health():
+    """Informational only, deliberately not part of /ready: TTS has a
+    working fallback (Edge/gTTS), so an unloaded Kokoro is a degraded voice,
+    not an instance that can't serve requests."""
+    from ..services import tts_service
+
+    return tts_service.status()
