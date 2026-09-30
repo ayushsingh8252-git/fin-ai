@@ -215,6 +215,74 @@ Realistic floor on this architecture: VAD 1.3 s + STT ~1.6 s + LLM ~0.7 s +
 Kokoro opener ~0.7 s ≈ 4.3 s. Getting to 2–4 s needs streaming STT (or a
 shorter silence wait) — a redesign, not attempted here.
 
+## Update 2026-09-30 (later): silence wait + Whisper beam — measured, both kept
+
+Neither change passed its own evidence bar, so neither was made.
+
+**Silence wait (end-of-answer).** Introduced only in the browser:
+`InterviewRoom.tsx` `VAD_SILENCE_STOP_MS = 1300` — after speech has been
+heard, the answer ends once RMS stays ≤ `VAD_SPEECH_RMS_THRESHOLD` (0.025)
+for 1.3 s (the backend's faster-whisper `vad_filter` only trims audio, it
+doesn't end turns). Replayed that exact detector offline (AnalyserNode 512
+samples @48 kHz, 8-bit time-domain, 60 Hz ticks) on real human speech:
+14 real laptop-mic clips (43 s speech) and 3 × 10 min of a real, spontaneous
+Indian-English interview-coaching video (847 s speech), level-matched to the
+laptop mic (×0.68), plus −6 dB / +3 dB mic variants. Pauses long enough to
+end a candidate's answer early:
+
+| threshold | laptop clips | video 1 | video 2 | video 3 | video 2 @ −6 dB |
+|---|---|---|---|---|---|
+| 1300 ms (current) | 0 | 21 | 39 | 53 | 46 |
+| 1000 ms | 2 | 38 | 63 | 75 | 67 |
+| 800 ms | 3 | 71 | 77 | 98 | 86 |
+| 700 ms | 5 | 90 | 94 | 114 | 110 |
+| 600 ms | 12 | 129 | 115 | 136 | 133 |
+
+800 ms gives 1.8–3.4× the premature cut-off points of today's value, 600 ms
+2.6–6×; even 1000 ms is +42–81 %. Every candidate threshold trades 0.3–0.7 s
+for a large jump in candidates being talked over mid-thought, so 1300 ms
+stays. (The video is a live session with audience pauses, so absolute rates
+are overstated; the relative increase is the finding.)
+
+**Whisper beam 5 vs 1** (`audio_service.transcribe_audio`, `base` int8,
+`vad_filter=True`, `language="en"`). WER/CER vs exact text (A) or
+faster-whisper `small` beam 5 as reference (B, C); median of 3 runs:
+
+| set | latency p50 b5→b1 | CPU total b5→b1 | WER b5→b1 | identical |
+|---|---|---|---|---|
+| A 3 exact-text clips (29 s) | 2032→1467 ms | 25.7→17.7 s | 8.4→8.4 % | 2/3 |
+| B 14 real mic clips (98 s) | 1277→1213 ms | 88.1→80.0 s | 19.9→21.8 % | 11/14 |
+| C 12 real spontaneous segments (240 s) | 2029→1668 ms | 115.5→128.6 s | 39.8→34.0 % | 2/12 |
+
+Beam 1 only clearly wins on clean synthetic speech; on real speech it saved
+~5 % (B) or used *more* CPU in total (C), and it got the domain term
+"Agentic" wrong where beam 5 didn't. Set C is partly Hindi, so both settings
+translate and WER is inflated for both. Not materially equivalent with a
+material gain → beam 5 stays.
+
+## EC2 deploy 2026-09-30 (t3.small, 2 vCPU / 1.9 GB + 4 GB swap)
+
+Deployed commits `99ebcfb` + `42e85fe` (18 files, each verified byte-identical
+on the box to the base these commits were built on, so no one else's live
+edits were overwritten). Rollback: `~/deploy_backups/src_pre_kokoro_20260930_082952.tgz`
++ images tagged `ai_engine-{backend,frontend,celery-worker}:pre_kokoro_20260930_082952`;
+`.env` backup `~/deploy_backups/env_pre_tts_provider_20260930_082952`.
+The rebuild re-resolved the unpinned requirements; diff vs the old image was
+patch/minor only (fastapi 0.141→0.142, SQLAlchemy 2.1.0→2.1.1, langchain-core,
+opentelemetry 1.44→1.45) plus the Kokoro packages.
+
+**Kokoro is not viable on this instance — measured, then switched off.**
+With Kokoro on: backend RSS 300 MB → 1.0 GB, swap 1.1 → 1.9 GB; a warm 6 s
+sentence took 5.65 s (RTF ≈ 1.0, CPU 96-100 %, no steal), and idle weights
+were paged out (swap-in 0.7-2.3 MB/s at each synthesis), giving 10-28 s
+stalls. A streamed question played "Got it, thanks." then ~11 s of silence.
+Production therefore runs `TTS_PROVIDER=edge` (box `.env`): same streaming
+pipeline, fallback voice. Measured through the public URL after the switch:
+turn_start → first audio chunk 0.44-0.88 s, first sentence's audio sent
+before the LLM finished, next sentence 0.6-1.2 s later; backend RSS 774 MB.
+To use Kokoro in production: ≥ 4 vCPU and ≥ 4 GB RAM (e.g. a c7i/t3 large),
+then set `TTS_PROVIDER=kokoro` and restart the backend.
+
 ## Remaining limitations
 
 - STT still starts only after the candidate's answer ends (see above).
